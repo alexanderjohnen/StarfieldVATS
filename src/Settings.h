@@ -22,23 +22,16 @@ namespace VATS
 
 		// How to close the hand scanner when a lock is acquired.
 		//   0 = don't close it at all
-		//   1 = simulated real press of scannerToggleKeyVK (animation+sound
-		//       — worked reliably across many sessions on its own, but
-		//       BROKEN as of 2026-08-22 once EngineInputLayer::SetBlocked
-		//       (re-enabled the same day to fix Tab/DataMenu, see
-		//       VATSController.cpp) started disabling USER_EVENT_FLAG::
-		//       TabMenuMaybe on every lock — log-confirmed collateral
-		//       damage: "scanner still open after 3 attempts" every single
-		//       lock since, 0/N successes, where it was reliable before.
-		//       TabMenuMaybe apparently gates more than just the Tab/
-		//       DataMenu action alone (any single-key menu-toggle action,
-		//       possibly including the scanner's own Q-toggle) - not worth
-		//       digging further into which flag exactly until this project
-		//       actually needs the nicer animation back.
-		//   2 = UIMessageQueue kHide (no animation/sound, but unaffected
-		//       by EngineInputLayer since it goes through a completely
-		//       different path - current default)
-		std::uint32_t scannerCloseMode{ 2 };
+		//   1 = simulated real press of scannerToggleKeyVK (animation+
+		//       sound — the reliable, long-used default). Was briefly
+		//       broken 2026-08-22 by EngineInputLayer::SetBlocked being
+		//       applied too early (before this had a chance to run) -
+		//       fixed properly by re-ordering (see CloseScannerIfOpen's
+		//       comment in VATSController.cpp), not by switching away
+		//       from this mode.
+		//   2 = UIMessageQueue kHide (no animation/sound) — kept as a
+		//       fallback only.
+		std::uint32_t scannerCloseMode{ 1 };
 
 		// The real in-game "back" key — same one that opens the Tab
 		// character hub (DataMenu) when nothing else is open, but backs out

@@ -69,16 +69,24 @@ namespace VATS
 
 			auto* tasks = SFSE::GetTaskInterface();
 			if (!tasks) {
+				// Can't continue the retry sequence without the task
+				// interface - apply the engine block anyway so Locked
+				// doesn't stay unprotected indefinitely.
+				EngineInputLayer::SetBlocked(true);
 				return;
 			}
 			tasks->AddTask([a_attempt]() {
 				auto* ui = RE::UI::GetSingleton();
 				if (!ui || !ui->IsMenuOpen("MonocleMenu")) {
 					REX::INFO("[VATS] scanner closed after {} attempt(s)", a_attempt);
+					// See CloseScannerIfOpen's comment for why this is
+					// deferred to here instead of applied up front.
+					EngineInputLayer::SetBlocked(true);
 					return;
 				}
 				if (a_attempt >= kMaxScannerCloseAttempts) {
 					REX::INFO("[VATS] scanner still open after {} attempts, giving up", kMaxScannerCloseAttempts);
+					EngineInputLayer::SetBlocked(true);
 					return;
 				}
 				CloseScannerIfOpen(a_attempt + 1);
@@ -100,6 +108,22 @@ namespace VATS
 		// indefinitely. Called on the task thread (from Advance()); always
 		// runs the blocking key-send off-thread so it never stalls the
 		// game thread.
+		//
+		// EngineInputLayer::SetBlocked(true) is applied at the END of this
+		// sequence (inside ScannerCloseAttemptWorker's terminal branches),
+		// NOT before it starts. Found 2026-08-22: calling it up front (at
+		// the same moment as the lock itself) made every single simulated
+		// Q-press attempt fail - 0/N successes across every lock session
+		// once EngineInputLayer was re-enabled, where it had been reliable
+		// before. USER_EVENT_FLAG::TabMenuMaybe apparently gates more than
+		// just the Tab/DataMenu action - plausibly any single-key menu-
+		// toggle, including the scanner's own Q-toggle. Rather than give
+		// up the nicer keypress-based close (Alexander's clear preference,
+		// worked reliably for a long time before this), the fix is
+		// ordering: let the real keypress-driven close finish first, only
+		// then engage the block. The ~1 second window this delays
+		// TabMenuMaybe's protection by is not a practical risk - nobody
+		// hits Tab in the instant right after locking.
 		void CloseScannerIfOpen(int a_attempt)
 		{
 			const std::uint32_t vk = Settings::Get().scannerToggleKeyVK;
@@ -206,21 +230,6 @@ namespace VATS
 				m_target = lockTarget;
 			}
 			m_mode.store(VATSMode::kLocked, std::memory_order_relaxed);
-			// Re-enabled 2026-08-22. Was disabled the same day, suspected
-			// of a hard crash on locking - the real cause has since been
-			// found and fixed (HasDetectionLOS, see
-			// starfield-vats-mod-design memory's "Crash on locking"
-			// section); EngineInputLayer was cleared, not the culprit.
-			// Needed for real this time: per that same memory (see
-			// [[starfield-vats-ui-hook]]), Alexander found Tab still opens
-			// DataMenu and the mouse wheel still changes POV even though
-			// the OS-level hooks (BackKeyInterceptor/AimAssist) fire and
-			// return 1 - Starfield processes the vanilla action from
-			// inside the engine regardless of the OS-level swallow. This
-			// layer (POVSwitch/TabMenuMaybe/WheelZoom) is the actual fix
-			// for that, was just never re-enabled after the (unrelated)
-			// crash scare.
-			EngineInputLayer::SetBlocked(true);
 			REX::INFO("[VATS] LOCKED | target formID=0x{:08X}", formID);
 			if (console) {
 				console->Log("[VATS] LOCKED | target formID=0x{:08X}", formID);
@@ -228,12 +237,20 @@ namespace VATS
 
 			// Close the hand scanner on lock so the weapon comes back up
 			// immediately, mirroring vanilla scan-then-act flows. Mechanism
-			// is INI-selectable (iScannerCloseMode, see Settings.h): the
-			// simulated-keypress variant (mode 1, nicer animation/sound) is
-			// under suspicion for hard freezes/crashes-without-log landing
-			// one frame after the injected key-down (2026-08-22, twice),
-			// while kHide (mode 2, abrupt but previously proven stable) is
-			// the safe default until that's resolved.
+			// is INI-selectable (iScannerCloseMode, see Settings.h) -
+			// simulated keypress (mode 1, default) vs. UIMessageQueue
+			// kHide (mode 2) vs. leave it open (mode 0).
+			//
+			// EngineInputLayer::SetBlocked(true) (POVSwitch/TabMenuMaybe/
+			// WheelZoom - built so Tab/DataMenu and the mouse wheel/POV
+			// switch are actually suppressed at the engine's own input-
+			// mapping level, not just at the OS hook level which alone
+			// wasn't enough, see EngineInputLayer.h) is applied per-branch
+			// below rather than once up front: mode 1's simulated Q-press
+			// needs to run and finish BEFORE this engages, or every
+			// attempt fails (see CloseScannerIfOpen's comment) - so mode 1
+			// applies it itself once its close sequence concludes, while
+			// modes 0/2 (synchronous, no conflict) apply it immediately.
 			switch (Settings::Get().scannerCloseMode) {
 			case 1:
 				REX::INFO("[VATS] closing scanner via simulated key press");
@@ -244,9 +261,11 @@ namespace VATS
 				if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
 					queue->AddMessage("MonocleMenu", RE::UI_MESSAGE_TYPE::kHide);
 				}
+				EngineInputLayer::SetBlocked(true);
 				break;
 			default:
 				REX::INFO("[VATS] leaving scanner open (iScannerCloseMode=0)");
+				EngineInputLayer::SetBlocked(true);
 				break;
 			}
 			return;
