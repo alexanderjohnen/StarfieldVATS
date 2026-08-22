@@ -1,5 +1,6 @@
 #include "AimAssist.h"
 
+#include "AimAssistProbe.h"
 #include "GameOffsets.h"
 #include "ProjectileTracker.h"
 #include "SafeMem.h"
@@ -147,6 +148,14 @@ namespace VATS
 			const auto state = Controller::Get().GetOverlayState();
 			if (state.mode != VATSMode::kLocked || !state.actor) {
 				return;
+			}
+
+			// Diagnostic (2026-08-22): verify the BGSAimAssistModel
+			// pointer-chain hypothesis (see AimAssistProbe.h) against
+			// whatever's actually equipped, once per shot. Pure logging,
+			// no behavior change - remove once confirmed/refuted.
+			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+				AimAssistProbe::ProbeEquippedWeapon(player);
 			}
 
 			// Chance (and therefore the hit/miss roll) is based on distance
