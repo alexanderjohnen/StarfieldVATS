@@ -109,15 +109,25 @@ namespace VATS
 				continue;
 			}
 
+			// Diagnostic (2026-08-22): zero redirects fired in Alexander's
+			// first in-game test despite plenty of logged HIT rolls - this
+			// logs every candidate that reaches the projectile-formType
+			// range regardless of what filters it out next, so the next
+			// test session's log says exactly which check is rejecting
+			// everything (shooterHandle mismatch vs. age window vs.
+			// nothing ever reaching here at all). Remove once the real
+			// cause is confirmed.
 			std::uint32_t shooterHandle = 0;
-			if (!Read(reinterpret_cast<const void*>(entry), kShooterHandle, shooterHandle) ||
-				shooterHandle != kPlayerRefHandle) {
+			const bool    shooterHandleRead = Read(reinterpret_cast<const void*>(entry), kShooterHandle, shooterHandle);
+			float         age = -1.0f;
+			const bool    ageRead = Read(reinterpret_cast<const void*>(entry), kAge, age);
+			REX::INFO("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
+				entry, formType, shooterHandle, shooterHandleRead, age, ageRead);
+
+			if (!shooterHandleRead || shooterHandle != kPlayerRefHandle) {
 				continue;
 			}
-
-			float age = -1.0f;
-			if (!Read(reinterpret_cast<const void*>(entry), kAge, age) ||
-				age < 0.0f || age > kMaxRedirectAgeSeconds) {
+			if (!ageRead || age < 0.0f || age > kMaxRedirectAgeSeconds) {
 				continue;
 			}
 

@@ -135,12 +135,12 @@ namespace VATS
 			m_target.reset();
 		}
 		m_mode.store(VATSMode::kOff, std::memory_order_relaxed);
-		// EngineInputLayer::SetBlocked(false) disabled 2026-08-22 alongside
-		// the SetBlocked(true) call above - EnableUserEvent itself is
-		// suspected, not specifically the "true" case, so disabled here
-		// too until isolated re-testing. See the comment on the other
-		// call site.
-		// EngineInputLayer::SetBlocked(false);
+		// Re-enabled 2026-08-22 (was disabled 2026-08-22 alongside the
+		// SetBlocked(true) call below, suspected of the N-press hard
+		// crash - since confirmed to actually be HasDetectionLOS, see
+		// starfield-vats-mod-design memory; EngineInputLayer was never
+		// the cause).
+		EngineInputLayer::SetBlocked(false);
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
 		// been touched from the game thread so far in this project. File
@@ -206,17 +206,21 @@ namespace VATS
 				m_target = lockTarget;
 			}
 			m_mode.store(VATSMode::kLocked, std::memory_order_relaxed);
-			// EngineInputLayer::SetBlocked(true) disabled 2026-08-22 -
-			// caused a hard crash on locking (pressing N), no crash log
-			// available to confirm root cause. AllocateNewLayer/Init()
-			// itself does NOT appear to be the culprit (the game got past
-			// plugin load fine), so suspicion is on the EnableUserEvent
-			// call itself - possibly a wrong USER_EVENT_FLAG value, wrong
-			// calling convention, or the AllocateNewLayer/DebugNameFunctor
-			// plumbing being subtly wrong for this game version. Needs
-			// isolated re-testing (e.g. one flag at a time) before
-			// re-enabling. See EngineInputLayer.h/.cpp.
-			// EngineInputLayer::SetBlocked(true);
+			// Re-enabled 2026-08-22. Was disabled the same day, suspected
+			// of a hard crash on locking - the real cause has since been
+			// found and fixed (HasDetectionLOS, see
+			// starfield-vats-mod-design memory's "Crash on locking"
+			// section); EngineInputLayer was cleared, not the culprit.
+			// Needed for real this time: per that same memory (see
+			// [[starfield-vats-ui-hook]]), Alexander found Tab still opens
+			// DataMenu and the mouse wheel still changes POV even though
+			// the OS-level hooks (BackKeyInterceptor/AimAssist) fire and
+			// return 1 - Starfield processes the vanilla action from
+			// inside the engine regardless of the OS-level swallow. This
+			// layer (POVSwitch/TabMenuMaybe/WheelZoom) is the actual fix
+			// for that, was just never re-enabled after the (unrelated)
+			// crash scare.
+			EngineInputLayer::SetBlocked(true);
 			REX::INFO("[VATS] LOCKED | target formID=0x{:08X}", formID);
 			if (console) {
 				console->Log("[VATS] LOCKED | target formID=0x{:08X}", formID);
@@ -254,12 +258,9 @@ namespace VATS
 			m_target.reset();
 		}
 		m_mode.store(VATSMode::kOff, std::memory_order_relaxed);
-		// EngineInputLayer::SetBlocked(false) disabled 2026-08-22 alongside
-		// the SetBlocked(true) call above - EnableUserEvent itself is
-		// suspected, not specifically the "true" case, so disabled here
-		// too until isolated re-testing. See the comment on the other
-		// call site.
-		// EngineInputLayer::SetBlocked(false);
+		// Re-enabled 2026-08-22 alongside the SetBlocked(true) call above
+		// - see its comment.
+		EngineInputLayer::SetBlocked(false);
 		REX::INFO("[VATS] OFF");
 		if (console) {
 			console->Log("[VATS] OFF");
