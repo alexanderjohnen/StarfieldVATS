@@ -41,9 +41,8 @@ namespace VATS
 		cameraFovDegrees = REX::W32::GetPrivateProfileIntA("Targeting", "iCameraFovDegrees", 90, INI_PATH);
 		centerHitChancePercent = REX::W32::GetPrivateProfileIntA("Combat", "iCenterHitChancePercent", 95, INI_PATH);
 		assistRadius = GetPrivateProfileFloatA("Combat", "fAssistRadius", 0.15f, INI_PATH);
-		mouseSensitivityScale = GetPrivateProfileFloatA("Combat", "fMouseSensitivityScale", 1.0f, INI_PATH);
 
-		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fAssistRadius={}, fMouseSensitivityScale={}",
-			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, assistRadius, mouseSensitivityScale);
+		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fAssistRadius={}",
+			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, assistRadius);
 	}
 }

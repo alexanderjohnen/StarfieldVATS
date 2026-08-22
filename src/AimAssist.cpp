@@ -13,6 +13,7 @@
 #include <cmath>
 #include <random>
 #include <thread>
+#include <unordered_set>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -105,19 +106,6 @@ namespace VATS
 			return t * static_cast<float>(Settings::Get().centerHitChancePercent);
 		}
 
-		void SendMouseMove(int a_dx, int a_dy)
-		{
-			if (a_dx == 0 && a_dy == 0) {
-				return;
-			}
-			INPUT input{};
-			input.type = INPUT_MOUSE;
-			input.mi.dx = a_dx;
-			input.mi.dy = a_dy;
-			input.mi.dwFlags = MOUSEEVENTF_MOVE;
-			::SendInput(1, &input, sizeof(INPUT));
-		}
-
 		// Runs for the whole duration the fire button stays physically
 		// held, not just once - a single button-down doesn't map to a
 		// single shot (automatic weapons fire repeatedly for as long as
@@ -129,14 +117,16 @@ namespace VATS
 		// currently shares the same hit/miss outcome. Known v1
 		// simplification.
 		//
-		// Steers in small proportional steps toward (hit) or away from
-		// (miss) the target's *current* screen position every tick, rather
-		// than jumping there once - stays correct as the target moves
-		// (Locked tracks regardless of camera direction) and reads as
-		// assistive pull rather than a jarring teleport-snap. The real
-		// click is never touched; Starfield's own fire-rate timer decides
-		// when shots actually happen, we only ever influence where the
-		// camera points meanwhile.
+		// Replaces the original SendMouseMove-based camera-steering design
+		// (removed 2026-08-22, see the file-level comment history / git
+		// log) - per Alexander, the weapon/camera should never visibly
+		// snap onto the target at all. Instead this loop repeatedly asks
+		// ProjectileTracker to find and redirect any freshly-fired player
+		// round in-flight, every tick for the duration of the hold, so a
+		// sustained burst gets each of its rounds bent independently as
+		// they spawn. The real click is never touched; Starfield's own
+		// fire-rate timer and ballistics/damage/hit-reaction pipeline
+		// still do everything except the round's own trajectory.
 		void SteeringLoop()
 		{
 			const auto state = Controller::Get().GetOverlayState();
@@ -148,8 +138,7 @@ namespace VATS
 			// close the player's actual aim already is to the target at
 			// the moment the trigger is pulled - not evaluated per shot
 			// within a held burst, same "one roll per hold" simplification
-			// as before, just with a real input feeding the roll now
-			// instead of a flat constant.
+			// as before.
 			float initialSx = 0.0f, initialSy = 0.0f;
 			if (!ResolveTargetScreen(state.actor.get(), initialSx, initialSy)) {
 				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, chance is 0, no assist this hold");
@@ -157,17 +146,13 @@ namespace VATS
 			}
 			const float chancePercent = ComputeChancePercent(state.actor.get(), initialSx, initialSy);
 
-			// Outside the assist cone entirely (chance == 0): do nothing
-			// at all, don't touch the mouse for the rest of this hold.
-			// Found 2026-08-22 that without this, a shot taken while
-			// aiming nowhere near the target still steered the crosshair
-			// most of the way to the target's screen position (plus the
-			// miss offset) regardless of chance being 0 - the chance
-			// number was right, but the steering below never actually
-			// looked at it, so a "you get no help" situation still
-			// produced a big, jarring snap. This is the fix: chance 0
-			// means real aim decides, full stop, same as target being
-			// off-screen entirely.
+			// Outside the assist cone entirely (chance == 0): don't
+			// redirect anything for the rest of this hold - real aim
+			// decides, full stop, same as the target being off-screen
+			// entirely. Mirrors the same guard the old steering design had
+			// (found 2026-08-22 that skipping this let an aim-nowhere-near
+			// shot still get pulled toward the target regardless of the
+			// displayed chance being 0).
 			if (chancePercent <= 0.0f) {
 				REX::INFO("[VATS] aim-assist: outside assist radius, chance is 0, firing unassisted");
 				return;
@@ -180,56 +165,25 @@ namespace VATS
 			const bool                             hit = roll < chance;
 			REX::INFO("[VATS] aim-assist: hold started, chance={:.0f}%, roll={:.2f} -> {}", chancePercent, roll, hit ? "HIT" : "MISS");
 
-			// Diagnostic (2026-08-22): probe for the just-fired projectile
-			// a beat after the real click, once it's had time to actually
-			// spawn/register in the cell. Not wired into anything yet -
-			// see ProjectileTracker.h for why.
-			std::thread([]() {
-				std::this_thread::sleep_for(std::chrono::milliseconds(50));
-				ProjectileTracker::ProbeAfterFire();
-			}).detach();
+			constexpr auto kTickInterval = std::chrono::milliseconds(20);
+			constexpr auto kMaxHoldDuration = std::chrono::seconds(10);  // safety net if a button-up is ever missed
 
-			const int   screenW = ::GetSystemMetrics(SM_CXSCREEN);
-			const int   screenH = ::GetSystemMetrics(SM_CYSCREEN);
-			const float scale = Settings::Get().mouseSensitivityScale;
-
-			constexpr auto  kTickInterval = std::chrono::milliseconds(20);
-			constexpr float kConvergePerTick = 0.4f;  // fraction of remaining offset closed each tick
-			constexpr auto  kMaxHoldDuration = std::chrono::seconds(10);  // safety net if a button-up is ever missed
-
-			const auto start = std::chrono::steady_clock::now();
+			std::unordered_set<std::uint64_t> handled;
+			const auto                        start = std::chrono::steady_clock::now();
 			while (s_buttonHeld.load() && Controller::Get().GetMode() == VATSMode::kLocked) {
 				if (std::chrono::steady_clock::now() - start > kMaxHoldDuration) {
-					REX::WARN("[VATS] aim-assist: hold exceeded safety timeout, stopping steering");
+					REX::WARN("[VATS] aim-assist: hold exceeded safety timeout, stopping redirect scan");
 					break;
 				}
 
 				const auto currentState = Controller::Get().GetOverlayState();
-				float      sx = 0.0f, sy = 0.0f;
-				if (!currentState.actor || !ResolveTargetScreen(currentState.actor.get(), sx, sy)) {
-					// Target died/left view mid-burst - nothing sensible
-					// left to steer toward, stop nudging for the rest of
-					// this hold.
+				if (!currentState.actor) {
+					// Target died/left view mid-burst - nothing left to
+					// redirect toward, stop scanning for the rest of this
+					// hold.
 					break;
 				}
-
-				// Miss offset scales with assistRadius rather than a fixed
-				// 0.08 - a hold that only barely qualified for the cone
-				// (small radius, or aiming near its edge) shouldn't still
-				// get pushed by a comparatively huge fixed amount.
-				float aimSx = sx;
-				float aimSy = sy;
-				if (!hit) {
-					const float missOffset = Settings::Get().assistRadius * 0.6f;
-					aimSx = std::clamp(sx + missOffset, 0.0f, 1.0f);
-					aimSy = std::clamp(sy + missOffset, 0.0f, 1.0f);
-				}
-
-				const float dxFrac = (aimSx - 0.5f) * kConvergePerTick;
-				const float dyFrac = (aimSy - 0.5f) * kConvergePerTick;
-				const int   dx = static_cast<int>(dxFrac * screenW * scale);
-				const int   dy = static_cast<int>(dyFrac * screenH * scale);
-				SendMouseMove(dx, dy);
+				ProjectileTracker::RedirectFreshProjectiles(currentState.actor.get(), hit, handled);
 
 				std::this_thread::sleep_for(kTickInterval);
 			}

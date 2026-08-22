@@ -83,14 +83,5 @@ namespace VATS
 		// is 0 and aim-assist does nothing (same as being off-screen
 		// entirely). Starting guess, unverified/untuned.
 		float assistRadius{ 0.15f };
-
-		// Converts the on-screen pixel distance from crosshair to target
-		// into raw SendInput mouse-move units. Starfield's own
-		// fMouseHeadingSensitivity (StarfieldPrefs.ini) affects how far a
-		// given raw mouse delta actually turns the camera, but the exact
-		// conversion formula isn't known — this is a plain empirical scale
-		// factor to tune in-game by trial and error instead, same spirit
-		// as targetConeDeg above. Starting guess, unverified.
-		float mouseSensitivityScale{ 1.0f };
 	};
 }

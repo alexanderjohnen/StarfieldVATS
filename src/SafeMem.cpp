@@ -15,4 +15,14 @@ namespace VATS
 			return false;
 		}
 	}
+
+	bool SafeWrite(void* a_dst, const void* a_src, std::size_t a_len) noexcept
+	{
+		__try {
+			std::memcpy(a_dst, a_src, a_len);
+			return true;
+		} __except (1) {  // EXCEPTION_EXECUTE_HANDLER
+			return false;
+		}
+	}
 }
