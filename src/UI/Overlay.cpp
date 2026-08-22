@@ -36,35 +36,12 @@ namespace VATS::UI
 		// background needs a shadow, not just more line thickness.
 		constexpr ImU32 kOutline = IM_COL32(10, 14, 16, 200);
 
-		// Body-part aim-point offset, mirrored from AimAssist.cpp (kept as
-		// a small local duplicate rather than a shared header — same
-		// ~20-line block, different callers, not worth forcing a shared
-		// abstraction across a namespace boundary for). See
-		// GameOffsets::kAngle's comment for the pack case's unverified
-		// facing-direction assumption.
-		RE::NiPoint3 ResolveBodyPartWorldPos(RE::Actor* a_actor, const RE::NiPoint3& a_pos, BodyPart a_part)
+		// Single aim point (chest height) — the Suit/Helmet/Pack body-part
+		// system was removed 2026-08-22, see GameOffsets::kAimPointChestZ.
+		RE::NiPoint3 ResolveAimWorldPos(const RE::NiPoint3& a_pos)
 		{
 			RE::NiPoint3 out = a_pos;
-			switch (a_part) {
-			case BodyPart::kHelmet:
-				out.z += GameOffsets::kBodyPartHelmetZ;
-				break;
-			case BodyPart::kPack:
-				{
-					out.z += GameOffsets::kBodyPartPackZ;
-					RE::NiPoint3 angle{};
-					if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kAngle, &angle, sizeof(angle))) {
-						const float yaw = angle.z;
-						out.x -= std::sin(yaw) * GameOffsets::kBodyPartPackBackDistance;
-						out.y -= std::cos(yaw) * GameOffsets::kBodyPartPackBackDistance;
-					}
-				}
-				break;
-			case BodyPart::kSuit:
-			default:
-				out.z += GameOffsets::kBodyPartSuitZ;
-				break;
-			}
+			out.z += GameOffsets::kAimPointChestZ;
 			return out;
 		}
 
@@ -208,7 +185,7 @@ namespace VATS::UI
 		// scanner or aim in progress) — routing it through this same
 		// validation closes that gap without needing a separate "is the
 		// scanner UI active" signal, which we don't have.
-		bool ResolveOnScreen(RE::Actor* a_actor, BodyPart a_part, float& a_outSx, float& a_outSy, float& a_outDist)
+		bool ResolveOnScreen(RE::Actor* a_actor, float& a_outSx, float& a_outSy, float& a_outDist)
 		{
 			const std::uint32_t formID = a_actor->GetFormID();
 
@@ -229,7 +206,7 @@ namespace VATS::UI
 				LogIfChanged(DrawOutcome::kLocationReadFailed, formID, "skipped: location read failed");
 				return false;
 			}
-			pos = ResolveBodyPartWorldPos(a_actor, pos, a_part);
+			pos = ResolveAimWorldPos(pos);
 
 			float sx = 0.0f;
 			float sy = 0.0f;
@@ -268,18 +245,18 @@ namespace VATS::UI
 		// Draws the box for an already-resolved on-screen position (see
 		// ResolveOnScreen). Kept separate so the hint text and the box can
 		// share one resolution per frame instead of computing it twice.
-		void DrawIfVisible(RE::Actor* a_actor, BodyPart a_part, const char* a_label, ImU32 a_color, bool a_showValue)
+		void DrawIfVisible(RE::Actor* a_actor, const char* a_label, ImU32 a_color, bool a_showValue)
 		{
 			float sx = 0.0f;
 			float sy = 0.0f;
 			float dist = -1.0f;
-			if (!ResolveOnScreen(a_actor, a_part, sx, sy, dist)) {
+			if (!ResolveOnScreen(a_actor, sx, sy, dist)) {
 				return;
 			}
 
 			// Hit-chance cone (mirrors AimAssist.cpp's ComputeChancePercent
 			// — same small duplicate-instead-of-shared-header tradeoff as
-			// ResolveBodyPartWorldPos above): 100% dead center on the
+			// ResolveAimWorldPos above): 100% dead center on the
 			// crosshair (true screen center), falling off linearly to 0%
 			// at Settings::assistRadius, ANDed with a real occlusion check
 			// (HasDetectionLOS — see Targeting.h). Shown live so Alexander
@@ -444,7 +421,7 @@ namespace VATS::UI
 		// it scales with any resolution.
 		if (isScanning && state.mode == VATSMode::kOff) {
 			float sx = 0.0f, sy = 0.0f, dist = 0.0f;
-			if (s_cachedPick && ResolveOnScreen(s_cachedPick.get(), BodyPart::kSuit, sx, sy, dist)) {
+			if (s_cachedPick && ResolveOnScreen(s_cachedPick.get(), sx, sy, dist)) {
 				char hint[32];
 				std::snprintf(hint, sizeof(hint), "TARGETING (%c)", VKToDisplayChar(Settings::Get().activationKeyVK));
 				const auto& io = ImGui::GetIO();
@@ -491,19 +468,7 @@ namespace VATS::UI
 			}
 		}
 
-		const char* partLabel = "SUIT";
-		switch (state.bodyPart) {
-		case BodyPart::kHelmet:
-			partLabel = "HELMET";
-			break;
-		case BodyPart::kPack:
-			partLabel = "PACK";
-			break;
-		case BodyPart::kSuit:
-		default:
-			break;
-		}
-		DrawIfVisible(state.actor.get(), state.bodyPart, partLabel, kLockedColor, /*a_showValue*/ true);
+		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a
 		// possible live "can the player currently see this target" signal

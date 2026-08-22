@@ -38,44 +38,12 @@ namespace VATS
 			return pid == ::GetCurrentProcessId();
 		}
 
-		// Computes the world-space aim point for a_part on an actor at
-		// a_pos. Suit/Helmet are plain vertical offsets (same spirit as
-		// Overlay's original single chest point). Pack needs a facing
-		// direction to sit "behind" the spine — reads GameOffsets::kAngle
-		// (unverified, see its comment) and assumes .z is yaw in radians,
-		// forward = (sin(yaw), cos(yaw), 0), a common but unconfirmed
-		// Bethesda convention. If that assumption is wrong the pack aim
-		// point will land in front of/beside the target instead of behind
-		// — first thing to check if pack-targeting looks obviously off.
-		[[nodiscard]] RE::NiPoint3 ResolveBodyPartWorldPos(RE::Actor* a_actor, const RE::NiPoint3& a_pos, BodyPart a_part)
+		// Single aim point (chest height) — the Suit/Helmet/Pack body-part
+		// system was removed 2026-08-22, see GameOffsets::kAimPointChestZ.
+		[[nodiscard]] RE::NiPoint3 ResolveAimWorldPos(const RE::NiPoint3& a_pos)
 		{
 			RE::NiPoint3 out = a_pos;
-			switch (a_part) {
-			case BodyPart::kHelmet:
-				out.z += GameOffsets::kBodyPartHelmetZ;
-				break;
-			case BodyPart::kPack:
-				{
-					out.z += GameOffsets::kBodyPartPackZ;
-					RE::NiPoint3 angle{};
-					if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kAngle, &angle, sizeof(angle))) {
-						const float yaw = angle.z;
-						const float fwdX = std::sin(yaw);
-						const float fwdY = std::cos(yaw);
-						out.x -= fwdX * GameOffsets::kBodyPartPackBackDistance;
-						out.y -= fwdY * GameOffsets::kBodyPartPackBackDistance;
-					}
-					// If the angle read fails, falls back to the
-					// un-offset horizontal position (upper-spine height,
-					// no backward push) rather than skipping the shot
-					// entirely.
-				}
-				break;
-			case BodyPart::kSuit:
-			default:
-				out.z += GameOffsets::kBodyPartSuitZ;
-				break;
-			}
+			out.z += GameOffsets::kAimPointChestZ;
 			return out;
 		}
 
@@ -83,7 +51,7 @@ namespace VATS
 		// dead check + position read + projection, no telemetry/throttling
 		// (that's a UI concern; this runs on a background thread and needs
 		// to be cheap and quiet).
-		[[nodiscard]] bool ResolveTargetScreen(RE::Actor* a_actor, BodyPart a_part, float& a_outSx, float& a_outSy)
+		[[nodiscard]] bool ResolveTargetScreen(RE::Actor* a_actor, float& a_outSx, float& a_outSy)
 		{
 			std::uint32_t boolBits = 0;
 			if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kBoolBits, &boolBits, sizeof(boolBits)) &&
@@ -95,7 +63,7 @@ namespace VATS
 			if (!SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &pos, sizeof(pos))) {
 				return false;
 			}
-			const RE::NiPoint3 aimPos = ResolveBodyPartWorldPos(a_actor, pos, a_part);
+			const RE::NiPoint3 aimPos = ResolveAimWorldPos(pos);
 
 			float sx = 0.0f, sy = 0.0f;
 			if (!UI::WorldToScreen(aimPos, sx, sy)) {
@@ -183,7 +151,7 @@ namespace VATS
 			// as before, just with a real input feeding the roll now
 			// instead of a flat constant.
 			float initialSx = 0.0f, initialSy = 0.0f;
-			if (!ResolveTargetScreen(state.actor.get(), state.bodyPart, initialSx, initialSy)) {
+			if (!ResolveTargetScreen(state.actor.get(), initialSx, initialSy)) {
 				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, chance is 0, no assist this hold");
 				return;
 			}
@@ -238,7 +206,7 @@ namespace VATS
 
 				const auto currentState = Controller::Get().GetOverlayState();
 				float      sx = 0.0f, sy = 0.0f;
-				if (!currentState.actor || !ResolveTargetScreen(currentState.actor.get(), currentState.bodyPart, sx, sy)) {
+				if (!currentState.actor || !ResolveTargetScreen(currentState.actor.get(), sx, sy)) {
 					// Target died/left view mid-burst - nothing sensible
 					// left to steer toward, stop nudging for the rest of
 					// this hold.
@@ -298,28 +266,11 @@ namespace VATS
 					// Never swallowed - the real click always reaches
 					// Starfield. We only ever influence aim direction
 					// alongside it, never the firing itself.
-				} else if (a_wParam == WM_MOUSEWHEEL) {
-					// Body-part cycling (2026-08-22). Swallowed only while
-					// Locked - the wheel's normal job (POV/perspective
-					// switch) would otherwise fire alongside our cycling,
-					// which Alexander explicitly flagged as needing to be
-					// blocked while this is active. Passes through
-					// completely untouched while Off.
-					//
-					// CycleBodyPart() (and the REX::INFO inside it) is
-					// dispatched to a thread rather than called inline -
-					// same fix as BackKeyInterceptor: a low-level hook
-					// that blocks on file I/O can get silently dropped by
-					// Windows for later events. This was very likely why
-					// only wheel-up seemed to cycle reliably and wheel-
-					// down kept leaking through to the game.
-					if (Controller::Get().GetMode() == VATSMode::kLocked && GameWindowHasFocus()) {
-						std::thread([]() {
-							Controller::Get().CycleBodyPart();
-						}).detach();
-						return 1;  // swallow - no perspective switch while cycling
-					}
 				}
+				// Mouse-wheel body-part cycling removed 2026-08-22 along
+				// with the body-part system itself (see VATSController.h) -
+				// the wheel is no longer touched at all, POV/perspective
+				// switch works normally while Locked again.
 			}
 			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
 		}

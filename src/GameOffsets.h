@@ -36,24 +36,12 @@ namespace VATS::GameOffsets
 	// wiring into Targeting.cpp.
 	inline constexpr std::size_t kPlayerCommandTarget = 0x0F90;
 
-	// UNVERIFIED (2026-08-22) — needed for the boostpack aim point, which
-	// has to sit "behind" the target's spine and therefore needs a facing
-	// direction, unlike every other aim point so far (all were plain
-	// vertical offsets from a fixed position). `data.angle` sits alongside
-	// `data.location` in the same TESObjectREFR::ObjectRefData struct that
-	// kLocation already reads reliably — same struct family, but the
-	// specific convention (which axis is yaw, sign/rotation direction) has
-	// not been confirmed in-game the way location has. Treat any pack-
-	// targeting result as suspect until Alexander confirms the aim point
-	// actually lands behind (not in front of/beside) a test target.
-	inline constexpr auto kAngle = offsetof(RE::TESObjectREFR, data.angle);
-
-	// Body-part aim-point offsets (2026-08-22) — a deliberately simplified
-	// 3-point stand-in for full skeletal body-part targeting (never built).
-	// All eyeballed for a roughly humanoid actor, same spirit/precision as
-	// the original single chest point this generalizes. World units.
-	inline constexpr float kBodyPartSuitZ = 1.2f;    // == the original single chest-point offset
-	inline constexpr float kBodyPartHelmetZ = 1.7f;  // head height
-	inline constexpr float kBodyPartPackZ = 1.3f;    // upper-back height
-	inline constexpr float kBodyPartPackBackDistance = 0.35f;  // world units behind the spine, along -forward
+	// Single aim point, world units above an actor's ref-origin (feet) —
+	// roughly chest height. The Suit/Helmet/Pack body-part system (and the
+	// `data.angle`-based "behind the spine" pack offset it needed) was
+	// removed 2026-08-22 — deliberately simplified stand-in for full
+	// skeletal targeting, never built, and Alexander wants it dropped for
+	// now while a projectile-redirect approach is explored instead. May
+	// come back later; see starfield-vats-mod-design memory.
+	inline constexpr float kAimPointChestZ = 1.2f;
 }

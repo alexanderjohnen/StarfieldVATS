@@ -118,34 +118,11 @@ namespace VATS
 	{
 		OverlayState state;
 		state.mode = m_mode.load(std::memory_order_relaxed);
-		state.bodyPart = m_bodyPart.load(std::memory_order_relaxed);
 		{
 			const std::scoped_lock lock(m_targetLock);
 			state.actor = m_target;
 		}
 		return state;
-	}
-
-	void Controller::CycleBodyPart()
-	{
-		if (m_mode.load(std::memory_order_relaxed) != VATSMode::kLocked) {
-			return;
-		}
-		const BodyPart current = m_bodyPart.load(std::memory_order_relaxed);
-		BodyPart       next = BodyPart::kSuit;
-		switch (current) {
-		case BodyPart::kSuit:
-			next = BodyPart::kHelmet;
-			break;
-		case BodyPart::kHelmet:
-			next = BodyPart::kPack;
-			break;
-		case BodyPart::kPack:
-			next = BodyPart::kSuit;
-			break;
-		}
-		m_bodyPart.store(next, std::memory_order_relaxed);
-		REX::INFO("[VATS] body part -> {}", next == BodyPart::kSuit ? "Suit" : next == BodyPart::kHelmet ? "Helmet" : "Pack");
 	}
 
 	void Controller::ForceOff()
@@ -228,7 +205,6 @@ namespace VATS
 				const std::scoped_lock lock(m_targetLock);
 				m_target = lockTarget;
 			}
-			m_bodyPart.store(BodyPart::kSuit, std::memory_order_relaxed);  // reset selection on every new lock
 			m_mode.store(VATSMode::kLocked, std::memory_order_relaxed);
 			// EngineInputLayer::SetBlocked(true) disabled 2026-08-22 -
 			// caused a hard crash on locking (pressing N), no crash log

@@ -19,22 +19,6 @@ namespace VATS
 		kLocked,
 	};
 
-	// Which spacesuit component is currently the aim point, cycled via
-	// mouse wheel while Locked (2026-08-22) — a deliberately simplified
-	// stand-in for full skeletal body-part targeting (never built, see
-	// starfield-vats-mod-design memory): most enemies wear spacesuits, and
-	// these three pieces are the only ones with a real gameplay difference
-	// (Suit: higher hit chance, Helmet: more damage - likely free from
-	// Starfield's own existing headshot multiplier if we aim there
-	// accurately, Pack: can explode from enough hits - an existing native
-	// Starfield mechanic, not something we build ourselves).
-	enum class BodyPart
-	{
-		kSuit,
-		kHelmet,
-		kPack,
-	};
-
 	class Controller
 	{
 	public:
@@ -45,7 +29,6 @@ namespace VATS
 		{
 			VATSMode                 mode{ VATSMode::kOff };
 			RE::NiPointer<RE::Actor> actor;
-			BodyPart                 bodyPart{ BodyPart::kSuit };
 		};
 
 		[[nodiscard]] static Controller& Get();
@@ -56,12 +39,6 @@ namespace VATS
 		[[nodiscard]] VATSMode GetMode() const { return m_mode.load(std::memory_order_relaxed); }
 
 		[[nodiscard]] OverlayState GetOverlayState();
-
-		// Cycles Suit -> Helmet -> Pack -> Suit. No-op while Off (nothing
-		// to select a part of). Thread-safe, callable directly from the
-		// mouse-hook thread (AimAssist) — only touches our own atomic
-		// state, no engine calls.
-		void CycleBodyPart();
 
 		// Unconditionally resets to Off. Unlike RequestAdvance(), this
 		// doesn't route through the SFSE task queue — it only touches our
@@ -77,7 +54,6 @@ namespace VATS
 		void Advance();  // game thread only
 
 		std::atomic<VATSMode>    m_mode{ VATSMode::kOff };
-		std::atomic<BodyPart>    m_bodyPart{ BodyPart::kSuit };
 		std::mutex               m_targetLock;
 		RE::NiPointer<RE::Actor> m_target;
 	};
