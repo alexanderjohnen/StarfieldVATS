@@ -184,13 +184,25 @@ namespace VATS
 		if (!a_source || !a_target) {
 			return false;
 		}
-		// Cast/call shape copied as-is from Cassiopeia's HasDetectionLOS
-		// (see Targeting.h's comment) rather than reasoned out from
-		// scratch — the leading (0, 0) args are dummy/unknown-purpose
-		// slots in their working implementation, kept verbatim rather
-		// than guessed at.
-		REL::Relocation<std::uintptr_t> funcPtr{ REL::ID(170456) };
-		const auto func = reinterpret_cast<bool (*)(std::uintptr_t, std::uint32_t, RE::Actor*, RE::Actor*)>(funcPtr.address());
-		return func(0, 0, a_source, a_target);
+		// DISABLED 2026-08-22: this was a raw hand-cast call at
+		// REL::ID(170456) with a calling shape (two leading dummy args,
+		// (0, 0)) copied verbatim from Cassiopeia Papyrus Extender's usage
+		// rather than independently verified — per Alexander, the last
+		// confirmed crash-free build predates this function being wired
+		// into the per-frame Locked overlay/aim-assist path, and every
+		// hard-crash-without-log since (repeatedly, across several
+		// rebuilds that changed unrelated things — scanner-close
+		// mechanism, ImGui/display-size handling, AimAssist's mouse
+		// hook — none of which fixed it) lines up with the exact frame
+		// this first executes: the render thread's first Draw() call
+		// after a lock, which is also this call's first-ever invocation
+		// from this specific thread/context. Mapped, non-zero ID is not
+		// proof of safety (see commonlibsf-unmapped-ids memory) — treat
+		// as the prime suspect until proven otherwise with the real call
+		// disabled. Returns true (no LOS gating — matches pre-feature
+		// behavior) until the calling convention can be independently
+		// re-derived, e.g. from Cassiopeia's actual disassembly rather
+		// than by inference from its call site alone.
+		return true;
 	}
 }

@@ -15,16 +15,12 @@ namespace
 			VATS::Settings::Get().Load();
 			VATS::HotkeyWatcher::Start();
 			VATS::BackKeyInterceptor::Start();
-			// AimAssist::Start() temporarily disabled 2026-08-22 for
-			// isolation testing: Alexander confirmed the last crash-free
-			// build predates the steering-loop/mouse-hook feature (it
-			// still "snapped" onto the target instead of gradually
-			// converging). This installs a permanent WH_MOUSE_LL hook
-			// covering the whole session, not just while Locked - if
-			// disabling it alone stops the N-press crash, that's a clean,
-			// single-variable confirmation pointing at this file
-			// specifically. Re-enable once that's confirmed either way.
-			// VATS::AimAssist::Start();
+			// Re-enabled 2026-08-22: was briefly disabled to isolate the
+			// N-press hard-crash-without-log, but the crash reproduced
+			// with AimAssist off too — its mouse hook is cleared as a
+			// suspect. Real cause tracked down to HasDetectionLOS (see
+			// Targeting.cpp).
+			VATS::AimAssist::Start();
 			VATS::EngineInputLayer::Init();
 			break;
 		default:
