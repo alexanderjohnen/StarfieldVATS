@@ -20,10 +20,30 @@ namespace VATS
 		// a fresh guess. Only the LAST hop (kWeaponDataAimPad30) is an
 		// actual hypothesis - everything before it is load-bearing,
 		// already-typed CommonLibSF struct layout.
-		constexpr std::size_t kActorCurrentProcess = 0x228;         // RE::Actor::currentProcess
-		constexpr std::size_t kAIProcessMiddleHigh = 0x08;          // RE::AIProcess::middleHigh
-		constexpr std::size_t kMiddleHighLastBoundWeapon = 0x450;   // RE::MiddleHighProcessData::lastBoundWeapon
-		constexpr std::size_t kWeaponWeaponData = 0x248;            // RE::TESObjectWEAP::weaponData (BSTSmartPointer, _ptr at +0)
+		//
+		// Path revised 2026-08-22: the original chain went through
+		// Actor::currentProcess->middleHigh->lastBoundWeapon (a
+		// MiddleHighProcessData field whose name plausibly suggested
+		// "currently drawn weapon") and then TESObjectWEAP's *static form*
+		// weaponData. In-game testing showed lastBoundWeapon is null on
+		// every single shot despite currentProcess/middleHigh both
+		// resolving fine - it's evidently not what its name suggests.
+		// Replaced with the actor's live inventory list instead (Actor
+		// inherits TESObjectREFR::inventoryList), walking to the equipped
+		// weapon's *per-item instance data* (mods/attachments applied)
+		// rather than the static template - arguably the more correct
+		// object to read aim-assist config from anyway.
+		constexpr std::size_t kInventoryList = 0xA0;         // RE::TESObjectREFR::inventoryList (BSGuarded<BGSInventoryList*, BSReadWriteLock> - read raw, no lock; see below)
+		constexpr std::size_t kInventoryListData = 0x28;     // RE::BGSInventoryList::data (BSTArray<BGSInventoryItem>)
+		constexpr std::size_t kArraySize = 0x00;             // RE::BSTArrayBase::_size
+		constexpr std::size_t kArrayCapacity = 0x04;         // RE::BSTArrayBase::_capacity
+		constexpr std::size_t kArrayData = 0x08;             // RE::BSTArray<T>::_data
+		constexpr std::size_t kItemStride = 0x28;            // sizeof(RE::BGSInventoryItem)
+		constexpr std::size_t kItemObject = 0x00;            // RE::BGSInventoryItem::object (TESBoundObject*)
+		constexpr std::size_t kItemInstanceData = 0x08;      // RE::BGSInventoryItem::instanceData (BSTSmartPointer, _ptr at +0)
+		constexpr std::size_t kItemFlags = 0x20;             // RE::BGSInventoryItem::flags
+		constexpr std::uint32_t kSlotMask = 0x7;             // kSlotIndex1|2|3 - IsEquipped() check
+		constexpr std::uint8_t  kFormTypeWEAP = 0x30;        // RE::FormType::kWEAP
 		constexpr std::size_t kInstanceDataWeaponDataAim = 0x18;    // RE::TESObjectWEAPInstanceData::WeaponDataAim
 		constexpr std::size_t kWeaponDataAimAimModel = 0x28;        // RE::WeaponDataAim::aimModel (known-good, cross-check field)
 		constexpr std::size_t kWeaponDataAimPad30 = 0x30;           // RE::WeaponDataAim::pad30 - HYPOTHESIS: BGSAimAssistModel*
@@ -41,27 +61,61 @@ namespace VATS
 			return;
 		}
 
-		std::uint64_t currentProcess = 0;
-		if (!Read(a_actor, kActorCurrentProcess, currentProcess) || !currentProcess) {
-			REX::INFO("[VATS] aimassist-probe: no currentProcess");
+		// inventoryList is a BSGuarded<BGSInventoryList*, BSReadWriteLock>
+		// - reading the raw pointer directly instead of going through
+		// BSReadWriteLock::LockRead()/UnlockRead() deliberately: those are
+		// REL::ID-backed engine calls, and BSReadWriteLock::LockRead()
+		// specifically is already on this project's list of "mapped but
+		// crashed anyway" calls (TESObjectCELL::ForEachReference, see
+		// commonlibsf-unmapped-ids memory) - a plain unsynchronized read
+		// degrades to a stale-but-still-valid-shaped pointer at worst,
+		// SafeRead-guarded either way.
+		std::uint64_t invList = 0;
+		if (!Read(a_actor, kInventoryList, invList) || !invList) {
+			REX::INFO("[VATS] aimassist-probe: no inventoryList");
 			return;
 		}
 
-		std::uint64_t middleHigh = 0;
-		if (!Read(reinterpret_cast<const void*>(currentProcess), kAIProcessMiddleHigh, middleHigh) || !middleHigh) {
-			REX::INFO("[VATS] aimassist-probe: no middleHigh");
+		std::uint32_t arraySize = 0;
+		std::uint32_t arrayCapacity = 0;
+		std::uint64_t arrayData = 0;
+		if (!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArraySize, arraySize) ||
+			!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayCapacity, arrayCapacity) ||
+			!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayData, arrayData) ||
+			arraySize == 0 || arrayCapacity < arraySize || !arrayData) {
+			REX::INFO("[VATS] aimassist-probe: inventoryList=0x{:X} array read failed (size={} cap={} data=0x{:X})",
+				invList, arraySize, arrayCapacity, arrayData);
 			return;
 		}
 
 		std::uint64_t weapon = 0;
-		if (!Read(reinterpret_cast<const void*>(middleHigh), kMiddleHighLastBoundWeapon, weapon) || !weapon) {
-			REX::INFO("[VATS] aimassist-probe: no lastBoundWeapon (not wielding a weapon?)");
-			return;
+		std::uint64_t instanceData = 0;
+		for (std::uint32_t i = 0; i < arraySize; ++i) {
+			const std::uint64_t itemBase = arrayData + static_cast<std::uint64_t>(i) * kItemStride;
+
+			std::uint64_t object = 0;
+			if (!Read(reinterpret_cast<const void*>(itemBase), kItemObject, object) || !object) {
+				continue;
+			}
+			std::uint8_t formType = 0;
+			if (!Read(reinterpret_cast<const void*>(object), GameOffsets::kFormType, formType) || formType != kFormTypeWEAP) {
+				continue;
+			}
+			std::uint32_t flags = 0;
+			if (!Read(reinterpret_cast<const void*>(itemBase), kItemFlags, flags) || (flags & kSlotMask) == 0) {
+				continue;  // not equipped
+			}
+			std::uint64_t itemInstanceData = 0;
+			if (!Read(reinterpret_cast<const void*>(itemBase), kItemInstanceData, itemInstanceData) || !itemInstanceData) {
+				continue;
+			}
+			weapon = object;
+			instanceData = itemInstanceData;
+			break;
 		}
 
-		std::uint64_t instanceData = 0;
-		if (!Read(reinterpret_cast<const void*>(weapon), kWeaponWeaponData, instanceData) || !instanceData) {
-			REX::INFO("[VATS] aimassist-probe: weapon=0x{:X} has no weaponData", weapon);
+		if (!weapon || !instanceData) {
+			REX::INFO("[VATS] aimassist-probe: no equipped weapon found in inventory (size={})", arraySize);
 			return;
 		}
 
