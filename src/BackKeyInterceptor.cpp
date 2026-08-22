@@ -54,14 +54,30 @@ namespace VATS
 		{
 			if (a_code == HC_ACTION && (a_wParam == WM_KEYDOWN || a_wParam == WM_SYSKEYDOWN)) {
 				const auto* info = reinterpret_cast<const KBDLLHOOKSTRUCT*>(a_lParam);
-				if (info->vkCode == Settings::Get().backKeyVK &&
-					GameWindowHasFocus() &&
-					Controller::Get().GetMode() == VATSMode::kLocked) {
-					std::thread([]() {
-						REX::INFO("[VATS] back key intercepted, ending lock instead of reaching the game");
-						Controller::Get().ForceOff();
+				if (info->vkCode == Settings::Get().backKeyVK) {
+					// Diagnostic (2026-08-22): "[VATS] back key intercepted"
+					// never once appeared in a full test session despite
+					// Alexander pressing Tab while Locked - this logs every
+					// matching keydown regardless of the other two gates
+					// (focus/mode, both cheap non-blocking checks, safe to
+					// evaluate inline) so the next test's log says exactly
+					// which one is rejecting it, instead of the hook body
+					// silently doing nothing whenever any gate fails. Remove
+					// once the real cause is confirmed.
+					const bool     hasFocus = GameWindowHasFocus();
+					const VATSMode mode = Controller::Get().GetMode();
+					const bool     shouldSwallow = hasFocus && mode == VATSMode::kLocked;
+					std::thread([hasFocus, mode, shouldSwallow]() {
+						REX::INFO("[VATS] back key seen: hasFocus={} mode={} -> {}",
+							hasFocus, mode == VATSMode::kLocked ? "Locked" : "Off",
+							shouldSwallow ? "swallow+ForceOff" : "pass through");
+						if (shouldSwallow) {
+							Controller::Get().ForceOff();
+						}
 					}).detach();
-					return 1;  // swallow - Starfield never sees this keydown
+					if (shouldSwallow) {
+						return 1;  // swallow - Starfield never sees this keydown
+					}
 				}
 			}
 			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);

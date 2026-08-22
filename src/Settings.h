@@ -23,21 +23,22 @@ namespace VATS
 		// How to close the hand scanner when a lock is acquired.
 		//   0 = don't close it at all
 		//   1 = simulated real press of scannerToggleKeyVK (animation+sound
-		//       — the proven-working default; confirmed across many test
-		//       sessions, including twice in a row in the same session on
-		//       2026-08-22 right before an unrelated crash)
-		//   2 = UIMessageQueue kHide (no animation/sound — an older,
-		//       never-reverted-to fallback, kept only in case a future
-		//       session ever needs to isolate this specific mechanism)
-		// A same-day crash was briefly misattributed to mode 1 from just
-		// two data points that happened to coincide in timing with it —
-		// wrong call, mode 1 has far more successful test sessions behind
-		// it than that. Don't flip this default again without much
-		// stronger evidence than "the log line right before the crash
-		// happened to be about scanner-close" (see [[commonlibsf-unmapped-ids]]
-		// lesson #3 — don't chase the last log line if it's just the last
-		// thing that happened to log, not something shown to be the cause).
-		std::uint32_t scannerCloseMode{ 1 };
+		//       — worked reliably across many sessions on its own, but
+		//       BROKEN as of 2026-08-22 once EngineInputLayer::SetBlocked
+		//       (re-enabled the same day to fix Tab/DataMenu, see
+		//       VATSController.cpp) started disabling USER_EVENT_FLAG::
+		//       TabMenuMaybe on every lock — log-confirmed collateral
+		//       damage: "scanner still open after 3 attempts" every single
+		//       lock since, 0/N successes, where it was reliable before.
+		//       TabMenuMaybe apparently gates more than just the Tab/
+		//       DataMenu action alone (any single-key menu-toggle action,
+		//       possibly including the scanner's own Q-toggle) - not worth
+		//       digging further into which flag exactly until this project
+		//       actually needs the nicer animation back.
+		//   2 = UIMessageQueue kHide (no animation/sound, but unaffected
+		//       by EngineInputLayer since it goes through a completely
+		//       different path - current default)
+		std::uint32_t scannerCloseMode{ 2 };
 
 		// The real in-game "back" key — same one that opens the Tab
 		// character hub (DataMenu) when nothing else is open, but backs out
@@ -78,10 +79,21 @@ namespace VATS
 		// would have.
 		std::uint32_t centerHitChancePercent{ 95 };
 
-		// Normalized screen-space radius (0..1, screen-diagonal-ish units)
-		// within which the chance cone applies at all; beyond it, chance
-		// is 0 and aim-assist does nothing (same as being off-screen
-		// entirely). Starting guess, unverified/untuned.
-		float assistRadius{ 0.15f };
+		// Distance-based chance falloff (2026-08-22 redesign) — replaces
+		// the original screen-space "must aim precisely at the crosshair"
+		// cone. Alexander's reference: FO4/FO76 VATS shows a high chance
+		// number even while the reticle points nowhere near the target
+		// (see starfield-vats-mod-design memory) — the whole point of
+		// VATS is that it doesn't require aim precision, only a lock and
+		// being in range/LOS. Doubly true here since the fired round gets
+		// redirected in-flight regardless of exact aim (ProjectileTracker)
+		// — tying the displayed/rolled chance to crosshair proximity would
+		// have fought that mechanic, not complemented it. centerHitChancePercent
+		// is now the chance at/under fullChanceRangeMeters, falling
+		// linearly to 0% by maxEffectiveRangeMeters. Being on-screen at
+		// all (roughly facing the target) and passing HasDetectionLOS are
+		// still hard requirements — see ComputeChancePercent.
+		float fullChanceRangeMeters{ 12.0f };
+		float maxEffectiveRangeMeters{ 45.0f };
 	};
 }

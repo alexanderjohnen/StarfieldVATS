@@ -49,10 +49,15 @@ namespace VATS
 		}
 
 		// Minimal standalone version of Overlay.cpp's ResolveOnScreen —
-		// dead check + position read + projection, no telemetry/throttling
-		// (that's a UI concern; this runs on a background thread and needs
-		// to be cheap and quiet).
-		[[nodiscard]] bool ResolveTargetScreen(RE::Actor* a_actor, float& a_outSx, float& a_outSy)
+		// dead check + position read + projection + world distance to the
+		// player, no telemetry/throttling (that's a UI concern; this runs
+		// on a background thread and needs to be cheap and quiet). Screen
+		// position is still resolved and gates on-screen-ness (chance is 0
+		// if the target isn't currently in view at all — same "roughly
+		// facing the target" requirement FO4/76 VATS has via its target
+		// list), but no longer feeds the chance formula itself — see
+		// ComputeChancePercent.
+		[[nodiscard]] bool ResolveTargetScreen(RE::Actor* a_actor, float& a_outDist)
 		{
 			std::uint32_t boolBits = 0;
 			if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kBoolBits, &boolBits, sizeof(boolBits)) &&
@@ -73,37 +78,47 @@ namespace VATS
 			if (sx < 0.0f || sx > 1.0f || sy < 0.0f || sy > 1.0f) {
 				return false;  // in front of the camera but outside the FOV frustum
 			}
-			a_outSx = sx;
-			a_outSy = sy;
+
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			if (!player) {
+				return false;
+			}
+			const auto  pp = player->GetPosition();
+			const float dx = aimPos.x - pp.x;
+			const float dy = aimPos.y - pp.y;
+			const float dz = aimPos.z - pp.z;
+			a_outDist = std::sqrt(dx * dx + dy * dy + dz * dz);
 			return true;
 		}
 
-		// Hit-chance cone (2026-08-22, Alexander's idea): 100% dead center
-		// on the crosshair, falling off linearly to 0% at
-		// Settings::assistRadius. a_sx/a_sy are the target's aim-point
-		// screen position (0..1, from ResolveTargetScreen) — distance is
-		// measured from true screen center (0.5, 0.5), i.e. the crosshair.
-		// ANDed with a real occlusion check (HasDetectionLOS, see
-		// Targeting.h) — being aimed-at doesn't matter if a wall is
-		// actually in the way; this is the live "is target visible" signal
-		// the earlier GetActorKnowledge attempt was meant to provide,
-		// found instead in Cassiopeia Papyrus Extender's source 2026-08-22.
-		[[nodiscard]] float ComputeChancePercent(RE::Actor* a_target, float a_sx, float a_sy)
+		// Distance-based chance (2026-08-22 redesign, replaces an earlier
+		// screen-space "must aim precisely at the crosshair" cone) —
+		// Alexander's reference: FO4/76 VATS shows a high chance number
+		// even while the reticle points nowhere near the target (see
+		// starfield-vats-mod-design memory); the whole point of VATS is
+		// not requiring aim precision, only a lock and being in range/LOS
+		// — doubly true here since the round gets redirected in-flight
+		// regardless of exact aim (ProjectileTracker), so tying the
+		// chance itself to crosshair proximity fought the mechanic rather
+		// than complementing it. centerHitChancePercent applies at/under
+		// Settings::fullChanceRangeMeters, falling linearly to 0% by
+		// Settings::maxEffectiveRangeMeters. ANDed with a real occlusion
+		// check (HasDetectionLOS, see Targeting.h) — being close doesn't
+		// matter if a wall is actually in the way.
+		[[nodiscard]] float ComputeChancePercent(RE::Actor* a_target, float a_distance)
 		{
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (!player || !HasDetectionLOS(player, a_target)) {
 				return 0.0f;
 			}
 
-			const float dx = a_sx - 0.5f;
-			const float dy = a_sy - 0.5f;
-			const float screenDist = std::sqrt(dx * dx + dy * dy);
-			const float radius = Settings::Get().assistRadius;
-			if (radius <= 0.0f) {
-				return 0.0f;
-			}
-			const float t = std::clamp(1.0f - screenDist / radius, 0.0f, 1.0f);
-			return t * static_cast<float>(Settings::Get().centerHitChancePercent);
+			const auto& settings = Settings::Get();
+			const float full = settings.fullChanceRangeMeters;
+			const float maxR = settings.maxEffectiveRangeMeters;
+			const float t = maxR > full ?
+				std::clamp(1.0f - (a_distance - full) / (maxR - full), 0.0f, 1.0f) :
+				(a_distance <= full ? 1.0f : 0.0f);
+			return t * static_cast<float>(settings.centerHitChancePercent);
 		}
 
 		// Runs for the whole duration the fire button stays physically
@@ -134,27 +149,23 @@ namespace VATS
 				return;
 			}
 
-			// Chance (and therefore the hit/miss roll) is based on how
-			// close the player's actual aim already is to the target at
-			// the moment the trigger is pulled - not evaluated per shot
-			// within a held burst, same "one roll per hold" simplification
-			// as before.
-			float initialSx = 0.0f, initialSy = 0.0f;
-			if (!ResolveTargetScreen(state.actor.get(), initialSx, initialSy)) {
+			// Chance (and therefore the hit/miss roll) is based on distance
+			// + LOS at the moment the trigger is pulled - not evaluated
+			// per shot within a held burst, same "one roll per hold"
+			// simplification as before.
+			float initialDist = 0.0f;
+			if (!ResolveTargetScreen(state.actor.get(), initialDist)) {
 				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, chance is 0, no assist this hold");
 				return;
 			}
-			const float chancePercent = ComputeChancePercent(state.actor.get(), initialSx, initialSy);
+			const float chancePercent = ComputeChancePercent(state.actor.get(), initialDist);
 
-			// Outside the assist cone entirely (chance == 0): don't
+			// Zero chance (out of effective range or no LOS): don't
 			// redirect anything for the rest of this hold - real aim
 			// decides, full stop, same as the target being off-screen
-			// entirely. Mirrors the same guard the old steering design had
-			// (found 2026-08-22 that skipping this let an aim-nowhere-near
-			// shot still get pulled toward the target regardless of the
-			// displayed chance being 0).
+			// entirely.
 			if (chancePercent <= 0.0f) {
-				REX::INFO("[VATS] aim-assist: outside assist radius, chance is 0, firing unassisted");
+				REX::INFO("[VATS] aim-assist: zero chance (out of range or no LOS), firing unassisted");
 				return;
 			}
 
@@ -165,13 +176,27 @@ namespace VATS
 			const bool                             hit = roll < chance;
 			REX::INFO("[VATS] aim-assist: hold started, chance={:.0f}%, roll={:.2f} -> {}", chancePercent, roll, hit ? "HIT" : "MISS");
 
-			constexpr auto kTickInterval = std::chrono::milliseconds(20);
+			// Fast-poll right after the click, falling back to a slower
+			// cadence afterward. Found 2026-08-22: at the close range
+			// Alexander's screenshots showed, a fired round can travel to
+			// its target and resolve well inside 20ms - the original
+			// fixed 20ms tick interval meant the very first scan often
+			// ran *after* the round had already hit or expired, so it was
+			// never seen as a candidate at all (zero "[VATS] projectile
+			// redirect:" log lines despite dozens of correctly-rolled
+			// HITs). 2ms for the first 150ms after the click covers close-
+			// range shots without keeping a sustained automatic-weapon
+			// hold spinning that tightly for its whole duration.
+			constexpr auto kFastPollInterval = std::chrono::milliseconds(2);
+			constexpr auto kFastPollWindow = std::chrono::milliseconds(150);
+			constexpr auto kSlowPollInterval = std::chrono::milliseconds(20);
 			constexpr auto kMaxHoldDuration = std::chrono::seconds(10);  // safety net if a button-up is ever missed
 
 			std::unordered_set<std::uint64_t> handled;
 			const auto                        start = std::chrono::steady_clock::now();
 			while (s_buttonHeld.load() && Controller::Get().GetMode() == VATSMode::kLocked) {
-				if (std::chrono::steady_clock::now() - start > kMaxHoldDuration) {
+				const auto elapsed = std::chrono::steady_clock::now() - start;
+				if (elapsed > kMaxHoldDuration) {
 					REX::WARN("[VATS] aim-assist: hold exceeded safety timeout, stopping redirect scan");
 					break;
 				}
@@ -185,7 +210,7 @@ namespace VATS
 				}
 				ProjectileTracker::RedirectFreshProjectiles(currentState.actor.get(), hit, handled);
 
-				std::this_thread::sleep_for(kTickInterval);
+				std::this_thread::sleep_for(elapsed < kFastPollWindow ? kFastPollInterval : kSlowPollInterval);
 			}
 			REX::INFO("[VATS] aim-assist: hold ended");
 		}

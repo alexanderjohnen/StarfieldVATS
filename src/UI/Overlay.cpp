@@ -254,24 +254,24 @@ namespace VATS::UI
 				return;
 			}
 
-			// Hit-chance cone (mirrors AimAssist.cpp's ComputeChancePercent
-			// — same small duplicate-instead-of-shared-header tradeoff as
-			// ResolveAimWorldPos above): 100% dead center on the
-			// crosshair (true screen center), falling off linearly to 0%
-			// at Settings::assistRadius, ANDed with a real occlusion check
-			// (HasDetectionLOS — see Targeting.h). Shown live so Alexander
-			// can see exactly what the aim-assist would roll against right
-			// now, not just after firing.
+			// Distance-based chance (mirrors AimAssist.cpp's
+			// ComputeChancePercent — same small duplicate-instead-of-
+			// shared-header tradeoff as ResolveAimWorldPos above; see its
+			// comment for the 2026-08-22 redesign rationale — chance no
+			// longer depends on crosshair proximity, only distance/LOS).
+			// Shown live so Alexander can see exactly what the aim-assist
+			// would roll against right now, not just after firing.
 			char value[32] = "--";
 			if (dist >= 0.0f) {
 				float chancePercent = 0.0f;
 				if (auto* player = RE::PlayerCharacter::GetSingleton(); player && HasDetectionLOS(player, a_actor)) {
-					const float dx = sx - 0.5f;
-					const float dy = sy - 0.5f;
-					const float screenDist = std::sqrt(dx * dx + dy * dy);
-					const float radius = Settings::Get().assistRadius;
-					const float t = radius > 0.0f ? std::clamp(1.0f - screenDist / radius, 0.0f, 1.0f) : 0.0f;
-					chancePercent = t * static_cast<float>(Settings::Get().centerHitChancePercent);
+					const auto& settings = Settings::Get();
+					const float full = settings.fullChanceRangeMeters;
+					const float maxR = settings.maxEffectiveRangeMeters;
+					const float t = maxR > full ?
+						std::clamp(1.0f - (dist - full) / (maxR - full), 0.0f, 1.0f) :
+						(dist <= full ? 1.0f : 0.0f);
+					chancePercent = t * static_cast<float>(settings.centerHitChancePercent);
 				}
 				std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
 			}
