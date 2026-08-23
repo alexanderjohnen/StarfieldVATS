@@ -23,7 +23,20 @@ namespace
 			// suspect. Real cause tracked down to HasDetectionLOS (see
 			// Targeting.cpp).
 			VATS::AimAssist::Start();
-			VATS::AdsBlocker::Start();
+			// Disabled 2026-08-23: instant hard crash on launch, same clean
+			// CommonLibSF abort as HitEventLogger below ("REL/IDDB.cpp(417):
+			// Failed to find offset for Address Library ID! Invalid ID: 0")
+			// - one of PlayerIronSightsStartEvent::GetEventSource,
+			// PlayerIronSightsEndEvent::GetEventSource, or
+			// BSTEventSource<T>::RegisterSink itself isn't mapped for
+			// 1.16.244.0. Confirmed via screenshot on the main menu, before
+			// any save even loaded. See AdsBlocker.h - needs a mapped
+			// alternative or the gap reported upstream before this can be
+			// re-enabled; the camera-state-polling and OS-input-hook
+			// approaches tried before this one both compiled/ran safely but
+			// had no actual effect on ADS, so there's no safe fallback
+			// version of this feature to fall back to right now.
+			// VATS::AdsBlocker::Start();
 			VATS::EngineInputLayer::Init();
 			// Disabled 2026-08-23: instant hard crash on every launch
 			// (a clean CommonLibSF-level abort, not a wild-pointer crash -
