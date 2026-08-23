@@ -30,6 +30,7 @@ namespace VATS
 		constexpr std::size_t   kProjectileDataGravity = 0x4C;
 		constexpr std::size_t   kProjectileDataSpeed = 0x50;
 		constexpr std::size_t   kProjectileDataRange = 0x54;
+		constexpr std::size_t   kProjectileDataType = 0x84;  // RE::BGSProjectileData::Type (1 byte)
 		constexpr std::uint32_t kFlagHitScan = 1u << 0;
 
 		// Sweeps every 8-byte-aligned qword in [0, a_size) from a_base,
@@ -85,6 +86,28 @@ namespace VATS
 			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataSpeed, speed);
 			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataRange, range);
 
+			// Alexander's hypothesis (2026-08-23): with kHitScan/kSeeksTarget
+			// showing up unset on literally every sample so far - including
+			// an already-confirmed-real projectile (flags=0xA, speed=120,
+			// range=15000, matching the rocket ProjectileTracker already
+			// redirects) - flags may not be the real switch at all. Type
+			// (relative +0x84, one byte - RE::BGSProjectileData::Type enum:
+			// kMissile=1, kGrenade=2, kBeam=4, kFlamethrower=8, kCone=16,
+			// kBarrier=32, kArrow=64) and the Shingen mod's "Seek Strength"
+			// (xEdit-confirmed real field, 1.0 on the homing weapon - not
+			// yet mapped to one of the header's four unnamed trailing
+			// floats unk88/8C/90/94) are the next candidates. Logging Type
+			// and all four unk floats so a future sample with kSeeksTarget
+			// actually set (or a clearer real-vs-hitscan pair) can pin down
+			// which one is Seek Strength.
+			std::uint8_t type = 0;
+			float        unk88 = 0.0f, unk8C = 0.0f, unk90 = 0.0f, unk94 = 0.0f;
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataType, type);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + 0x88, unk88);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + 0x8C, unk8C);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + 0x90, unk90);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + 0x94, unk94);
+
 			// Diagnostic (2026-08-23): flags/gravity/speed/range all read as
 			// exactly zero for every candidate seen so far - four
 			// independent fields all being simultaneously zero looks like
@@ -112,8 +135,8 @@ namespace VATS
 				}
 			}
 
-			REX::INFO("[VATS] projflag candidate {}: projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f}",
-				a_label, a_projectile, rawFlags, flagsRead, flagsRead && (rawFlags & kFlagHitScan) != 0, gravity, speed, range);
+			REX::INFO("[VATS] projflag candidate {}: projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f} type=0x{:02X} unk88={:.3f} unk8C={:.3f} unk90={:.3f} unk94={:.3f}",
+				a_label, a_projectile, rawFlags, flagsRead, flagsRead && (rawFlags & kFlagHitScan) != 0, gravity, speed, range, type, unk88, unk8C, unk90, unk94);
 		}
 
 		// Same equipped-weapon resolution as AimAssistProbe.cpp (see that
