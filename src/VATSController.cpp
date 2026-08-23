@@ -253,9 +253,14 @@ namespace VATS
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
 			}
-			if (Settings::Get().blockAdsWhileLocked) {
-				EngineInputLayer::SetAdsBlocked(true);
-			}
+			// EngineInputLayer::SetAdsBlocked(true) disabled again
+			// 2026-08-23: confirmed via screenshot that USER_EVENT_FLAG::
+			// Fighting is far broader than its name suggests - it holstered
+			// the weapon entirely on lock, not just blocked ADS. Same
+			// "collateral damage" pattern as TabMenuMaybe/POVSwitch above.
+			// The SetAdsBlocked(false) calls in ForceOff()/the Locked->Off
+			// branch stay - harmless/idempotent either way, left in place
+			// in case this comes back with a narrower flag.
 
 			// Close the hand scanner on lock so the weapon comes back up
 			// immediately, mirroring vanilla scan-then-act flows. Mechanism

@@ -40,13 +40,13 @@ namespace VATS
 		// engine never actually enters kIronSights during a real ADS;
 		// RE::PlayerControls::PlayerIronSightsStartEvent registration:
 		// crashed outright on an unmapped Address Library ID, see
-		// AdsBlocker.h/main.cpp). This reuses the exact same
-		// BSInputEnableLayer::EnableUserEvent call SetBlocked already makes
-		// successfully (zero new REL::ID risk) with a flag this project
-		// hasn't tried yet - genuinely unknown whether "Fighting" gates ADS
-		// specifically, gates firing too (which would break the mod's core
-		// mechanic while Locked), or does something else entirely. Needs
-		// in-game confirmation.
+		// AdsBlocker.h/main.cpp).
+		//
+		// CONFIRMED TOO BROAD (2026-08-23, screenshot): disabling Fighting
+		// holstered the weapon entirely on lock, not just ADS - same
+		// "collateral damage" pattern as TabMenuMaybe/POVSwitch above.
+		// Currently unused (see VATSController.cpp's Advance()) but kept
+		// implemented in case a narrower flag combination is found later.
 		static void SetAdsBlocked(bool a_blocked);
 	};
 }
