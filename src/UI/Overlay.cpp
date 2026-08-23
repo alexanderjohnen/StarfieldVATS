@@ -336,6 +336,20 @@ namespace VATS::UI
 				Controller::Get().ForceOff();
 				return;
 			}
+
+			// Message boxes (Starfield's "MessageBoxMenu" - the standard
+			// Bethesda-engine popup used for e.g. the Scanner's own Social
+			// Skills tutorial tip) are NOT in the blockingMenuOpen list
+			// above on purpose - screenshot-confirmed 2026-08-23 that our
+			// overlay drew right over one, but ending the whole lock every
+			// time a tutorial tip pops up mid-scan would be overkill (it's
+			// a brief, transient popup within the same interaction, not a
+			// context switch like PauseMenu/DataMenu). Skip drawing only -
+			// leave Controller state untouched - so the overlay simply
+			// reappears once the box closes.
+			if (ui->IsMenuOpen("MessageBoxMenu")) {
+				return;
+			}
 		}
 
 		const auto state = Controller::Get().GetOverlayState();

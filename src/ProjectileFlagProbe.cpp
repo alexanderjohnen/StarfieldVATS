@@ -34,7 +34,11 @@ namespace VATS
 		// the full chain and the WeaponAmmoData::ammo offset discrepancy.
 		constexpr std::size_t  kInstanceDataWeaponAmmoData = 0x20;  // RE::TESObjectWEAPInstanceData::WeaponAmmoData
 		constexpr std::size_t  kWeaponAmmoDataAmmo = 0x18;          // RE::WeaponAmmoData::ammo - static_assert-backed, NOT the header's stale "0x0020" inline comment
-		constexpr std::uint8_t  kFormTypeAMMO = 0x1F;               // RE::FormType::kAMMO (31)
+		// FormTypes.h's inline comments are hex without a "0x" prefix, not
+		// decimal - misread once as decimal (0x1F instead of 0x31), which
+		// made every cross-check fail even though the pointer chain was
+		// actually resolving correctly. kAMMO's real value is 0x31.
+		constexpr std::uint8_t  kFormTypeAMMO = 0x31;               // RE::FormType::kAMMO
 		constexpr std::size_t  kAmmoDataProjectile = 0x1F8;         // RE::TESAmmo::data.projectile (AMMO_DATA is at 0x1F8, projectile is its first member)
 		constexpr std::uint8_t  kFormTypePROJ = 0x3A;               // RE::FormType::kPROJ (58)
 		constexpr std::size_t  kProjectileData = 0x128;             // RE::BGSProjectile::data
