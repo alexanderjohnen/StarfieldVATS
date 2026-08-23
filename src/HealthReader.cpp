@@ -14,15 +14,14 @@ namespace VATS
 	namespace
 	{
 		constexpr std::size_t kBaseValueStride = 16;  // ActorValueInfo* (8) + float (4), 8-byte aligned
-		constexpr std::size_t kModifierStride = 24;   // ActorValueInfo* (8) + Modifiers (12), 8-byte aligned
 
-		// avStorage.baseValues/modifiers are declared by CommonLibSF's
-		// header as BSTArray<BSTTuple<uint32_t, T>> (key = a 4-byte AV
-		// index), but empirical inspection (2026-08-23, cross-checked
-		// against Alexander's `getav health`=480 on a locked target) showed
-		// that reading with that assumed 8-byte stride produces a
-		// corrupted-looking sequence: "key" values that cluster tightly
-		// with a constant high 16 bits (the signature of the low 32 bits of
+		// avStorage.baseValues is declared by CommonLibSF's header as
+		// BSTArray<BSTTuple<uint32_t, float>> (key = a 4-byte AV index),
+		// but empirical inspection (2026-08-23, cross-checked against
+		// Alexander's `getav health`=480 on a locked target) showed that
+		// reading with that assumed 8-byte stride produces a corrupted-
+		// looking sequence: "key" values that cluster tightly with a
+		// constant high 16 bits (the signature of the low 32 bits of
 		// consecutive pointers into one contiguous table, not a small
 		// integer index), paired with "values" that are almost always ~0.0
 		// (consistent with reading the high 32 bits of those same 8-byte
@@ -54,16 +53,11 @@ namespace VATS
 			return false;
 		}
 
-		// Fallback diagnostic if FindByAvPointer's new hypothesis is also
-		// wrong: dumps raw floats starting at the array's own data pointer
-		// (the heap-allocated element buffer itself, NOT the Actor object -
-		// an earlier version of this dump wrongly scanned around the Actor
-		// object's own memory, which could never have found a real entry's
-		// value regardless of stride, since elements live on the heap the
-		// data pointer points to). A known-good value (Alexander's
-		// `getav health`) can then be located by inspection - same
-		// technique ProjectileTracker.cpp used to correct RE::Projectile's
-		// offsets.
+		// Fallback diagnostic if FindByAvPointer's stride hypothesis is
+		// ever wrong for a value: dumps raw floats starting at the array's
+		// own data pointer (the heap-allocated element buffer itself, NOT
+		// the Actor object). Same technique ProjectileTracker.cpp used to
+		// correct RE::Projectile's offsets.
 		void DumpRawFloatWindow(const void* a_dataPtr, std::size_t a_byteCount)
 		{
 			const auto* base = reinterpret_cast<const std::byte*>(a_dataPtr);
@@ -104,11 +98,25 @@ namespace VATS
 		}
 		const RE::ActorValueInfo* healthInfo = avList->health;
 
-		float base = 0.0f;
-		if (!FindByAvPointer(a_actor->avStorage.baseValues, healthInfo, kBaseValueStride, base)) {
-			// Diagnostic (2026-08-23): dump once per actor if the new
-			// pointer-keyed hypothesis still doesn't find health. Remove
-			// once GetActorHealth is confirmed working.
+		// Diagnostic (2026-08-23) revealed avStorage.modifiers never has a
+		// health entry even after Alexander damaged the target, and
+		// baseValues' health entry read exactly equal to `getav health`
+		// (the console's already-fully-modified current value) at first
+		// sighting - together, that means Starfield writes damage straight
+		// into baseValues for health rather than layering it on via an
+		// ACTOR_VALUE_MODIFIER::kDamage entry the way older Creation Engine
+		// titles do. So this reads the live current value directly, and
+		// tracks "max" ourselves as the highest value ever observed for
+		// this actor (updates upward too, in case of overheal/regen) -
+		// accurate for any target first seen at full health, the common
+		// case; a target re-locked mid-fight after already being damaged
+		// will show a max that's really just "however much health it had
+		// when we started watching it," a known, acceptable limitation.
+		float current = 0.0f;
+		if (!FindByAvPointer(a_actor->avStorage.baseValues, healthInfo, kBaseValueStride, current)) {
+			// Diagnostic (2026-08-23): dump once per actor if the pointer-
+			// keyed hypothesis ever fails to find health. Remove once
+			// GetActorHealth is confirmed working.
 			static std::unordered_set<std::uint32_t> s_logged;
 			const std::uint32_t                       formID = a_actor->GetFormID();
 			if (s_logged.insert(formID).second) {
@@ -120,46 +128,15 @@ namespace VATS
 			return false;
 		}
 
-		// Modifiers entry is optional - an actor that's never taken/healed
-		// damage and has no permanent/temporary health bonuses simply has no
-		// entry at all, which is a legitimate "no modifiers" case (all three
-		// stay 0), not a failure. Diagnostic (2026-08-23): the bar Alexander
-		// tested never moved (always full), suggesting either no entry is
-		// ever found here (kModifierStride=24 was inferred by analogy to
-		// baseValues' confirmed 16, never independently checked) or the
-		// found entry's 3 slots aren't in the [permanent, temporary, damage]
-		// order ACTOR_VALUE_MODIFIER assumes - logs whichever is true once
-		// per actor. Remove once the bar is confirmed tracking real damage.
-		RE::Modifiers mods{};
-		float         permanent = 0.0f, temporary = 0.0f, damage = 0.0f;
-		const bool    foundMods = FindByAvPointer(a_actor->avStorage.modifiers, healthInfo, kModifierStride, mods);
-		if (foundMods) {
-			permanent = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kPermanent)];
-			temporary = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kTemporary)];
-			damage = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kDamage)];
-		}
-		{
-			// Logs on change rather than once-ever-per-actor, specifically
-			// so a full test (target at full health, then damaged) shows
-			// whether "damage" ever moves at all, not just its value at
-			// first sighting.
-			static std::unordered_map<std::uint32_t, float> s_lastLoggedCurrent;
-			const std::uint32_t                              formID = a_actor->GetFormID();
-			const float                                      current = base + permanent + temporary + damage;
-			const auto                                        it = s_lastLoggedCurrent.find(formID);
-			if (it == s_lastLoggedCurrent.end() || it->second != current) {
-				const auto& arr = a_actor->avStorage.modifiers;
-				REX::INFO("[VATS] health modifiers: formID=0x{:08X} base={:.1f} found={} slots=[{:.1f},{:.1f},{:.1f}] current={:.1f} modifiers.size={}",
-					formID, base, foundMods, mods.modifiers[0], mods.modifiers[1], mods.modifiers[2], current, arr.size());
-				s_lastLoggedCurrent[formID] = current;
-				if (!foundMods) {
-					DumpRawFloatWindow(arr.data(), std::min<std::size_t>(arr.size(), 64) * kModifierStride);
-				}
-			}
+		static std::unordered_map<std::uint32_t, float> s_maxSeen;
+		const std::uint32_t                              formID = a_actor->GetFormID();
+		float&                                            maxSeen = s_maxSeen[formID];
+		if (current > maxSeen) {
+			maxSeen = current;
 		}
 
-		a_out.max = base + permanent + temporary;
-		a_out.current = a_out.max + damage;  // damage modifier is stored negative
+		a_out.current = current;
+		a_out.max = maxSeen;
 		return true;
 	}
 
