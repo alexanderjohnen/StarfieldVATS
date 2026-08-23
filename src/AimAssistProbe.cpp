@@ -13,65 +13,46 @@ namespace VATS
 			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
 		}
 
-		// All offsets below come from CommonLibSF headers carrying
-		// static_assert(offsetof(...)) checks on the surrounding struct -
-		// the same "verified by the library's own compile-time assertion"
-		// confidence tier as GameOffsets::kAimPointChestZ's siblings, not
-		// a fresh guess. Only the LAST hop (kWeaponDataAimPad30) is an
-		// actual hypothesis - everything before it is load-bearing,
-		// already-typed CommonLibSF struct layout.
-		//
-		// Path revised 2026-08-22: the original chain went through
-		// Actor::currentProcess->middleHigh->lastBoundWeapon (a
-		// MiddleHighProcessData field whose name plausibly suggested
-		// "currently drawn weapon") and then TESObjectWEAP's *static form*
-		// weaponData. In-game testing showed lastBoundWeapon is null on
-		// every single shot despite currentProcess/middleHigh both
-		// resolving fine - it's evidently not what its name suggests.
-		// Replaced with the actor's live inventory list instead (Actor
-		// inherits TESObjectREFR::inventoryList), walking to the equipped
-		// weapon's *per-item instance data* (mods/attachments applied)
-		// rather than the static template - arguably the more correct
-		// object to read aim-assist config from anyway.
-		constexpr std::size_t kInventoryList = 0xA0;         // RE::TESObjectREFR::inventoryList (BSGuarded<BGSInventoryList*, BSReadWriteLock> - read raw, no lock; see below)
-		constexpr std::size_t kInventoryListData = 0x28;     // RE::BGSInventoryList::data (BSTArray<BGSInventoryItem>)
-		constexpr std::size_t kArraySize = 0x00;             // RE::BSTArrayBase::_size
-		constexpr std::size_t kArrayCapacity = 0x04;         // RE::BSTArrayBase::_capacity
-		constexpr std::size_t kArrayData = 0x08;             // RE::BSTArray<T>::_data
-		constexpr std::size_t kItemStride = 0x28;            // sizeof(RE::BGSInventoryItem)
-		constexpr std::size_t kItemObject = 0x00;            // RE::BGSInventoryItem::object (TESBoundObject*)
-		constexpr std::size_t kItemInstanceData = 0x08;      // RE::BGSInventoryItem::instanceData (BSTSmartPointer, _ptr at +0)
-		constexpr std::size_t kItemFlags = 0x20;             // RE::BGSInventoryItem::flags
-		constexpr std::uint32_t kSlotMask = 0x7;             // kSlotIndex1|2|3 - IsEquipped() check
-		constexpr std::uint8_t  kFormTypeWEAP = 0x30;        // RE::FormType::kWEAP
-		constexpr std::size_t kInstanceDataWeaponDataAim = 0x18;    // RE::TESObjectWEAPInstanceData::WeaponDataAim
-		constexpr std::size_t kWeaponDataAimAimModel = 0x28;        // RE::WeaponDataAim::aimModel (known-good, cross-check field)
-		constexpr std::size_t kBaseFormTData = 0x38;                // RE::BGSBaseFormT<T,...>::data (embedded, not a pointer)
+		template <class T>
+		[[nodiscard]] bool Write(void* a_base, std::size_t a_off, const T& a_val)
+		{
+			return SafeWrite(static_cast<std::byte*>(a_base) + a_off, &a_val, sizeof(T));
+		}
+
+		// All offsets below are either CommonLibSF static_assert-backed
+		// struct layout, or were cross-validated live in-game 2026-08-22
+		// (see AimAssistProbe.h for the full confirmed chain and its
+		// history - lastBoundWeapon was a dead end, pad30 was a dead end,
+		// pad38 is the real BGSAimAssistModel*).
+		constexpr std::size_t kInventoryList = 0xA0;                    // RE::TESObjectREFR::inventoryList (BSGuarded, read raw - see header)
+		constexpr std::size_t kInventoryListData = 0x28;                // RE::BGSInventoryList::data
+		constexpr std::size_t kArraySize = 0x00;                        // RE::BSTArrayBase::_size
+		constexpr std::size_t kArrayCapacity = 0x04;                    // RE::BSTArrayBase::_capacity
+		constexpr std::size_t kArrayData = 0x08;                        // RE::BSTArray<T>::_data
+		constexpr std::size_t kItemStride = 0x28;                       // sizeof(RE::BGSInventoryItem)
+		constexpr std::size_t kItemObject = 0x00;                       // RE::BGSInventoryItem::object
+		constexpr std::size_t kItemInstanceData = 0x08;                 // RE::BGSInventoryItem::instanceData (_ptr at +0)
+		constexpr std::size_t kItemFlags = 0x20;                        // RE::BGSInventoryItem::flags
+		constexpr std::uint32_t kSlotMask = 0x7;                        // kSlotIndex1|2|3 - IsEquipped() check
+		constexpr std::uint8_t  kFormTypeWEAP = 0x30;                   // RE::FormType::kWEAP
+		constexpr std::size_t kInstanceDataWeaponDataAim = 0x18;        // RE::TESObjectWEAPInstanceData::WeaponDataAim
+		constexpr std::size_t kWeaponDataAimAimModel = 0x28;            // RE::WeaponDataAim::aimModel (cross-check field)
+		constexpr std::size_t kWeaponDataAimAimAssistModel = 0x38;      // RE::WeaponDataAim - confirmed live 2026-08-22 (NOT +0x30)
+		constexpr std::size_t kBaseFormTData = 0x38;                    // RE::BGSBaseFormT<T,...>::data (embedded, not a pointer)
 		constexpr std::size_t kAimAssistBulletBendingConeAngle = 0x38;  // RE::AimAssistData::bulletBendingConeAngle
 		constexpr std::size_t kAimAssistEnabled = 0x5C;                 // RE::AimAssistData::aimAssistEnabled
-		constexpr std::uint8_t kFormTypeAMDL = 0x93;  // RE::FormType::kAMDL (BGSAimModel)
-		constexpr std::uint8_t kFormTypeAAMD = 0x94;  // RE::FormType::kAAMD (BGSAimAssistModel)
+		constexpr std::uint8_t kFormTypeAMDL = 0x93;                    // RE::FormType::kAMDL (BGSAimModel)
+		constexpr std::uint8_t kFormTypeAAMD = 0x94;                    // RE::FormType::kAAMD (BGSAimAssistModel)
 	}
 
-	void AimAssistProbe::ProbeEquippedWeapon(RE::Actor* a_actor)
+	void AimAssistProbe::ForceAimAssist(RE::Actor* a_actor)
 	{
 		if (!a_actor) {
-			REX::INFO("[VATS] aimassist-probe: null actor");
 			return;
 		}
 
-		// inventoryList is a BSGuarded<BGSInventoryList*, BSReadWriteLock>
-		// - reading the raw pointer directly instead of going through
-		// BSReadWriteLock::LockRead()/UnlockRead() deliberately: those are
-		// REL::ID-backed engine calls, and BSReadWriteLock::LockRead()
-		// specifically is already on this project's list of "mapped but
-		// crashed anyway" calls (TESObjectCELL::ForEachReference, see
-		// commonlibsf-unmapped-ids memory) - a plain unsynchronized read
-		// degrades to a stale-but-still-valid-shaped pointer at worst,
-		// SafeRead-guarded either way.
 		std::uint64_t invList = 0;
 		if (!Read(a_actor, kInventoryList, invList) || !invList) {
-			REX::INFO("[VATS] aimassist-probe: no inventoryList");
 			return;
 		}
 
@@ -82,8 +63,6 @@ namespace VATS
 			!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayCapacity, arrayCapacity) ||
 			!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayData, arrayData) ||
 			arraySize == 0 || arrayCapacity < arraySize || !arrayData) {
-			REX::INFO("[VATS] aimassist-probe: inventoryList=0x{:X} array read failed (size={} cap={} data=0x{:X})",
-				invList, arraySize, arrayCapacity, arrayData);
 			return;
 		}
 
@@ -114,73 +93,47 @@ namespace VATS
 		}
 
 		if (!weapon || !instanceData) {
-			REX::INFO("[VATS] aimassist-probe: no equipped weapon found in inventory (size={})", arraySize);
 			return;
 		}
 
 		std::uint64_t weaponDataAim = 0;
 		if (!Read(reinterpret_cast<const void*>(instanceData), kInstanceDataWeaponDataAim, weaponDataAim) || !weaponDataAim) {
-			REX::INFO("[VATS] aimassist-probe: weapon=0x{:X} instanceData=0x{:X} has no WeaponDataAim", weapon, instanceData);
 			return;
 		}
 
-		std::uint64_t  aimModel = 0;
-		const bool     aimModelRead = Read(reinterpret_cast<const void*>(weaponDataAim), kWeaponDataAimAimModel, aimModel);
-		std::uint8_t   aimModelFormType = 0;
-		bool           aimModelFormTypeRead = false;
-		if (aimModelRead && aimModel) {
-			aimModelFormTypeRead = Read(reinterpret_cast<const void*>(aimModel), GameOffsets::kFormType, aimModelFormType);
+		// Cross-check: aimModel's formType should be kAMDL. If this ever
+		// stops matching (e.g. a game update reshuffles WeaponDataAim),
+		// the whole chain below is suspect - bail rather than write
+		// somewhere unverified.
+		std::uint64_t aimModel = 0;
+		std::uint8_t  aimModelFormType = 0;
+		if (!Read(reinterpret_cast<const void*>(weaponDataAim), kWeaponDataAimAimModel, aimModel) || !aimModel ||
+			!Read(reinterpret_cast<const void*>(aimModel), GameOffsets::kFormType, aimModelFormType) ||
+			aimModelFormType != kFormTypeAMDL) {
+			REX::WARN("[VATS] aimassist: cross-check field aimModel no longer matches kAMDL, chain may have shifted - not touching aim-assist");
+			return;
 		}
-		REX::INFO("[VATS] aimassist-probe: weapon=0x{:X} weaponDataAim=0x{:X} aimModel=0x{:X} formType=0x{:02X} (expect 0x{:02X} kAMDL) -> {}",
-			weapon, weaponDataAim, aimModel, aimModelFormType, kFormTypeAMDL,
-			(aimModelFormTypeRead && aimModelFormType == kFormTypeAMDL) ? "MATCH (chain up to here confirmed)" : "MISMATCH (chain is wrong before pad30, stop here)");
 
-		// pad30 confirmed 2026-08-22 to be kWWED (BGSWwiseEventForm, an
-		// audio cue) instead - the hypothesis was wrong, but the chain up
-		// to weaponDataAim is now solidly confirmed (aimModel's formType
-		// matched kAMDL every single time across many shots). Rather than
-		// guess a second single offset, sweep every pointer-shaped field
-		// in WeaponDataAim (per its known layout, see TESObjectWEAP.h)
-		// and log whatever formType each one actually holds, so the next
-		// log directly shows where (if anywhere) a kAAMD form lives in
-		// this struct instead of requiring another guess-rebuild cycle.
-		struct SweepField
-		{
-			const char*  name;
-			std::size_t  offset;
-		};
-		constexpr SweepField kSweepFields[] = {
-			{ "pad0", 0x00 },
-			{ "pa8", 0x08 },
-			{ "aimDownSightTemplate", 0x18 },
-			{ "pad20", 0x20 },
-			{ "aimModel", 0x28 },
-			{ "pad30", 0x30 },
-			{ "pad38", 0x38 },
-			{ "pad40", 0x40 },
-			{ "pad48", 0x48 },
-			{ "pad50", 0x50 },
-		};
-		for (const auto& field : kSweepFields) {
-			std::uint64_t value = 0;
-			if (!Read(reinterpret_cast<const void*>(weaponDataAim), field.offset, value) || !value) {
-				REX::INFO("[VATS] aimassist-probe: WeaponDataAim+0x{:02X} ({}) = null/unreadable", field.offset, field.name);
-				continue;
-			}
-			std::uint8_t fieldFormType = 0;
-			const bool   fieldFormTypeRead = Read(reinterpret_cast<const void*>(value), GameOffsets::kFormType, fieldFormType);
-			REX::INFO("[VATS] aimassist-probe: WeaponDataAim+0x{:02X} ({}) = 0x{:X}, formType=0x{:02X} (read={}){}",
-				field.offset, field.name, value, fieldFormType, fieldFormTypeRead,
-				(fieldFormTypeRead && fieldFormType == kFormTypeAAMD) ? " <-- kAAMD MATCH, this is BGSAimAssistModel" : "");
-
-			if (fieldFormTypeRead && fieldFormType == kFormTypeAAMD) {
-				float      bulletBendingConeAngle = 0.0f;
-				const bool bbcaRead = Read(reinterpret_cast<const void*>(value), kBaseFormTData + kAimAssistBulletBendingConeAngle, bulletBendingConeAngle);
-				bool       aimAssistEnabled = false;
-				const bool enabledRead = Read(reinterpret_cast<const void*>(value), kBaseFormTData + kAimAssistEnabled, aimAssistEnabled);
-				REX::INFO("[VATS] aimassist-probe: FOUND at +0x{:02X}: bulletBendingConeAngle={:.3f} (read={}) aimAssistEnabled={} (read={})",
-					field.offset, bulletBendingConeAngle, bbcaRead, aimAssistEnabled, enabledRead);
-			}
+		std::uint64_t aimAssistModel = 0;
+		std::uint8_t  aimAssistFormType = 0;
+		if (!Read(reinterpret_cast<const void*>(weaponDataAim), kWeaponDataAimAimAssistModel, aimAssistModel) || !aimAssistModel ||
+			!Read(reinterpret_cast<const void*>(aimAssistModel), GameOffsets::kFormType, aimAssistFormType) ||
+			aimAssistFormType != kFormTypeAAMD) {
+			REX::INFO("[VATS] aimassist: no BGSAimAssistModel found at the expected offset (formType=0x{:02X}, expect 0x{:02X})",
+				aimAssistFormType, kFormTypeAAMD);
+			return;
 		}
+
+		bool wasEnabled = false;
+		(void)Read(reinterpret_cast<const void*>(aimAssistModel), kBaseFormTData + kAimAssistEnabled, wasEnabled);
+
+		constexpr bool kEnabled = true;
+		const bool     wrote = Write(reinterpret_cast<void*>(aimAssistModel), kBaseFormTData + kAimAssistEnabled, kEnabled);
+
+		float bulletBendingConeAngle = 0.0f;
+		(void)Read(reinterpret_cast<const void*>(aimAssistModel), kBaseFormTData + kAimAssistBulletBendingConeAngle, bulletBendingConeAngle);
+
+		REX::INFO("[VATS] aimassist: model=0x{:X} wasEnabled={} wrote=true (ok={}) bulletBendingConeAngle={:.3f}",
+			aimAssistModel, wasEnabled, wrote, bulletBendingConeAngle);
 	}
 }

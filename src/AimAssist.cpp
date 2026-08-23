@@ -150,12 +150,15 @@ namespace VATS
 				return;
 			}
 
-			// Diagnostic (2026-08-22): verify the BGSAimAssistModel
-			// pointer-chain hypothesis (see AimAssistProbe.h) against
-			// whatever's actually equipped, once per shot. Pure logging,
-			// no behavior change - remove once confirmed/refuted.
+			// Forces Starfield's own native bullet-bending aim assist on
+			// for the equipped weapon, once per shot (see AimAssistProbe.h
+			// for the full confirmed pointer chain and why aimAssistEnabled
+			// reads false by default - suspected gamepad-only gating).
+			// Test: does this alone make hitscan shots actually curve
+			// toward the locked target, or is there a separate device
+			// check elsewhere that a data flag flip can't reach?
 			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-				AimAssistProbe::ProbeEquippedWeapon(player);
+				AimAssistProbe::ForceAimAssist(player);
 			}
 
 			// Chance (and therefore the hit/miss roll) is based on distance
