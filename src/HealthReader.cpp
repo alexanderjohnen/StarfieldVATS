@@ -1,5 +1,9 @@
 #include "HealthReader.h"
 
+#include <cstdio>
+#include <string>
+#include <unordered_set>
+
 namespace VATS
 {
 	namespace
@@ -53,6 +57,31 @@ namespace VATS
 			}
 		}
 		if (!foundBase) {
+			// Diagnostic (2026-08-23): no lookup hit at all in Alexander's
+			// first test despite the index resolving cleanly - dump the
+			// actual array contents once per actor so the next test's log
+			// says whether healthIndex is just missing from a populated,
+			// sane-looking array (a legitimately different value than 24)
+			// or the array itself is empty/garbage (avStorage's offset on
+			// Actor is wrong - see HealthReader.h's residual-risk comment).
+			// Remove once GetActorHealth is confirmed working.
+			static std::unordered_set<std::uint32_t> s_logged;
+			const std::uint32_t                       formID = a_actor->GetFormID();
+			if (s_logged.insert(formID).second) {
+				const auto& arr = a_actor->avStorage.baseValues;
+				std::string dump;
+				char        pair[32];
+				std::size_t n = 0;
+				for (const auto& entry : arr) {
+					if (n++ >= 12) {
+						break;
+					}
+					std::snprintf(pair, sizeof(pair), "[%u]=%.1f ", entry.first, entry.second);
+					dump += pair;
+				}
+				REX::WARN("[VATS] health: no baseValues entry for index={} on formID=0x{:08X}, size={}, first entries: {}",
+					healthIndex, formID, arr.size(), dump);
+			}
 			return false;
 		}
 
