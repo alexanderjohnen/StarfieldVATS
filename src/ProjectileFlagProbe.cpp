@@ -3,6 +3,10 @@
 #include "GameOffsets.h"
 #include "SafeMem.h"
 
+#include <cstdio>
+#include <string>
+#include <unordered_set>
+
 namespace VATS
 {
 	namespace
@@ -121,6 +125,37 @@ namespace VATS
 		if (!Read(reinterpret_cast<const void*>(ammo), kAmmoDataProjectile, projectile) || !projectile) {
 			REX::INFO("[VATS] projflag: ammo=0x{:X} has no projectile pointer", ammo);
 			return;
+		}
+
+		// Diagnostic (2026-08-23): the value read at the header's claimed
+		// AMMO_DATA::projectile offset (ammo+0x1F8) looks nothing like the
+		// real 64-bit heap pointers seen everywhere else in this process
+		// (those all look like 0x1F5xxxxxxxxx - 12 hex digits) - it reads
+		// as a small ~32-bit value instead, the shape of an unresolved
+		// TESFormID rather than a live BGSProjectile*. Possible: this
+		// project's static_assert-trusting technique has a blind spot
+		// here specifically - an 8-byte pointer and a 4-byte FormID +
+		// 4 bytes padding produce the IDENTICAL total struct size and the
+		// IDENTICAL offsets for every field after it (health/damage/
+		// flags), so AMMO_DATA's static_assert(sizeof(...) == 0x18) can't
+		// distinguish the two hypotheses at all. Dumps a wider raw range
+		// once so we can look for a genuine nearby pointer (offset-shift
+		// theory) vs. confirm it's really just a bare FormID (lazy-
+		// reference theory, needing a form-lookup we don't have yet).
+		{
+			static std::unordered_set<std::uint64_t> s_dumped;
+			if (s_dumped.insert(ammo).second) {
+				std::string hex;
+				char        word[24];
+				for (std::size_t off = 0x1E0; off < 0x220; off += 4) {
+					std::uint32_t v = 0;
+					if (Read(reinterpret_cast<const void*>(ammo), off, v)) {
+						std::snprintf(word, sizeof(word), "%03zX:%08X ", off, v);
+						hex += word;
+					}
+				}
+				REX::INFO("[VATS] projflag raw dump ammo=0x{:X}: {}", ammo, hex);
+			}
 		}
 
 		std::uint8_t projFormType = 0;
