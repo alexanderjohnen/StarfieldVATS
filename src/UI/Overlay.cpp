@@ -132,6 +132,45 @@ namespace VATS::UI
 			}
 		}
 
+		// Segmented boss/legendary health bar, matching Starfield's own
+		// look (screenshot + Alexander's description, 2026-08-23): a red
+		// bar for the currently-active health pool, with a row of small
+		// white pips above it marking how many additional full pools this
+		// enemy has in reserve (a_extraSegments — best-effort, see
+		// HealthReader::GetActorExtraHealthSegments). a_extraSegments == 0
+		// draws just the plain red bar, the correct look for the vast
+		// majority of non-legendary enemies.
+		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max, std::uint32_t a_extraSegments)
+		{
+			constexpr float kBarWidth = 116.0f;
+			constexpr float kBarHeight = 7.0f;
+			constexpr float kPipHeight = 4.0f;
+			constexpr float kPipGap = 2.0f;
+			constexpr float kRowGap = 3.0f;
+
+			const float x0 = a_centerX - kBarWidth * 0.5f;
+			const float x1 = a_centerX + kBarWidth * 0.5f;
+
+			if (a_extraSegments > 0) {
+				const float pipRowY = a_y - kRowGap - kPipHeight;
+				const float pipWidth = (kBarWidth - kPipGap * static_cast<float>(a_extraSegments - 1)) / static_cast<float>(a_extraSegments);
+				float       px = x0;
+				for (std::uint32_t i = 0; i < a_extraSegments; ++i) {
+					a_dl->AddRectFilled(ImVec2{ px - 1.0f, pipRowY - 1.0f }, ImVec2{ px + pipWidth + 1.0f, pipRowY + kPipHeight + 1.0f }, kOutline);
+					a_dl->AddRectFilled(ImVec2{ px, pipRowY }, ImVec2{ px + pipWidth, pipRowY + kPipHeight }, IM_COL32(235, 238, 240, 235));
+					px += pipWidth + kPipGap;
+				}
+			}
+
+			a_dl->AddRectFilled(ImVec2{ x0 - 1.5f, a_y - 1.5f }, ImVec2{ x1 + 1.5f, a_y + kBarHeight + 1.5f }, kOutline);
+			a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x1, a_y + kBarHeight }, IM_COL32(50, 12, 12, 220));
+
+			const float frac = a_max > 0.0f ? std::clamp(a_current / a_max, 0.0f, 1.0f) : 0.0f;
+			if (frac > 0.0f) {
+				a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x0 + kBarWidth * frac, a_y + kBarHeight }, IM_COL32(210, 40, 40, 235));
+			}
+		}
+
 		// Converts a Windows virtual-key code to a short displayable label
 		// for the hotkey hint. Covers letters/digits and F1-F24 (found
 		// 2026-08-22: Alexander rebound iActivationKey to F17/0x80 -
@@ -273,7 +312,9 @@ namespace VATS::UI
 			// longer depends on crosshair proximity, only distance/LOS).
 			// Shown live so Alexander can see exactly what the aim-assist
 			// would roll against right now, not just after firing.
-			char value[56] = "--";
+			char  value[32] = "--";
+			bool  haveHealth = false;
+			HealthReading hp{};
 			if (dist >= 0.0f) {
 				float chancePercent = 0.0f;
 				if (auto* player = RE::PlayerCharacter::GetSingleton(); player && HasDetectionLOS(player, a_actor)) {
@@ -285,28 +326,35 @@ namespace VATS::UI
 						(dist <= full ? 1.0f : 0.0f);
 					chancePercent = t * static_cast<float>(settings.centerHitChancePercent);
 				}
+				std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
 
 				// Best-effort — see HealthReader.h for the residual risk
 				// (Actor's avStorage offset, ActorValue::GetSingleton()).
-				// Falls back to the dist/chance-only string if unavailable,
-				// same "degrade quietly" pattern as everything else here.
-				HealthReading hp{};
-				if (Settings::Get().showTargetHealth && GetActorHealth(a_actor, hp)) {
-					std::snprintf(value, sizeof(value), "%.0f m | %.0f%% | %.0f/%.0f HP", dist, chancePercent, hp.current, hp.max);
-				} else {
-					std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
-				}
+				// Bar is simply skipped if this fails, same "degrade
+				// quietly" pattern as everything else here.
+				haveHealth = Settings::Get().showTargetHealth && GetActorHealth(a_actor, hp);
 			}
 
 			const auto& io = ImGui::GetIO();
-			DrawTargetBox(sx * io.DisplaySize.x, sy * io.DisplaySize.y, a_label, a_showValue ? value : nullptr, a_color);
+			const float px = sx * io.DisplaySize.x;
+			const float py = sy * io.DisplaySize.y;
+			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, a_color);
+
+			auto* dl = ImGui::GetForegroundDrawList();
+
+			float tetherStartY = py + 36.0f;
+			if (haveHealth) {
+				const std::uint32_t extraSegments = GetActorExtraHealthSegments(a_actor);
+				const float         barY = py + 40.0f + (extraSegments > 0 ? 8.0f : 0.0f);
+				DrawHealthBar(dl, px, barY, hp.current, hp.max, extraSegments);
+				tetherStartY = barY + 7.0f + 6.0f;
+			}
 
 			// Small tether line from box toward screen bottom, echoing the
 			// FO4 VATS look; subtle, mostly for readability against clutter.
-			auto* dl = ImGui::GetForegroundDrawList();
 			dl->AddLine(
-				ImVec2{ sx * io.DisplaySize.x, sy * io.DisplaySize.y + 36.0f },
-				ImVec2{ sx * io.DisplaySize.x, sy * io.DisplaySize.y + 56.0f },
+				ImVec2{ px, tetherStartY },
+				ImVec2{ px, tetherStartY + 20.0f },
 				kWhiteDim, 1.5f);
 		}
 	}

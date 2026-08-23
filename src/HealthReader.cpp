@@ -75,4 +75,47 @@ namespace VATS
 		a_out.current = a_out.max + damage;  // damage modifier is stored negative
 		return true;
 	}
+
+	namespace
+	{
+		std::atomic<std::uint32_t> s_legendaryRankIndex{ kUnresolved };
+
+		[[nodiscard]] bool ResolveLegendaryRankIndex(std::uint32_t& a_out)
+		{
+			const std::uint32_t cached = s_legendaryRankIndex.load(std::memory_order_relaxed);
+			if (cached != kUnresolved) {
+				a_out = cached;
+				return true;
+			}
+
+			auto* avList = RE::ActorValue::GetSingleton();
+			if (!avList || !avList->legendaryRank) {
+				return false;
+			}
+			const std::uint32_t index = avList->legendaryRank->index;
+			s_legendaryRankIndex.store(index, std::memory_order_relaxed);
+			REX::INFO("[VATS] health: resolved legendaryRank AV index={}", index);
+			a_out = index;
+			return true;
+		}
+	}
+
+	std::uint32_t GetActorExtraHealthSegments(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return 0;
+		}
+
+		std::uint32_t rankIndex = 0;
+		if (!ResolveLegendaryRankIndex(rankIndex)) {
+			return 0;
+		}
+
+		for (const auto& entry : a_actor->avStorage.baseValues) {
+			if (entry.first == rankIndex) {
+				return entry.second > 0.0f ? static_cast<std::uint32_t>(entry.second + 0.5f) : 0;
+			}
+		}
+		return 0;
+	}
 }

@@ -32,4 +32,21 @@ namespace VATS
 	// though health should always have been touched by the time an actor is
 	// alive in the world).
 	[[nodiscard]] bool GetActorHealth(RE::Actor* a_actor, HealthReading& a_out);
+
+	// Best-effort: legendaryRank is a guess at what drives Starfield's
+	// segmented boss/legendary enemy health display (a white "currently
+	// active" bar that must be fully depleted before the next of N reserve
+	// bars, shown smaller/red, becomes the active one — confirmed via
+	// screenshot + Alexander's description, not through any CommonLibSF
+	// documentation). Each rank beyond 0 is assumed to mean one extra full
+	// health pool held in reserve, refilled natively by the game each time
+	// the active one drains — this function only reports the count, it
+	// doesn't simulate the refill itself (the game already does that; we
+	// just re-read current/max each frame same as GetActorHealth).
+	//
+	// Returns 0 (no extra segments) if the AV can't be resolved or isn't
+	// present on this actor — degrades to "just draw the plain bar", the
+	// correct behavior for the vast majority of non-legendary enemies
+	// regardless of whether the guess is right.
+	[[nodiscard]] std::uint32_t GetActorExtraHealthSegments(RE::Actor* a_actor);
 }
