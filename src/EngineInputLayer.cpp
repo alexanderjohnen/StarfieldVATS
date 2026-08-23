@@ -33,4 +33,13 @@ namespace VATS
 		s_layer->EnableUserEvent(RE::USER_EVENT_FLAG::WheelZoom, enable);
 		REX::INFO("[VATS] engine input layer: POVSwitch/TabMenuMaybe/WheelZoom {}", a_blocked ? "disabled" : "enabled");
 	}
+
+	void EngineInputLayer::SetAdsBlocked(bool a_blocked)
+	{
+		if (!s_layer) {
+			return;
+		}
+		s_layer->EnableUserEvent(RE::USER_EVENT_FLAG::Fighting, !a_blocked);
+		REX::INFO("[VATS] engine input layer: Fighting {}", a_blocked ? "disabled" : "enabled");
+	}
 }

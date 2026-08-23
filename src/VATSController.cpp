@@ -159,6 +159,7 @@ namespace VATS
 		// way (re-enabling flags that are presumably already enabled),
 		// left in place in case the feature comes back.
 		EngineInputLayer::SetBlocked(false);
+		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
@@ -252,6 +253,9 @@ namespace VATS
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
 			}
+			if (Settings::Get().blockAdsWhileLocked) {
+				EngineInputLayer::SetAdsBlocked(true);
+			}
 
 			// Close the hand scanner on lock so the weapon comes back up
 			// immediately, mirroring vanilla scan-then-act flows. Mechanism
@@ -301,6 +305,7 @@ namespace VATS
 		// Harmless/idempotent even though SetBlocked(true) is no longer
 		// called anywhere - see the lock branch's comment above.
 		EngineInputLayer::SetBlocked(false);
+		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
 		REX::INFO("[VATS] OFF");
 		if (console) {

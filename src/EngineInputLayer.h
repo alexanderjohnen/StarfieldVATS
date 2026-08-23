@@ -31,5 +31,22 @@ namespace VATS
 		// true while Locked: disables POVSwitch/TabMenuMaybe/WheelZoom.
 		// false: re-enables them. No-op if Init() failed/hasn't run.
 		static void SetBlocked(bool a_blocked);
+
+		// Independent of SetBlocked above - only touches
+		// USER_EVENT_FLAG::Fighting. Tried 2026-08-23 as a lower-risk
+		// alternative for blocking ADS while Locked after three other
+		// approaches failed (OS-level input hook: fired but had zero effect
+		// on ADS engaging; RE::PlayerCamera camera-state polling: the
+		// engine never actually enters kIronSights during a real ADS;
+		// RE::PlayerControls::PlayerIronSightsStartEvent registration:
+		// crashed outright on an unmapped Address Library ID, see
+		// AdsBlocker.h/main.cpp). This reuses the exact same
+		// BSInputEnableLayer::EnableUserEvent call SetBlocked already makes
+		// successfully (zero new REL::ID risk) with a flag this project
+		// hasn't tried yet - genuinely unknown whether "Fighting" gates ADS
+		// specifically, gates firing too (which would break the mod's core
+		// mechanic while Locked), or does something else entirely. Needs
+		// in-game confirmation.
+		static void SetAdsBlocked(bool a_blocked);
 	};
 }

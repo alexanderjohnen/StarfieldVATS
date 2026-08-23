@@ -30,7 +30,24 @@ namespace VATS
 	{
 		HHOOK             s_hook = nullptr;
 		std::atomic<bool> s_buttonHeld{ false };
-		std::atomic<bool> s_steering{ false };
+
+		// Identifies which physical button-down this SteeringLoop instance
+		// belongs to. Incremented on every WM_LBUTTONDOWN (HookProc) and
+		// also doubles as "the generation of the most recent press" when
+		// just read - a loop's own button-still-held check compares against
+		// this rather than trusting the shared s_buttonHeld flag alone, so
+		// a newer click starting during an older hold's post-release grace
+		// window can't fool the older loop into thinking its own button is
+		// still down (see IsMyPressStillHeld below - found 2026-08-23 while
+		// removing the single-steering-thread gate that used to make
+		// overlapping holds impossible in the first place).
+		std::atomic<std::uint64_t> s_pressGeneration{ 0 };
+
+		[[nodiscard]] bool IsMyPressStillHeld(std::uint64_t a_myGeneration)
+		{
+			return s_buttonHeld.load(std::memory_order_relaxed) &&
+			       s_pressGeneration.load(std::memory_order_relaxed) == a_myGeneration;
+		}
 
 		[[nodiscard]] bool GameWindowHasFocus()
 		{
@@ -146,7 +163,7 @@ namespace VATS
 		// they spawn. The real click is never touched; Starfield's own
 		// fire-rate timer and ballistics/damage/hit-reaction pipeline
 		// still do everything except the round's own trajectory.
-		void SteeringLoop()
+		void SteeringLoop(std::uint64_t a_myGeneration)
 		{
 			const auto state = Controller::Get().GetOverlayState();
 			if (state.mode != VATSMode::kLocked || !state.actor) {
@@ -180,6 +197,13 @@ namespace VATS
 			float initialDist = 0.0f;
 			if (!ResolveTargetScreen(state.actor.get(), initialDist)) {
 				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, chance is 0, no assist this hold");
+				// Still record a (guaranteed-miss) result - the real trigger
+				// was pulled and a real round left the gun, so the HUD
+				// should say something rather than nothing. Found
+				// 2026-08-23: silence here was indistinguishable from "this
+				// click was never even seen at all" from Alexander's
+				// perspective (see also the s_steering removal below).
+				Controller::Get().RecordShotResult(false);
 				return;
 			}
 			const float chancePercent = ComputeChancePercent(state.actor.get(), initialDist);
@@ -190,6 +214,7 @@ namespace VATS
 			// entirely.
 			if (chancePercent <= 0.0f) {
 				REX::INFO("[VATS] aim-assist: zero chance (out of range or no LOS), firing unassisted");
+				Controller::Get().RecordShotResult(false);
 				return;
 			}
 
@@ -259,26 +284,11 @@ namespace VATS
 					break;
 				}
 
-				if (s_buttonHeld.load()) {
+				if (IsMyPressStillHeld(a_myGeneration)) {
 					releasedAt.reset();
 				} else {
 					if (!releasedAt) {
 						releasedAt = std::chrono::steady_clock::now();
-						// Found 2026-08-23: releasing s_steering only after
-						// this whole function returns (grace period
-						// included) meant a fast follow-up click - one
-						// that arrives before the grace period finishes -
-						// got silently dropped (HookProc's `!s_steering`
-						// check failed, no new thread spawned at all, that
-						// shot got no redirect/type-override treatment
-						// whatsoever). Release the gate the instant the
-						// button is actually released instead, so a new
-						// click can start its own hold immediately; this
-						// thread just keeps scanning in the background for
-						// the grace period. The two holds can now
-						// legitimately overlap - see ProjectileTypeOverride
-						// for why that's safe (reference-counted).
-						s_steering.store(false);
 					} else if (std::chrono::steady_clock::now() - *releasedAt > kPostReleaseGrace) {
 						break;
 					}
@@ -313,13 +323,20 @@ namespace VATS
 					if (!injected) {
 						if (a_wParam == WM_LBUTTONDOWN) {
 							s_buttonHeld.store(true);
-							if (!s_steering.load() &&
-								GameWindowHasFocus() &&
-								Controller::Get().GetMode() == VATSMode::kLocked) {
-								s_steering.store(true);
-								std::thread([]() {
-									SteeringLoop();
-									s_steering.store(false);
+							const std::uint64_t myGeneration = s_pressGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+							// Every real press gets its own SteeringLoop now -
+							// no single-instance gate (removed 2026-08-23).
+							// ProjectileTypeOverride is already reference-
+							// counted specifically to support overlapping
+							// holds, so the only thing the old gate
+							// accomplished was silently dropping a fast
+							// follow-up click that arrived before the
+							// previous loop's next ~2-20ms poll tick noticed
+							// the release - no roll, no HUD feedback, no
+							// redirect attempt at all for that click.
+							if (GameWindowHasFocus() && Controller::Get().GetMode() == VATSMode::kLocked) {
+								std::thread([myGeneration]() {
+									SteeringLoop(myGeneration);
 								}).detach();
 							}
 						} else {
