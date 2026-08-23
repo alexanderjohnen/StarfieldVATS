@@ -32,6 +32,20 @@ namespace VATS
 		constexpr std::uint8_t kFormTypeProjectileMin = 0x4C;  // kPMIS
 		constexpr std::uint8_t kFormTypeProjectileMax = 0x54;  // kPEMI
 
+		// Excluded 2026-08-23: kPBEA (BeamProjectile, 0x4F) sits inside the
+		// range above but isn't the actual fired round for most weapons -
+		// it's a weapon's decorative laser-sight beam attachment (already
+		// flagged as a false lead in this project's history, see
+		// starfield-vats-mod-design memory's "Finding #1"). Confirmed
+		// 2026-08-23 via ProjectileTypeOverride testing: a shot that
+		// visibly went straight (didn't curve) correlated with this
+		// tracker having redirected a kPBEA entry instead of the real
+		// kPMIS round that shot actually used - the cosmetic beam got
+		// bent, the real bullet never did. A genuine beam-type weapon
+		// (Type::kBeam) would be missed by this exclusion too, but no
+		// such weapon has been tested yet - revisit if one shows up.
+		constexpr std::uint8_t kFormTypeBEAM = 0x4F;  // kPBEA
+
 		// Corrected 2026-08-23 via in-game raw-memory diffing (see the dump
 		// diagnostic below) — CommonLibSF's Projectile.h offsets were
 		// wrong by a uniform -0x10 (16 bytes) for this build. Verified
@@ -126,7 +140,8 @@ namespace VATS
 
 			std::uint8_t formType = 0;
 			if (!Read(reinterpret_cast<const void*>(entry), GameOffsets::kFormType, formType) ||
-				formType < kFormTypeProjectileMin || formType > kFormTypeProjectileMax) {
+				formType < kFormTypeProjectileMin || formType > kFormTypeProjectileMax ||
+				formType == kFormTypeBEAM) {
 				continue;
 			}
 
