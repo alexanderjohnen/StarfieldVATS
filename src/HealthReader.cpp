@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace VATS
@@ -122,13 +123,39 @@ namespace VATS
 		// Modifiers entry is optional - an actor that's never taken/healed
 		// damage and has no permanent/temporary health bonuses simply has no
 		// entry at all, which is a legitimate "no modifiers" case (all three
-		// stay 0), not a failure.
+		// stay 0), not a failure. Diagnostic (2026-08-23): the bar Alexander
+		// tested never moved (always full), suggesting either no entry is
+		// ever found here (kModifierStride=24 was inferred by analogy to
+		// baseValues' confirmed 16, never independently checked) or the
+		// found entry's 3 slots aren't in the [permanent, temporary, damage]
+		// order ACTOR_VALUE_MODIFIER assumes - logs whichever is true once
+		// per actor. Remove once the bar is confirmed tracking real damage.
 		RE::Modifiers mods{};
 		float         permanent = 0.0f, temporary = 0.0f, damage = 0.0f;
-		if (FindByAvPointer(a_actor->avStorage.modifiers, healthInfo, kModifierStride, mods)) {
+		const bool    foundMods = FindByAvPointer(a_actor->avStorage.modifiers, healthInfo, kModifierStride, mods);
+		if (foundMods) {
 			permanent = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kPermanent)];
 			temporary = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kTemporary)];
 			damage = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kDamage)];
+		}
+		{
+			// Logs on change rather than once-ever-per-actor, specifically
+			// so a full test (target at full health, then damaged) shows
+			// whether "damage" ever moves at all, not just its value at
+			// first sighting.
+			static std::unordered_map<std::uint32_t, float> s_lastLoggedCurrent;
+			const std::uint32_t                              formID = a_actor->GetFormID();
+			const float                                      current = base + permanent + temporary + damage;
+			const auto                                        it = s_lastLoggedCurrent.find(formID);
+			if (it == s_lastLoggedCurrent.end() || it->second != current) {
+				const auto& arr = a_actor->avStorage.modifiers;
+				REX::INFO("[VATS] health modifiers: formID=0x{:08X} base={:.1f} found={} slots=[{:.1f},{:.1f},{:.1f}] current={:.1f} modifiers.size={}",
+					formID, base, foundMods, mods.modifiers[0], mods.modifiers[1], mods.modifiers[2], current, arr.size());
+				s_lastLoggedCurrent[formID] = current;
+				if (!foundMods) {
+					DumpRawFloatWindow(arr.data(), std::min<std::size_t>(arr.size(), 64) * kModifierStride);
+				}
+			}
 		}
 
 		a_out.max = base + permanent + temporary;
