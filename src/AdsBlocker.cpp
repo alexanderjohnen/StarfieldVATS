@@ -1,5 +1,6 @@
 #include "AdsBlocker.h"
 
+#include "AdsProbe.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -64,7 +65,14 @@ namespace VATS
 					const bool hasFocus = GameWindowHasFocus();
 					const bool locked = Controller::Get().GetMode() == VATSMode::kLocked;
 					if (hasFocus && locked) {
-						std::thread([]() { REX::INFO("[VATS] ADS button swallowed (Locked)"); }).detach();
+						std::thread([]() {
+							REX::INFO("[VATS] ADS button swallowed (Locked)");
+							// Diagnostic (2026-08-23): confirmed the swallow
+							// alone doesn't stop ADS from visibly engaging -
+							// see AdsProbe.h. Remove once a real fix (or a
+							// dead end) is confirmed.
+							LogAimStateSnapshot("ads-swallow");
+						}).detach();
 						return 1;  // swallow - Starfield never sees this button press
 					}
 				}
