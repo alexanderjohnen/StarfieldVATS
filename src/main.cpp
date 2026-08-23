@@ -1,3 +1,4 @@
+#include "AdsBlocker.h"
 #include "AimAssist.h"
 #include "BackKeyInterceptor.h"
 #include "EngineInputLayer.h"
@@ -22,6 +23,7 @@ namespace
 			// suspect. Real cause tracked down to HasDetectionLOS (see
 			// Targeting.cpp).
 			VATS::AimAssist::Start();
+			VATS::AdsBlocker::Start();
 			VATS::EngineInputLayer::Init();
 			// Disabled 2026-08-23: instant hard crash on every launch
 			// (a clean CommonLibSF-level abort, not a wild-pointer crash -

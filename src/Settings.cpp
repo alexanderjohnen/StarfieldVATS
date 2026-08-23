@@ -42,8 +42,12 @@ namespace VATS
 		centerHitChancePercent = REX::W32::GetPrivateProfileIntA("Combat", "iCenterHitChancePercent", 95, INI_PATH);
 		fullChanceRangeMeters = GetPrivateProfileFloatA("Combat", "fFullChanceRangeMeters", 12.0f, INI_PATH);
 		maxEffectiveRangeMeters = GetPrivateProfileFloatA("Combat", "fMaxEffectiveRangeMeters", 45.0f, INI_PATH);
+		blockAdsWhileLocked = REX::W32::GetPrivateProfileIntA("Controls", "bBlockAdsWhileLocked", 1, INI_PATH) != 0;
+		adsBlockKeyVK = REX::W32::GetPrivateProfileIntA("Controls", "iAdsBlockKey", 0x02, INI_PATH);
+		hideCrosshairWhileLocked = REX::W32::GetPrivateProfileIntA("HUD", "bHideCrosshairWhileLocked", 1, INI_PATH) != 0;
+		showTargetHealth = REX::W32::GetPrivateProfileIntA("HUD", "bShowTargetHealth", 1, INI_PATH) != 0;
 
-		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}",
-			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters);
+		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bBlockAdsWhileLocked={}, iAdsBlockKey=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}",
+			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, blockAdsWhileLocked, adsBlockKeyVK, hideCrosshairWhileLocked, showTargetHealth);
 	}
 }

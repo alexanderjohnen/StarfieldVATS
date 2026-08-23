@@ -2,6 +2,7 @@
 
 #include "CameraProject.h"
 #include "GameOffsets.h"
+#include "HealthReader.h"
 #include "SafeMem.h"
 #include "Settings.h"
 #include "Targeting.h"
@@ -272,7 +273,7 @@ namespace VATS::UI
 			// longer depends on crosshair proximity, only distance/LOS).
 			// Shown live so Alexander can see exactly what the aim-assist
 			// would roll against right now, not just after firing.
-			char value[32] = "--";
+			char value[56] = "--";
 			if (dist >= 0.0f) {
 				float chancePercent = 0.0f;
 				if (auto* player = RE::PlayerCharacter::GetSingleton(); player && HasDetectionLOS(player, a_actor)) {
@@ -284,7 +285,17 @@ namespace VATS::UI
 						(dist <= full ? 1.0f : 0.0f);
 					chancePercent = t * static_cast<float>(settings.centerHitChancePercent);
 				}
-				std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
+
+				// Best-effort — see HealthReader.h for the residual risk
+				// (Actor's avStorage offset, ActorValue::GetSingleton()).
+				// Falls back to the dist/chance-only string if unavailable,
+				// same "degrade quietly" pattern as everything else here.
+				HealthReading hp{};
+				if (Settings::Get().showTargetHealth && GetActorHealth(a_actor, hp)) {
+					std::snprintf(value, sizeof(value), "%.0f m | %.0f%% | %.0f/%.0f HP", dist, chancePercent, hp.current, hp.max);
+				} else {
+					std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
+				}
 			}
 
 			const auto& io = ImGui::GetIO();
