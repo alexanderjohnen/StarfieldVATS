@@ -135,6 +135,21 @@ namespace VATS
 			maxSeen = current;
 		}
 
+		// Diagnostic (2026-08-23): the rework compiles and returns true
+		// (no WARN/ERROR fired in Alexander's last test) but the bar still
+		// didn't move despite confirmed HITs in the log - logs the actual
+		// computed current/max on change so the next test says whether
+		// `current` genuinely never changes (the read itself is wrong/stale)
+		// or it does change but the HUD isn't reflecting it (a drawing bug
+		// in Overlay.cpp instead). Remove once the bar is confirmed
+		// tracking real damage.
+		static std::unordered_map<std::uint32_t, float> s_lastLoggedCurrent;
+		const auto                                        it = s_lastLoggedCurrent.find(formID);
+		if (it == s_lastLoggedCurrent.end() || it->second != current) {
+			REX::INFO("[VATS] health: formID=0x{:08X} current={:.1f} max={:.1f}", formID, current, maxSeen);
+			s_lastLoggedCurrent[formID] = current;
+		}
+
 		a_out.current = current;
 		a_out.max = maxSeen;
 		return true;
