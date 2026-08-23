@@ -69,24 +69,16 @@ namespace VATS
 
 			auto* tasks = SFSE::GetTaskInterface();
 			if (!tasks) {
-				// Can't continue the retry sequence without the task
-				// interface - apply the engine block anyway so Locked
-				// doesn't stay unprotected indefinitely.
-				EngineInputLayer::SetBlocked(true);
 				return;
 			}
 			tasks->AddTask([a_attempt]() {
 				auto* ui = RE::UI::GetSingleton();
 				if (!ui || !ui->IsMenuOpen("MonocleMenu")) {
 					REX::INFO("[VATS] scanner closed after {} attempt(s)", a_attempt);
-					// See CloseScannerIfOpen's comment for why this is
-					// deferred to here instead of applied up front.
-					EngineInputLayer::SetBlocked(true);
 					return;
 				}
 				if (a_attempt >= kMaxScannerCloseAttempts) {
 					REX::INFO("[VATS] scanner still open after {} attempts, giving up", kMaxScannerCloseAttempts);
-					EngineInputLayer::SetBlocked(true);
 					return;
 				}
 				CloseScannerIfOpen(a_attempt + 1);
@@ -159,11 +151,12 @@ namespace VATS
 			m_target.reset();
 		}
 		m_mode.store(VATSMode::kOff, std::memory_order_relaxed);
-		// Re-enabled 2026-08-22 (was disabled 2026-08-22 alongside the
-		// SetBlocked(true) call below, suspected of the N-press hard
-		// crash - since confirmed to actually be HasDetectionLOS, see
-		// starfield-vats-mod-design memory; EngineInputLayer was never
-		// the cause).
+		// EngineInputLayer::SetBlocked(true) is no longer called anywhere
+		// (see the Advance() lock branch comment - disabled again
+		// 2026-08-22, broad collateral blocking with no confirmed
+		// benefit). This SetBlocked(false) is harmless/idempotent either
+		// way (re-enabling flags that are presumably already enabled),
+		// left in place in case the feature comes back.
 		EngineInputLayer::SetBlocked(false);
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
@@ -241,16 +234,21 @@ namespace VATS
 			// simulated keypress (mode 1, default) vs. UIMessageQueue
 			// kHide (mode 2) vs. leave it open (mode 0).
 			//
-			// EngineInputLayer::SetBlocked(true) (POVSwitch/TabMenuMaybe/
-			// WheelZoom - built so Tab/DataMenu and the mouse wheel/POV
-			// switch are actually suppressed at the engine's own input-
-			// mapping level, not just at the OS hook level which alone
-			// wasn't enough, see EngineInputLayer.h) is applied per-branch
-			// below rather than once up front: mode 1's simulated Q-press
-			// needs to run and finish BEFORE this engages, or every
-			// attempt fails (see CloseScannerIfOpen's comment) - so mode 1
-			// applies it itself once its close sequence concludes, while
-			// modes 0/2 (synchronous, no conflict) apply it immediately.
+			// EngineInputLayer::SetBlocked(true) disabled again 2026-08-22.
+			// Re-enabling it (POVSwitch/TabMenuMaybe/WheelZoom) was meant
+			// to suppress Tab/DataMenu and mouse-wheel POV switching at
+			// the engine's own input-mapping level. In practice, per
+			// Alexander's report, it blocked far more than intended
+			// (favorites menu and other unrelated single-key menu
+			// shortcuts all went dead while Locked) without even fixing
+			// the thing it was for (Tab still doesn't end the lock -
+			// BackKeyInterceptor's own diagnostic logging shows zero
+			// "back key seen" events despite the hook installing
+			// successfully, a separate, still-open problem). Net
+			// negative: real collateral damage, no confirmed benefit.
+			// TabMenuMaybe is evidently a much broader flag than its name
+			// suggests - don't re-enable without first confirming exactly
+			// what it does and does not gate.
 			switch (Settings::Get().scannerCloseMode) {
 			case 1:
 				REX::INFO("[VATS] closing scanner via simulated key press");
@@ -261,11 +259,9 @@ namespace VATS
 				if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
 					queue->AddMessage("MonocleMenu", RE::UI_MESSAGE_TYPE::kHide);
 				}
-				EngineInputLayer::SetBlocked(true);
 				break;
 			default:
 				REX::INFO("[VATS] leaving scanner open (iScannerCloseMode=0)");
-				EngineInputLayer::SetBlocked(true);
 				break;
 			}
 			return;
@@ -277,8 +273,8 @@ namespace VATS
 			m_target.reset();
 		}
 		m_mode.store(VATSMode::kOff, std::memory_order_relaxed);
-		// Re-enabled 2026-08-22 alongside the SetBlocked(true) call above
-		// - see its comment.
+		// Harmless/idempotent even though SetBlocked(true) is no longer
+		// called anywhere - see the lock branch's comment above.
 		EngineInputLayer::SetBlocked(false);
 		REX::INFO("[VATS] OFF");
 		if (console) {

@@ -131,17 +131,28 @@ namespace VATS::UI
 			}
 		}
 
-		// Converts a Windows virtual-key code to a single displayable
-		// character for the hotkey hint. Covers the practical range
-		// (letters, digits) — anything else falls back to "?" rather than
-		// showing garbage; good enough since the INI default and every
-		// setting Alexander has used so far is a plain letter key.
-		char VKToDisplayChar(std::uint32_t a_vk)
+		// Converts a Windows virtual-key code to a short displayable label
+		// for the hotkey hint. Covers letters/digits and F1-F24 (found
+		// 2026-08-22: Alexander rebound iActivationKey to F17/0x80 -
+		// VK_F1..VK_F24 are one contiguous range, 0x70-0x87, so a single
+		// bounds check covers all of them) — anything else falls back to
+		// "?" rather than showing garbage. Writes into a_out (must be at
+		// least 4 bytes: "F24\0") rather than returning a single char,
+		// since F-key labels are multi-character.
+		void VKToDisplayLabel(std::uint32_t a_vk, char (&a_out)[8])
 		{
 			if ((a_vk >= 'A' && a_vk <= 'Z') || (a_vk >= '0' && a_vk <= '9')) {
-				return static_cast<char>(a_vk);
+				a_out[0] = static_cast<char>(a_vk);
+				a_out[1] = '\0';
+				return;
 			}
-			return '?';
+			constexpr std::uint32_t kVK_F1 = 0x70;
+			constexpr std::uint32_t kVK_F24 = 0x87;
+			if (a_vk >= kVK_F1 && a_vk <= kVK_F24) {
+				std::snprintf(a_out, sizeof(a_out), "F%u", a_vk - kVK_F1 + 1);
+				return;
+			}
+			std::snprintf(a_out, sizeof(a_out), "?");
 		}
 	}
 
@@ -422,8 +433,10 @@ namespace VATS::UI
 		if (isScanning && state.mode == VATSMode::kOff) {
 			float sx = 0.0f, sy = 0.0f, dist = 0.0f;
 			if (s_cachedPick && ResolveOnScreen(s_cachedPick.get(), sx, sy, dist)) {
+				char keyLabel[8];
+				VKToDisplayLabel(Settings::Get().activationKeyVK, keyLabel);
 				char hint[32];
-				std::snprintf(hint, sizeof(hint), "TARGETING (%c)", VKToDisplayChar(Settings::Get().activationKeyVK));
+				std::snprintf(hint, sizeof(hint), "TARGETING (%s)", keyLabel);
 				const auto& io = ImGui::GetIO();
 				auto*       dl = ImGui::GetForegroundDrawList();
 				auto*       font = ImGui::GetFont();
