@@ -1,6 +1,7 @@
 #include "AimAssist.h"
 #include "BackKeyInterceptor.h"
 #include "EngineInputLayer.h"
+#include "HitEventLogger.h"
 #include "HotkeyWatcher.h"
 #include "Settings.h"
 #include "UI/D3DHook.h"
@@ -22,6 +23,7 @@ namespace
 			// Targeting.cpp).
 			VATS::AimAssist::Start();
 			VATS::EngineInputLayer::Init();
+			VATS::HitEventLogger::Start();
 			break;
 		default:
 			break;
