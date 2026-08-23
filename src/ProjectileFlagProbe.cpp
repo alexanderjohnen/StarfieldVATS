@@ -77,6 +77,34 @@ namespace VATS
 			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataGravity, gravity);
 			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataSpeed, speed);
 			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataRange, range);
+
+			// Diagnostic (2026-08-23): flags/gravity/speed/range all read as
+			// exactly zero for every candidate seen so far - four
+			// independent fields all being simultaneously zero looks like
+			// the same "wrong offset" signature as the earlier
+			// AMMO_DATA::projectile mixup, not genuine game data (even a
+			// real hitscan weapon's PROJ record should have a nonzero
+			// range - it affects damage falloff). Dumps a wider raw range
+			// around the header's claimed BGSProjectile::data (+0x128)
+			// once per unique projectile pointer so the real offsets can
+			// be found the same way movementDirection/velocity/age were
+			// in ProjectileTracker.cpp.
+			{
+				static std::unordered_set<std::uint64_t> s_projDumped;
+				if (s_projDumped.insert(a_projectile).second) {
+					std::string hex;
+					char        word[24];
+					for (std::size_t off = 0x100; off < 0x1C0; off += 4) {
+						std::uint32_t v = 0;
+						if (Read(reinterpret_cast<const void*>(a_projectile), off, v)) {
+							std::snprintf(word, sizeof(word), "%03zX:%08X ", off, v);
+							hex += word;
+						}
+					}
+					REX::INFO("[VATS] projflag proj raw dump {} projectile=0x{:X}: {}", a_label, a_projectile, hex);
+				}
+			}
+
 			REX::INFO("[VATS] projflag candidate {}: projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f}",
 				a_label, a_projectile, rawFlags, flagsRead, flagsRead && (rawFlags & kFlagHitScan) != 0, gravity, speed, range);
 		}
