@@ -167,6 +167,25 @@ namespace VATS
 		REX::INFO("[VATS] OFF (forced - blocking menu or transition)");
 	}
 
+	void Controller::RecordShotResult(bool a_hit)
+	{
+		m_shotHit.store(a_hit, std::memory_order_relaxed);
+		m_shotTimestamp.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
+	}
+
+	Controller::ShotResult Controller::GetLastShotResult()
+	{
+		ShotResult          result;
+		const std::int64_t  ticks = m_shotTimestamp.load(std::memory_order_relaxed);
+		if (ticks == 0) {
+			return result;
+		}
+		result.valid = true;
+		result.hit = m_shotHit.load(std::memory_order_relaxed);
+		result.time = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(ticks));
+		return result;
+	}
+
 	void Controller::RequestAdvance()
 	{
 		const auto* tasks = SFSE::GetTaskInterface();

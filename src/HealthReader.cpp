@@ -2,6 +2,7 @@
 
 #include "SafeMem.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -11,52 +12,64 @@ namespace VATS
 {
 	namespace
 	{
-		constexpr std::uint32_t kUnresolved = 0xFFFFFFFF;
-		std::atomic<std::uint32_t> s_healthIndex{ kUnresolved };
+		constexpr std::size_t kBaseValueStride = 16;  // ActorValueInfo* (8) + float (4), 8-byte aligned
+		constexpr std::size_t kModifierStride = 24;   // ActorValueInfo* (8) + Modifiers (12), 8-byte aligned
 
-		// RE::ActorValue::GetSingleton()->health is a fixed ActorValueInfo*
-		// for the whole process lifetime once resolved - cache the index
-		// instead of re-walking the singleton and its ->index field on
-		// every HUD frame.
-		[[nodiscard]] bool ResolveHealthIndex(std::uint32_t& a_out)
+		// avStorage.baseValues/modifiers are declared by CommonLibSF's
+		// header as BSTArray<BSTTuple<uint32_t, T>> (key = a 4-byte AV
+		// index), but empirical inspection (2026-08-23, cross-checked
+		// against Alexander's `getav health`=480 on a locked target) showed
+		// that reading with that assumed 8-byte stride produces a
+		// corrupted-looking sequence: "key" values that cluster tightly
+		// with a constant high 16 bits (the signature of the low 32 bits of
+		// consecutive pointers into one contiguous table, not a small
+		// integer index), paired with "values" that are almost always ~0.0
+		// (consistent with reading the high 32 bits of those same 8-byte
+		// pointers as if they were a float). The array's own {size,
+		// capacity, data} header at avStorage's claimed offset (0x260) read
+		// identically via two independent methods (the typed accessor and a
+		// raw dump), so that part of the header is trusted - the bug is
+		// specifically the assumed element type/stride. Real key type is
+		// almost certainly ActorValueInfo* (8 bytes) instead. Reads raw via
+		// SafeRead rather than the header's mistyped BSTTuple, matching this
+		// project's established "don't trust an unverified layout without a
+		// guard" policy (SafeMem.h) - if this hypothesis is also wrong, a
+		// miss degrades to "no entry found", never a crash.
+		template <class T, class ArrayT>
+		[[nodiscard]] bool FindByAvPointer(const ArrayT& a_array, const RE::ActorValueInfo* a_key, std::size_t a_stride, T& a_out)
 		{
-			const std::uint32_t cached = s_healthIndex.load(std::memory_order_relaxed);
-			if (cached != kUnresolved) {
-				a_out = cached;
-				return true;
+			const auto*          dataPtr = reinterpret_cast<const std::byte*>(a_array.data());
+			const std::uint32_t  count = a_array.size();
+			for (std::uint32_t i = 0; i < count; ++i) {
+				const std::byte*           entry = dataPtr + static_cast<std::size_t>(i) * a_stride;
+				const RE::ActorValueInfo*  key = nullptr;
+				if (!SafeRead(entry, &key, sizeof(key))) {
+					continue;
+				}
+				if (key == a_key) {
+					return SafeRead(entry + sizeof(key), &a_out, sizeof(a_out));
+				}
 			}
-
-			auto* avList = RE::ActorValue::GetSingleton();
-			if (!avList || !avList->health) {
-				REX::ERROR("[VATS] health: ActorValue singleton or ->health ActorValueInfo unavailable");
-				return false;
-			}
-			const std::uint32_t index = avList->health->index;
-			s_healthIndex.store(index, std::memory_order_relaxed);
-			REX::INFO("[VATS] health: resolved health AV index={}", index);
-			a_out = index;
-			return true;
+			return false;
 		}
 
-		// Diagnostic (2026-08-23): the typed avStorage.baseValues walk above
-		// found a populated-looking-but-clearly-wrong array (huge scattered
-		// keys, all-zero values) - a sign of reading through a bad pointer
-		// somewhere, not just "index 24 is missing". Rather than guess a
-		// correction, dump raw floats across a wide window straddling the
-		// header's claimed avStorage offset (0x260) so a known-good value
-		// (Alexander's `getav health` on the same actor, checked in-game)
-		// can be located by inspection - same "wide dump, diff/search by
-		// hand" technique ProjectileTracker.cpp used to correct
-		// RE::Projectile's offsets. SafeRead-guarded since, unlike boolBits/
-		// avStorage's own typed access above, this deliberately walks past
-		// what the header claims is valid.
-		void DumpRawFloatWindow(RE::Actor* a_actor, std::size_t a_start, std::size_t a_end)
+		// Fallback diagnostic if FindByAvPointer's new hypothesis is also
+		// wrong: dumps raw floats starting at the array's own data pointer
+		// (the heap-allocated element buffer itself, NOT the Actor object -
+		// an earlier version of this dump wrongly scanned around the Actor
+		// object's own memory, which could never have found a real entry's
+		// value regardless of stride, since elements live on the heap the
+		// data pointer points to). A known-good value (Alexander's
+		// `getav health`) can then be located by inspection - same
+		// technique ProjectileTracker.cpp used to correct RE::Projectile's
+		// offsets.
+		void DumpRawFloatWindow(const void* a_dataPtr, std::size_t a_byteCount)
 		{
-			const auto* base = reinterpret_cast<const std::byte*>(a_actor);
+			const auto* base = reinterpret_cast<const std::byte*>(a_dataPtr);
 			std::string line;
 			char        cell[40];
 			int         perLine = 0;
-			for (std::size_t off = a_start; off < a_end; off += 4) {
+			for (std::size_t off = 0; off < a_byteCount; off += 4) {
 				std::uint32_t raw = 0;
 				if (!SafeRead(base + off, &raw, sizeof(raw))) {
 					continue;
@@ -83,46 +96,25 @@ namespace VATS
 			return false;
 		}
 
-		std::uint32_t healthIndex = 0;
-		if (!ResolveHealthIndex(healthIndex)) {
+		auto* avList = RE::ActorValue::GetSingleton();
+		if (!avList || !avList->health) {
+			REX::ERROR("[VATS] health: ActorValue singleton or ->health ActorValueInfo unavailable");
 			return false;
 		}
+		const RE::ActorValueInfo* healthInfo = avList->health;
 
 		float base = 0.0f;
-		bool  foundBase = false;
-		for (const auto& entry : a_actor->avStorage.baseValues) {
-			if (entry.first == healthIndex) {
-				base = entry.second;
-				foundBase = true;
-				break;
-			}
-		}
-		if (!foundBase) {
-			// Diagnostic (2026-08-23): no lookup hit at all in Alexander's
-			// first test despite the index resolving cleanly - dump the
-			// actual array contents once per actor so the next test's log
-			// says whether healthIndex is just missing from a populated,
-			// sane-looking array (a legitimately different value than 24)
-			// or the array itself is empty/garbage (avStorage's offset on
-			// Actor is wrong - see HealthReader.h's residual-risk comment).
-			// Remove once GetActorHealth is confirmed working.
+		if (!FindByAvPointer(a_actor->avStorage.baseValues, healthInfo, kBaseValueStride, base)) {
+			// Diagnostic (2026-08-23): dump once per actor if the new
+			// pointer-keyed hypothesis still doesn't find health. Remove
+			// once GetActorHealth is confirmed working.
 			static std::unordered_set<std::uint32_t> s_logged;
 			const std::uint32_t                       formID = a_actor->GetFormID();
 			if (s_logged.insert(formID).second) {
 				const auto& arr = a_actor->avStorage.baseValues;
-				std::string dump;
-				char        pair[32];
-				std::size_t n = 0;
-				for (const auto& entry : arr) {
-					if (n++ >= 12) {
-						break;
-					}
-					std::snprintf(pair, sizeof(pair), "[%u]=%.1f ", entry.first, entry.second);
-					dump += pair;
-				}
-				REX::WARN("[VATS] health: no baseValues entry for index={} on formID=0x{:08X}, size={}, first entries: {}",
-					healthIndex, formID, arr.size(), dump);
-				DumpRawFloatWindow(a_actor, 0x1E0, 0x400);
+				REX::WARN("[VATS] health: no baseValues entry for healthInfo={} on formID=0x{:08X}, size={}, dumping raw element buffer",
+					static_cast<const void*>(healthInfo), formID, arr.size());
+				DumpRawFloatWindow(arr.data(), std::min<std::size_t>(arr.size(), 64) * kBaseValueStride);
 			}
 			return false;
 		}
@@ -131,44 +123,17 @@ namespace VATS
 		// damage and has no permanent/temporary health bonuses simply has no
 		// entry at all, which is a legitimate "no modifiers" case (all three
 		// stay 0), not a failure.
-		float permanent = 0.0f, temporary = 0.0f, damage = 0.0f;
-		for (const auto& entry : a_actor->avStorage.modifiers) {
-			if (entry.first == healthIndex) {
-				const auto& mods = entry.second.modifiers;
-				permanent = mods[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kPermanent)];
-				temporary = mods[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kTemporary)];
-				damage = mods[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kDamage)];
-				break;
-			}
+		RE::Modifiers mods{};
+		float         permanent = 0.0f, temporary = 0.0f, damage = 0.0f;
+		if (FindByAvPointer(a_actor->avStorage.modifiers, healthInfo, kModifierStride, mods)) {
+			permanent = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kPermanent)];
+			temporary = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kTemporary)];
+			damage = mods.modifiers[static_cast<std::size_t>(RE::ACTOR_VALUE_MODIFIER::kDamage)];
 		}
 
 		a_out.max = base + permanent + temporary;
 		a_out.current = a_out.max + damage;  // damage modifier is stored negative
 		return true;
-	}
-
-	namespace
-	{
-		std::atomic<std::uint32_t> s_legendaryRankIndex{ kUnresolved };
-
-		[[nodiscard]] bool ResolveLegendaryRankIndex(std::uint32_t& a_out)
-		{
-			const std::uint32_t cached = s_legendaryRankIndex.load(std::memory_order_relaxed);
-			if (cached != kUnresolved) {
-				a_out = cached;
-				return true;
-			}
-
-			auto* avList = RE::ActorValue::GetSingleton();
-			if (!avList || !avList->legendaryRank) {
-				return false;
-			}
-			const std::uint32_t index = avList->legendaryRank->index;
-			s_legendaryRankIndex.store(index, std::memory_order_relaxed);
-			REX::INFO("[VATS] health: resolved legendaryRank AV index={}", index);
-			a_out = index;
-			return true;
-		}
 	}
 
 	std::uint32_t GetActorExtraHealthSegments(RE::Actor* a_actor)
@@ -177,16 +142,15 @@ namespace VATS
 			return 0;
 		}
 
-		std::uint32_t rankIndex = 0;
-		if (!ResolveLegendaryRankIndex(rankIndex)) {
+		auto* avList = RE::ActorValue::GetSingleton();
+		if (!avList || !avList->legendaryRank) {
 			return 0;
 		}
 
-		for (const auto& entry : a_actor->avStorage.baseValues) {
-			if (entry.first == rankIndex) {
-				return entry.second > 0.0f ? static_cast<std::uint32_t>(entry.second + 0.5f) : 0;
-			}
+		float rank = 0.0f;
+		if (!FindByAvPointer(a_actor->avStorage.baseValues, avList->legendaryRank, kBaseValueStride, rank)) {
+			return 0;
 		}
-		return 0;
+		return rank > 0.0f ? static_cast<std::uint32_t>(rank + 0.5f) : 0;
 	}
 }

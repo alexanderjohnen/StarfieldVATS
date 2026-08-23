@@ -199,6 +199,14 @@ namespace VATS
 			const float                           chance = chancePercent / 100.0f;
 			const bool                             hit = roll < chance;
 			REX::INFO("[VATS] aim-assist: hold started, chance={:.0f}%, roll={:.2f} -> {}", chancePercent, roll, hit ? "HIT" : "MISS");
+			// Drives the HUD's red-flash-on-hit / "MISS"-text-on-miss
+			// feedback (Overlay.cpp) - recorded here, at roll time, not
+			// gated on ProjectileTracker actually finding a projectile to
+			// redirect, since the roll itself is the meaningful event from
+			// the player's perspective (see the "shots that missed but I
+			// don't understand why" case: the roll can say HIT even when no
+			// projectile is ever found to redirect, a known separate issue).
+			Controller::Get().RecordShotResult(hit);
 
 			// Fast-poll right after the click, falling back to a slower
 			// cadence afterward. Found 2026-08-22: at the close range

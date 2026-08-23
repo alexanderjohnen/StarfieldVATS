@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <mutex>
 
 namespace VATS
@@ -50,11 +51,32 @@ namespace VATS
 		// already Off.
 		void ForceOff();
 
+		// Records the outcome of the most recent aim-assist roll (Alexander's
+		// request: visible feedback for the roll itself, not just the
+		// numeric hit-chance readout) - set from AimAssist's SteeringLoop, a
+		// background thread, as soon as the roll happens. Two plain atomics
+		// rather than a mutex - both are simple scalars, and a torn read
+		// (stale hit paired with a fresh timestamp or vice versa) degrades
+		// to at worst one wrong-colored frame right at the edge of the
+		// display window, not a crash.
+		void RecordShotResult(bool a_hit);
+
+		struct ShotResult
+		{
+			bool                                   hit{ false };
+			std::chrono::steady_clock::time_point  time{};
+			bool                                   valid{ false };  // false until the first RecordShotResult() call
+		};
+		[[nodiscard]] ShotResult GetLastShotResult();
+
 	private:
 		void Advance();  // game thread only
 
 		std::atomic<VATSMode>    m_mode{ VATSMode::kOff };
 		std::mutex               m_targetLock;
 		RE::NiPointer<RE::Actor> m_target;
+
+		std::atomic<bool>        m_shotHit{ false };
+		std::atomic<std::int64_t> m_shotTimestamp{ 0 };  // steady_clock ticks; 0 = no shot recorded yet
 	};
 }

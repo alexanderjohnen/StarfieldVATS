@@ -335,12 +335,27 @@ namespace VATS::UI
 				haveHealth = Settings::Get().showTargetHealth && GetActorHealth(a_actor, hp);
 			}
 
+			// Flash the box red on a hit, or show "MISS" above it, for a
+			// short window after AimAssist.cpp's SteeringLoop rolls -
+			// Alexander's request: visible feedback for the roll itself,
+			// not just the numeric hit-chance readout. Read via Controller
+			// since the roll happens on AimAssist's own background thread.
+			constexpr auto   kShotResultWindow = std::chrono::milliseconds(900);
+			constexpr ImU32  kHitColor = IM_COL32(230, 45, 45, 240);
+			const auto       shotResult = Controller::Get().GetLastShotResult();
+			const bool       showShotFlash = shotResult.valid &&
+			                            (std::chrono::steady_clock::now() - shotResult.time) < kShotResultWindow;
+
 			const auto& io = ImGui::GetIO();
 			const float px = sx * io.DisplaySize.x;
 			const float py = sy * io.DisplaySize.y;
-			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, a_color);
+			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color);
 
 			auto* dl = ImGui::GetForegroundDrawList();
+
+			if (showShotFlash && !shotResult.hit) {
+				DrawCenteredText(dl, px, py - 36.0f - 20.0f, "MISS", kHitColor);
+			}
 
 			float tetherStartY = py + 36.0f;
 			if (haveHealth) {
