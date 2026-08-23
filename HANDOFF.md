@@ -1,4 +1,4 @@
-# StarfieldVATS — Handoff / Project Snapshot (2026-08-22, evening)
+# StarfieldVATS — Handoff / Project Snapshot (2026-08-23)
 
 Read this first in a new chat session to pick up where things left off. This is a
 point-in-time snapshot; the code and Alexander's own testing may have moved past
@@ -9,13 +9,19 @@ the SFSE log before trusting anything below as still true.
 
 An SFSE mod for Starfield recreating **Fallout 76-style real-time VATS**: a
 hotkey locks a target while the game keeps running (no time-slow, no menu
-pause). Project root: `C:\Dev\StarfieldVATS`. Game: Steam,
+pause), shows a hit-chance percentage, and the goal is for shots to actually
+land according to that percentage — all without the camera/weapon visibly
+snapping onto the target. Project root: `C:\Dev\StarfieldVATS`, **now a proper
+git repo with real commit history** (was not, for the whole project, until
+2026-08-22 — every commit since then is a real checkpoint, use `git log`/`git
+diff`/`git bisect` instead of guessing at what changed). Game: Steam,
 `G:\Program Files (x86)\Steam\steamapps\common\Starfield`, v1.16.244.
 
 Alexander tests in-game; Claude cannot. Iterative build → deploy → Alexander
 tests → reports back → repeat. **Always read the SFSE log yourself**
 (`Documents\My Games\Starfield\SFSE\Logs\StarfieldVATS.log`, readable directly
-via the Read tool) rather than asking Alexander to paste it.
+via the Read tool) rather than asking Alexander to paste it. **Commit after
+every deployed build**, win or lose — this was a hard lesson (see below).
 
 ## Build & deploy
 
@@ -25,229 +31,340 @@ powershell -ExecutionPolicy Bypass -File deploy.ps1
 ```
 
 Fails with a file-lock error whenever Starfield is running — ask Alexander to
-close it first (occasionally a dead `Starfield.exe` lingers after the window
-closes; check Task Manager if a retry doesn't help). `deploy.ps1` never
-overwrites the live `StarfieldVATS.ini` once it exists, only seeds it on first
-deploy — new INI keys added in code must also be hand-added to both
-`res\StarfieldVATS.ini` (the template) and the deployed copy at
-`G:\...\Data\SFSE\Plugins\StarfieldVATS.ini` (Alexander's live config) if you
-want them visible/documented there, though the coded default kicks in either
-way if the key is simply missing.
+close it first. `deploy.ps1` never overwrites the live `StarfieldVATS.ini`
+once it exists, only seeds it on first deploy — new INI keys added in code
+must also be hand-added to both `res\StarfieldVATS.ini` (the template) and the
+deployed copy at `G:\...\Data\SFSE\Plugins\StarfieldVATS.ini` (Alexander's live
+config).
 
-## Architecture (current files)
+## THE BIG OPEN PROBLEM: making hitscan weapons actually hit/miss per the rolled chance
 
-- `src/main.cpp` — SFSE entry point, installs the render hook and hotkey
-  watcher on `kPostDataLoad`.
-- `src/HotkeyWatcher.cpp/h` — polls `GetAsyncKeyState` for the configured
-  activation key (`Settings::activationKeyVK`, INI `[Controls] iActivationKey`,
-  Alexander's live setting is **N**, decimal 78), edge-triggered, calls
-  `Controller::RequestAdvance()`.
-- `src/VATSController.cpp/h` — the state machine. **Two states: Off ↔
-  Locked** (collapsed today from an earlier three-state Off/Aiming/Locked
-  design — see "Design decisions" below for why). `Advance()` runs on an SFSE
-  task-thread queue (game thread), not the render thread. Also owns:
-  - The scanner auto-close-on-lock logic (`CloseScannerIfOpen`,
-    `SendKeyPress`) — simulates a real OS-level keypress of the scanner's own
-    toggle key via `SendInput`, with a retry loop for a known submenu edge
-    case. See "Hard-won lessons".
-  - `ForceOff()` — thread-safe, callable directly from the render thread (no
-    task-queue hop needed, touches only our own state), used to hard-end a
-    Locked session when certain menus/transitions open. See "Hard-won
-    lessons".
-- `src/Targeting.cpp/h` — target acquisition:
-  - `GetCrosshairActivationTarget()` — **primary and, as of today, only path
-    actually used for locking**. Reads `PlayerCharacter::commandTarget`
-    (offset `GameOffsets::kPlayerCommandTarget` = 0x0F90) directly. Real
-    engine-computed crosshair/activation pick, pixel-precise, respects real
-    geometry occlusion for free. Plain data read, no function call.
-  - `FindNearestActorToCrosshair()` — the older cell-scan/cone-angle
-    fallback. **No longer called from the lock path at all** (that fallback
-    usage was removed 2026-08-22 for reintroducing through-wall targeting,
-    twice, in two different files — see prior lessons). Still present in the
-    file but effectively dead code now that Aiming mode (its last caller) is
-    gone; not yet deleted, worth doing in a future cleanup pass.
-- `src/UI/Overlay.cpp/h` — the HUD: renders the "VATS: OFF/LOCKED" status
-  readout (top-left, always on while gameplay-visible), the Locked target
-  box, and the "TARGETING (N)" hotkey hint (shown while Off, scanner open,
-  and something's under the crosshair). Also owns the menu-gating logic that
-  calls `Controller::ForceOff()` — see "Hard-won lessons".
-- `src/UI/CameraProject.cpp/h` — self-computed pinhole-camera world→screen
-  projection. Unchanged this session.
-- `src/UI/D3DHook.cpp/h` — the render hook itself. Unchanged, stable.
-- `src/GameOffsets.h` — every empirically-verified struct offset, centralized.
-  **Never trust a CommonLibSF header offset without in-game verification.**
-- `src/Settings.h/cpp` — INI-backed settings (`StarfieldVATS.ini`). Now has
-  two independent key settings: `activationKeyVK` (the mod's own hotkey,
-  Alexander's live value: N) and `scannerToggleKeyVK` (the *real in-game*
-  hand-scanner keybind, Alexander's: Q — default 0x51). These are
-  deliberately separate concepts; don't conflate them.
+This is what most of the last session was spent on, unsuccessfully so far.
+**Read this whole section before touching aim-assist/hit-resolution code
+again** — it records several dead ends in detail specifically so they aren't
+retried.
 
-## Current status: two-state lock-on with several menu/transition edge cases fixed today
+### The goal
 
-### Confirmed working (Alexander tested, in-game, today)
-- Off → Locked on a single hotkey press, **only while the hand scanner is
-  open** — pressing the hotkey with the scanner closed is now a no-op
-  (`[VATS] ignored (scanner not open)` in the log), by design (see "Design
-  decisions").
-- Locked persists and tracks correctly regardless of camera direction, same
-  as before the state-machine simplification.
-- Scanner auto-closes on lock with the *real* close animation/sound (via
-  simulated keypress, not a hard UI-message hide) — confirmed working in the
-  base scanner view, and confirmed working (after a retry-loop fix) from
-  inside the Techrunner scan-action submenu (E on an NPC) too.
-- VATS now actually **ends** (not just visually hides) when any of these open
-  while Locked: Pause menu (Esc), the Tab-opened character hub ("DataMenu" —
-  Status/Inventory/Map/Quests tabs), Dialogue, a cell-transition loading
-  screen. Previously the overlay was merely hidden during some of these
-  (`UI::menusVisible`), which left a stale Locked state hanging in the
-  background — Alexander flagged this after seeing "VATS: LOCKED" and the
-  target box rendering through both the Tab character hub and the Esc pause
-  menu (two separate screenshots, 2026-08-22).
+Weapon/camera should never visibly snap onto the target (explicitly requested
+— an earlier `SendMouseMove`-based camera-steering design was removed for
+exactly this reason). Instead, the *shot itself* should be steered to land per
+the rolled hit/miss, the way classic Bethesda VATS (FO3/NV/FO4) does it —
+bend the actual fired shot, not the camera.
 
-### Known-open / unconfirmed
-- **`StarMap` menu-name is an unverified guess.** CommonLibSF has no
-  standalone RTTI class for it (only a large family of nested
-  `StarMap__BodyInfoToUI`/`GalaxyMarkerData`/etc. UI-data structs strongly
-  suggesting that's the real top-level name) — used in the `ForceOff()` gate
-  anyway since a wrong `IsMenuOpen` name just degrades to a permanent no-op,
-  never a crash. **Not yet confirmed** whether opening the star/system map
-  while Locked actually ends VATS — ask Alexander to check.
-- **`FindNearestActorToCrosshair()` (the cell-scan fallback in
-  `Targeting.cpp`) is now dead code** — nothing calls it since Aiming mode
-  was removed. Not deleted yet; candidate for a cleanup pass, but leaving it
-  for now in case some future feature (e.g. body-part visibility work) wants
-  a fallback scan again.
-- **"Und sowas" — Alexander expects more menu/transition edge cases to turn
-  up** that should also `ForceOff()` but haven't been hit/reported yet. The
-  agreed approach (his call, 2026-08-22): fix these **reactively** as he
-  finds them in play, using the real menu name each time (same
-  `IsMenuOpen("X")` pattern as `PauseMenu`/`DataMenu`/`DialogueMenu`/
-  `LoadingMenu`), rather than trying to preemptively enumerate every vanilla
-  + mod menu now.
-- Body-part-level visibility (hit-chance formula input) — **still not
-  solved**, unchanged from before this session. Havok/NiPick raycasting
-  confirmed a dead end (no mapped functions). Depth-buffer/stencil sampling
-  idea still unexplored. See [[starfield-vats-mod-design]] for full detail.
-- Body-shaped silhouette outline (cosmetic) — still deliberately not
-  pursued, unchanged from before this session.
+### Finding #1: most Starfield weapons are hitscan, not simulated projectiles
 
-## Design decisions (locked, updated today)
+Confirmed via `BGSProjectileData::BGSProjectileFlags::kHitScan` (see
+`lib/commonlibsf/include/RE/B/BGSProjectile.h`) and cross-referenced against
+known Creation Engine (FO4-lineage) behavior: **standard ballistic weapons
+resolve via an instant hitscan raycast in the same frame as the trigger
+pull.** There is no real, findable `RE::Projectile` world object to redirect
+in-flight for ordinary guns — only slow ordnance (rockets, grenades, plasma)
+spawns one. This was confirmed the hard way: `ProjectileTracker.cpp`'s cell-
+reference-array scan (which DOES correctly find real projectiles for slow
+ordnance — see below) never once found a real bullet across many logged test
+shots with a standard ballistic weapon, only a persistent `kPBEA`
+(BeamProjectile) entry that turned out to be the weapon's laser-sight
+attachment, not ammunition. Alexander confirmed no beam/laser weapons (e.g.
+the Cutter) were in use during that test, ruling out a weapon-type confound.
 
-- **Two-state Off/Locked toggle, not three-state Off/Aiming/Locked.** The
-  Aiming state (a dimmer highlight box, committed to Locked on a *second*
-  press) was added earlier today specifically so Alexander could see the
-  highlight before committing. A few messages later, once activation was
-  gated on the scanner being open, Alexander asked "do we still need Aiming
-  at all?" — reasoning: the scanner's own vanilla highlight, plus the
-  always-shown "TARGETING (N)" hint (which already runs in the Off state,
-  independent of any VATS mode), already give that same "see before
-  committing" feedback. Agreed and removed the same session. **If a future
-  request sounds like "bring back a two-step confirm before locking," reread
-  this — it was tried, and removed by explicit request, not by accident.**
-- **Activation requires the hand scanner to be open.** Originally VATS could
-  be triggered from anywhere; Alexander flagged this as wrong (no highlight
-  UI would even be visible). Gated in `VATSController::Advance()`'s Off
-  branch via `IsMenuOpen("MonocleMenu")`. Locked state itself is **not**
-  gated this way — it persists after the scanner closes (that's the point of
-  the auto-close-on-lock feature below), only the *entry* transition checks.
-- **Scanner closes itself via a simulated real keypress, not an engine
-  message.** `UIMessageQueue::AddMessage("MonocleMenu", kHide)` was the first
-  attempt — works, but closes with zero transition (no animation, no sound).
-  Alexander asked directly: "what stops us from just sending a keypress, like
-  I pressed Q myself?" Investigated whether CommonLibSF exposes a cleaner
-  *internal* input-injection path first (`BSInputDeviceManager`/`ButtonEvent`
-  — RTTI-confirmed classes exist, but zero mapped member functions, so no
-  safe internal call is available) — concluded Alexander's OS-level
-  `SendInput` idea was actually the better approach anyway, not just a
-  fallback: Starfield can't distinguish it from a real press (single-player,
-  no anti-cheat), so it gets the genuine native animation/sound for free
-  without needing any engine internals at all.
+**Consequence:** `ProjectileTracker::RedirectFreshProjectiles` (redirects a
+real in-flight `Projectile`'s `velocity`/`movementDirection`, and now also
+`desiredTargetHandle` — see below) **only ever helps with rockets/grenades/
+plasma, never with standard guns.** Don't expect it to fire for a pistol/rifle
+test — that's correct, expected behavior, not a bug to chase.
 
-## Hard-won lessons from today (read before repeating any of this work)
+### Finding #2: classic VATS bends the fire vector, doesn't touch the camera
 
-1. **A Win32 `SendInput` down+up with zero delay can be silently missed.**
-   First close-scanner attempt sent both events back-to-back with no gap and
-   the scanner didn't close. Almost certainly the same class of bug as our
-   own `HotkeyWatcher`'s `isDown`/`wasDown` edge-trigger polling, just
-   experienced from the other side: whatever poll-driven edge detection the
-   game uses internally can land in the gap and never observe the "down"
-   state. Fixed with a real hold duration (~60ms) between down and up, sent
-   from a detached background thread so it doesn't block the game thread.
-2. **One simulated keypress doesn't always fully close a menu — sub-states
-   within the same top-level menu name aren't distinguishable via
-   `IsMenuOpen`.** Pressing E on an NPC while scanning opens a scan-action
-   submenu (Techrunner's Scan/Mark/etc. list) that's still part of the same
-   `MonocleMenu` Scaleform (confirmed via CommonLibSF's ID list —
-   `MonocleMenu_Bioscan`, `MonocleMenu_SocialSpell`, etc. are all sub-events
-   of the one menu, no separate name to check). A single close-keypress in
-   that state only backs out of the submenu into the normal scan view — the
-   scanner itself stays open, and we have no way to tell which sub-state
-   we're in via any mapped API. Fixed with a retry loop (`CloseScannerIfOpen`
-   in `VATSController.cpp`: press, wait ~250ms, check `IsMenuOpen` again,
-   repeat up to 3 times) instead of guessing the exact sub-state — this
-   generalizes to any depth of nesting without needing new detection code
-   per case.
-3. **Hiding an overlay is not the same as ending the state it represents —
-   and the "is a menu blocking gameplay" signal isn't one field.**
-   `UI::menusVisible` was already used to hide the HUD during "normal"
-   blocking menus (pause, inventory), but (a) it left Locked mode dangling
-   underneath even while hidden, and (b) Starfield's Tab-opened character
-   hub ("DataMenu") doesn't flip `menusVisible` at all, so the overlay leaked
-   straight through it (screenshot-confirmed) — and separately the Esc pause
-   menu leaked through too in another screenshot, meaning even the "already
-   fixed" case wasn't fully fixed. Alexander's explicit correction: such
-   menus should **end** VATS, not just visually hide it. Fixed with
-   `Controller::ForceOff()` (safe to call directly from the render thread —
-   it only touches our own atomic/mutex state, no engine calls, so no
-   SFSE-task-queue hop needed unlike `Advance()`) called from
-   `Overlay::Draw()` whenever `menusVisible` is false OR any of
-   `PauseMenu`/`DataMenu`/`DialogueMenu`/`LoadingMenu`/`StarMap` is open
-   (first four RTTI-confirmed in CommonLibSF, `StarMap` an educated guess —
-   see "Known-open" above).
-4. **CommonLibSF's Starfield port has real RTTI-confirmed classes with zero
-   mapped member functions** — found for both `BSInputDeviceManager`/
-   `ButtonEvent` (this session) and (from an earlier session) Havok/NiPick.
-   The RTTI table (`IDs_RTTI.h`) proves a class *exists* and gives you its
-   singleton/vtable location, but says nothing about whether any of its
-   methods are safely callable — check `grep`-ing for a dedicated header
-   wrapper (e.g. `RE/B/BSInputDeviceManager.h`) before assuming a class with
-   an RTTI hit is usable the way a fully-wrapped Skyrim-CommonLib class
-   would be. See [[commonlibsf-unmapped-ids]] for the general pattern.
-5. **Deploy failures aren't always "game still open"** — occasionally a dead
-   Starfield process lingers after the visible window closes; check Task
-   Manager if a deploy keeps failing despite Alexander confirming the game is
-   closed. (Carried over from a prior session, still true.)
+Confirmed via direct outreach to the actual author of one of the two existing
+Fallout 76-style real-time VATS mods for Fallout 4 (Nexus:
+"Fallout 76 VATS - F4SE" and "V.A.T.S. From Fallout76" — both closed-source,
+no code available). Their answer, paraphrased: separate target selection from
+the normal crosshair-based hit calculation; classic Bethesda VATS rolls
+hit/miss *before* firing, then bends the actual fire vector so the shot
+resolves per that roll — this is why VATS bullets visibly curve in FO3/NV/FO4.
+They could not give exact Starfield internals (never worked with Starfield).
 
-## Reference: menu names confirmed usable via `RE::UI::IsMenuOpen` today
+### Finding #3: Starfield DOES have a native "bullet bending" aim-assist system — found and reached, but doesn't work when force-enabled
 
-All via the same low-risk pattern already established for `MonocleMenu` (a
-string lookup, degrades to "always false" if wrong, never crashes):
+This is the most concrete lead so far. Full pointer chain, **confirmed live
+in-game 2026-08-22/23** (cross-validated against a known-good sibling field's
+`formType`, not just a guess that compiles):
 
-- `PauseMenu` — RTTI-confirmed (ID 857854). The Esc menu (Quicksave/Save/
-  Load/Settings/etc.).
-- `DataMenu` — RTTI-confirmed (ID 857723). Tab-opened character hub
-  (Status/Inventory/Map/Quests tabs) — confirmed this is what Alexander
-  means by "Charaktermenü", per his own description.
-- `DialogueMenu` — RTTI-confirmed (ID 864633). NPC conversations.
-- `LoadingMenu` — RTTI-confirmed (ID 864734). Cell-transition loading
-  screens (matches the `loadingmenu.swf` interface file name from an earlier
-  session's research).
-- `StarMap` — **unconfirmed**, see "Known-open" above.
-- `MonocleMenu` — already known from a prior session, the hand scanner.
+```
+Actor::inventoryList                                    (TESObjectREFR + 0xA0,
+                                                           BSGuarded<BGSInventoryList*,
+                                                           BSReadWriteLock> — read the
+                                                           raw pointer directly, do
+                                                           NOT call
+                                                           BSReadWriteLock::LockRead/
+                                                           UnlockRead — see "dead
+                                                           ends" below)
+  -> BGSInventoryList::data                              (+0x28, BSTArray<BGSInventoryItem>,
+                                                           same {size@0,cap@4,data@8}
+                                                           shape used elsewhere in this
+                                                           project)
+    -> first item where object->formType==kWEAP (0x30)
+       AND IsEquipped() (item.flags & 0x7)
+      -> BGSInventoryItem::instanceData                  (+0x08, BSTSmartPointer —
+                                                           _ptr at +0 — this is the
+                                                           LIVE per-item instance,
+                                                           mods/attachments applied,
+                                                           NOT TESObjectWEAP's static
+                                                           form template)
+        -> WeaponDataAim*                                (TESObjectWEAPInstanceData + 0x18)
+          -> aimModel (BGSAimModel*)                      (+0x28 — cross-check field,
+                                                           formType must read kAMDL/0x93;
+                                                           confirmed MATCH on every shot)
+          -> BGSAimAssistModel*                           (+0x38 — NOT +0x30, that slot
+                                                           is a BGSWwiseEventForm/audio
+                                                           cue, a dead end already tried
+                                                           and ruled out; formType
+                                                           confirmed kAAMD/0x94 on every
+                                                           shot)
+            -> AimAssistData (embedded inline at +0x38 within the form,
+               per RE::BGSBaseFormT<T,...>::data — NOT a further pointer)
+              -> bulletBendingConeAngle (+0x38 within that: reads 12.0,
+                 a real/sane value)
+              -> aimAssistEnabled (+0x5C: reads FALSE by default)
+```
 
-## Persistent memory
+**Test performed:** force-wrote `aimAssistEnabled = true` on every shot.
+Confirmed via logging that the write held (stayed `true` across many
+subsequent shots/reads, was not reset by the engine each frame). **Alexander
+confirmed: no visible change in actual shot/hit behavior.** So flipping this
+one bool is NOT sufficient by itself.
 
-Alexander's Claude memory system (separate from this file) has three related
-entries:
-- `starfield-vats-mod-design` — overall design, status, backlog, lessons.
-  Updated today with the state-machine simplification, the scanner
-  auto-close mechanism, and the `ForceOff` menu-gating pattern.
-- `starfield-vats-ui-hook` — render hook + UI overlay specifics. **Not yet
-  updated with today's Overlay.cpp changes (Aiming box removal, the
-  `ForceOff` gate) — worth doing in a future session if it drifts out of
-  sync with the code.**
-- `commonlibsf-unmapped-ids` — the general "mapped ID ≠ safe" pattern,
-  reinforced today by the `BSInputDeviceManager`/`ButtonEvent` finding.
+### Finding #4: no further plain-data lead exists — the real gate is a function, not a field
+
+Two follow-up research passes (background agents, thorough) both dead-ended:
+
+- **No separate "current aim-assist target" field exists anywhere** (checked
+  `PlayerCharacter.h`, `Actor.h` in full — every candidate offset near
+  `commandTarget`/0x0F90 is still an unlabeled `unk0Fxx`/`unk10xx`). The real
+  mechanism is an **event/query pattern**, not a stored field:
+  `PlayerAutoAimActorEvent` (a `BSTValueRequestEvent<...>` — ask/answer, not a
+  passive value) and `IAimAssistImpl`/`RangedAimAssistImpl`/`MeleeAimAssistImpl`
+  (the actual per-shot decision functors). **All of these exist only as
+  RTTI/VTABLE symbol IDs in `IDs_RTTI.h`/`IDs_VTABLE.h` — CommonLibSF has
+  never given them a header/class layout.** REL::IDs found (non-zero, i.e.
+  mapped, but never independently verified in this project):
+  `RangedAimAssistImpl` RTTI 851442, `IAimAssistImpl` RTTI 851443,
+  `MeleeAimAssistImpl` RTTI 851444.
+- **No global "active input device" (gamepad vs. mouse+KB) plain field
+  either.** `BSInputDeviceManager` and `ControlMap` are both RTTI/VTABLE-only,
+  no header. `InputEvent::DeviceType` enum exists
+  (`kKeyboard/kMouse/kGamepad/kKinect`) but only per-event, not as a
+  persistent "current scheme" flag anywhere mapped.
+
+**Bottom line: the only remaining path to make native aim-assist actually
+work is hooking `RangedAimAssistImpl` (or similar) — a real, never-before-
+exercised engine function call, exactly the risk category that has caused
+every one of this project's crashes so far** (see
+`commonlibsf-unmapped-ids` memory — mapped ≠ safe). This is a genuine
+decision point, not a "just try it" — Alexander was asked directly and chose
+**"keep pursuing native aim-assist"** over a subtle-camera-nudge fallback or
+leaving hitscan weapons unaffected, **fully aware this now means either a
+risky function hook, or more research to find an even-narrower plain-data
+lever if one exists.** Don't re-litigate this choice without new information;
+do bring it up again if the hook attempt itself produces a bad result (crash,
+no effect, etc.) — that would be new information.
+
+### What NOT to re-try (confirmed dead ends, don't re-derive)
+
+- `WeaponDataAim + 0x30` is **not** `BGSAimAssistModel*` — it's a
+  `BGSWwiseEventForm` (audio cue), formType `kWWED`/0xC0. The real one is
+  `+0x38`.
+- `MiddleHighProcessData::lastBoundWeapon`
+  (`Actor::currentProcess->middleHigh->lastBoundWeapon`, offset 0x450) is
+  **not** "currently equipped weapon" despite the name — confirmed null on
+  every single shot in-game across a full test session, despite
+  `currentProcess`/`middleHigh` both resolving fine. Use the
+  `Actor::inventoryList` path instead (Finding #3 above).
+- Forcing `AimAssistData::aimAssistEnabled = true` alone does **not** change
+  shot behavior (Finding #3).
+- `RE::ProcessLists` has no projectile-tracking field in either Starfield's or
+  Skyrim SE's CommonLib headers — only actor-handle arrays. Don't look there
+  for "list of active projectiles."
+- Don't call `BSReadWriteLock::LockRead()`/`UnlockRead()` — already on the
+  project's "mapped but crashed anyway" list (via
+  `TESObjectCELL::ForEachReference`'s internal use of it, an earlier
+  session). Read guarded (`BSGuarded<T, BSReadWriteLock>`) fields' raw
+  pointer directly instead, unsynchronized, SafeRead-guarded — this project's
+  established risk tradeoff (see `SafeMem.h`/`ProjectileTracker.cpp`'s
+  comments on why an unsynchronized plain-data read/write is judged lower
+  risk than a fresh engine function call).
+
+### Side improvement made along the way (works, unrelated to the hitscan problem)
+
+`ProjectileTracker::RedirectFreshProjectiles` (for the rockets/grenades case
+that DOES have a real Projectile object) now also writes
+`desiredTargetHandle` (`RE::Projectile` + 0x184) to the target's formID on a
+rolled hit, in addition to the existing direct `velocity`/`movementDirection`
+override — Alexander's observation that ship-combat missile lock-on already
+does real-time native homing, and `desiredTargetHandle` is presumably what
+drives it. Untested whether this actually improves anything over the direct
+velocity write alone (both are applied together; the direct write already
+guarantees this frame's redirect regardless). Uses the target's formID as a
+handle stand-in (same assumption as the player-handle trick elsewhere) —
+not guaranteed correct for a dynamically-spawned NPC, but degrades gracefully
+(bad handle = no extra native homing, not a crash).
+
+## Other current status
+
+### Confirmed working
+- Off → Locked on a single hotkey press, only while the hand scanner is open.
+- Locked persists and tracks correctly regardless of camera direction.
+- Scanner auto-closes on lock via simulated keypress (`iScannerCloseMode=1`,
+  default) — confirmed reliable **as long as `EngineInputLayer::SetBlocked`
+  is NOT active at the same time** (see below).
+- VATS ends (not just hides) on Pause/DataMenu/Dialogue/LoadingMenu/StarMap
+  (StarMap name still unconfirmed guess).
+- Distance-based hit chance (replaced an earlier, explicitly-rejected
+  screen-space "must aim precisely at crosshair" cone — Alexander pointed at
+  FO4/76 VATS reference screenshots showing high chance despite wildly
+  off-crosshair aim). `Settings::fullChanceRangeMeters`/
+  `maxEffectiveRangeMeters`, linear falloff, LOS still a hard gate via
+  `HasDetectionLOS` (see below — currently a no-op).
+- Body-part targeting (Suit/Helmet/Pack) removed entirely per Alexander's
+  request — single chest-height aim point now, `GameOffsets::kAimPointChestZ`.
+  May come back later, not scoped/started.
+
+### Known-broken / open
+- **`HasDetectionLOS` is currently a stub that always returns `true`** — the
+  real implementation (a raw hand-cast `REL::ID(170456)` call, calling shape
+  copied from Cassiopeia Papyrus Extender's usage, never independently
+  verified) was the actual root cause of the multi-session "hard crash on
+  locking, no log" bug — see `starfield-vats-mod-design` memory's "Crash on
+  locking" section for the full misdiagnosis trail before this was found.
+  Confirmed crash-free with it stubbed out. **LOS/wall-blocking for hit
+  chance does not currently exist** — only distance matters right now. Needs
+  the calling convention re-derived properly (ideally from disassembly, not
+  guessing) before re-enabling.
+- **`EngineInputLayer::SetBlocked` is disabled again** (2026-08-23, third
+  time this has flipped). History: originally disabled on suspicion of
+  causing the crash above (wrong — cleared once `HasDetectionLOS` was found).
+  Re-enabled to fix "Tab opens DataMenu instead of ending the lock" — caused
+  a *new*, confirmed problem: it broke the scanner-close-via-keypress
+  mechanism (0/N successes, log-confirmed — fixed by reordering so
+  `SetBlocked(true)` only applies after the scanner-close sequence finishes).
+  Even after that reorder, direct in-game testing showed
+  `USER_EVENT_FLAG::TabMenuMaybe` blocks **far more than Tab** — Alexander
+  reported the favorites menu and other unrelated single-key menu shortcuts
+  all went dead while Locked. AND it still didn't fix the original problem —
+  `BackKeyInterceptor`'s own diagnostic logging (still in the code, logs
+  every matching keydown regardless of outcome) shows **zero "back key seen"
+  events across a full test session**, meaning the low-level keyboard hook
+  isn't even firing for Tab, a separate, still-unsolved problem. Net result:
+  disabled again, real collateral damage with no confirmed benefit. **Don't
+  re-enable without first confirming exactly what `TabMenuMaybe` gates** (the
+  CommonLibSF header itself marks it "Unconfirmed").
+- **Tab still does not end the lock.** `BackKeyInterceptor.cpp`'s
+  `WH_KEYBOARD_LL` hook installs successfully every session
+  ("back-key interceptor started" always logs) but never once logs
+  "back key seen" despite Alexander confirming he pressed Tab while Locked.
+  The hook pattern is otherwise proven (identical structure to `AimAssist`'s
+  mouse hook, which demonstrably works — many "hold started" log lines).
+  Not yet root-caused. Worth checking: is Tab perhaps intercepted by
+  something else (Windows, Steam overlay, another mod) before reaching a
+  low-level hook at all? Or is `Settings::backKeyVK` reading incorrectly? Log
+  shows `iBackKey=0x9` (correct, VK_TAB) at startup.
+- `VKToDisplayLabel` (Overlay.cpp) now supports F1-F24 in the "TARGETING (N)"
+  hint (Alexander rebound `iActivationKey` to F17/0x80) — was previously
+  letters/digits only, showing "?".
+- Body-part-level visibility / occlusion for hit-chance — not solved, see
+  `starfield-vats-mod-design` memory for the deeper history.
+
+## Architecture (current files, brief — read the actual files for detail, comments are extensive and mostly still accurate)
+
+- `src/main.cpp` — SFSE entry, installs hooks/watchers on `kPostDataLoad`.
+- `src/HotkeyWatcher.cpp/h` — polls for the activation key, edge-triggered.
+- `src/VATSController.cpp/h` — Off/Locked state machine, scanner auto-close,
+  `ForceOff()`.
+- `src/Targeting.cpp/h` — `GetCrosshairActivationTarget()` (the only path
+  actually used for locking), `HasDetectionLOS` (currently stubbed true, see
+  above), `FindNearestActorToCrosshair` (dead code, unused fallback).
+- `src/AimAssist.cpp/h` — fire-button hook, hit/miss roll (distance-based
+  chance), calls `ProjectileTracker::RedirectFreshProjectiles` and
+  `AimAssistProbe::ForceAimAssist` per shot.
+- `src/AimAssistProbe.cpp/h` — the native-aim-assist pointer chain (Finding
+  #3 above). Currently force-writes `aimAssistEnabled=true` (confirmed
+  insufficient alone — see above). Next work on the hitscan problem happens
+  here or in a new file alongside it.
+- `src/ProjectileTracker.cpp/h` — redirects real, slow-ordnance
+  `RE::Projectile` objects only (rockets/grenades/plasma) — velocity/
+  movementDirection + desiredTargetHandle. Does nothing for hitscan weapons
+  by design (there's no object to find).
+- `src/UI/Overlay.cpp/h` — HUD: status readout, target box, "TARGETING (N)"
+  hint (now F-key aware), the `ForceOff()` menu-gating logic.
+- `src/UI/CameraProject.cpp/h`, `src/UI/D3DHook.cpp/h` — render hook + screen
+  projection, stable, not touched recently. `WorldToScreen` no longer depends
+  on ImGui's `io.DisplaySize` (crashed once when the Present hook lost a
+  race with BetterConsole for the swapchain vtable — `D3DHook` now tracks
+  backbuffer size in atomics independent of ImGui; `D3DHook` also has a
+  vtable-patch fallback for when MinHook itself fails to hook, same BetterConsole
+  race).
+- `src/EngineInputLayer.cpp/h` — currently unused (see "Known-broken" above),
+  kept for a future, better-understood re-enable.
+- `src/GameOffsets.h`, `src/SafeMem.h/cpp` — centralized verified offsets;
+  `SafeRead`/`SafeWrite`, SEH-guarded.
+- `src/Settings.h/cpp`, `res/StarfieldVATS.ini` — INI-backed config.
+
+## Hard-won lessons (don't repeat)
+
+1. **Don't chase the last log line before a crash without confirming it's
+   the cause, not just the last thing that happened to log.** The
+   `HasDetectionLOS` crash took 5 wrong turns (EngineInputLayer, IsMenuOpen-
+   on-wrong-thread, ImGui/display-size, scanner-close mechanism, disabling
+   AimAssist entirely) before the real cause was found — each looked
+   plausible from timing alone. What actually worked: asking Alexander to
+   pin down the last known-good build from memory (a specific feature it
+   predated), since there was no git history to bisect against at the time.
+2. **This project now has real git history — use it.** Commit after every
+   deployed build, whether it worked or not. The lack of this cost a full
+   afternoon of manual archaeology once (see lesson 1).
+3. **A mapped, non-zero `REL::ID` is not proof of safety** — 4+ confirmed
+   crashes/dead-ends from mapped-but-untested engine function calls this
+   project alone (`BSPointerHandleManagerInterface::GetSmartPointer`,
+   `TESObjectCELL::ForEachReference`'s internal `LockRead`,
+   `HasDetectionLOS`, `Actor::GetActorKnowledge` was zeroed entirely). Prefer
+   plain data reads/writes over any wrapper ending in a function call. This
+   is the central tension in the current open problem (Finding #4 above) —
+   there's no more plain-data lead left for native aim-assist, only a
+   function hook.
+4. **Struct-offset claims (even from CommonLibSF, even with a plausible
+   field name) need in-game cross-validation, not just "it compiles."**
+   `lastBoundWeapon` sounded exactly right and was completely wrong.
+   `WeaponDataAim + 0x30`'s own header comment said "AimModelData" and was
+   also wrong (a stale/misapplied label — the real AimModelData-shaped
+   neighbor is `aimModel` at +0x28, one slot earlier). The technique that
+   actually worked both times: sweep every candidate field in a struct and
+   check `formType` against the expected value, rather than trusting a
+   single guess.
+5. **A "fix" can have collateral damage that isn't visible until directly
+   tested in-game** — `EngineInputLayer::SetBlocked` looked correct on paper
+   twice (both times) and broke something unrelated both times (scanner-
+   close, then favorites-menu-and-more). Ask Alexander to specifically test
+   *unrelated* systems after any engine-input-layer change, not just the
+   thing you were trying to fix.
+6. **Don't remove a working, well-liked mechanism because of a
+   misattributed bug.** Alexander was visibly frustrated once this session
+   when a scanner-close mode that had worked reliably for a long time kept
+   getting swapped away based on thin evidence — the actual fix was
+   reordering *around* it, not replacing it. If something Alexander says
+   "works fine" is implicated by a new bug, look harder for what changed
+   around it before touching the thing itself.
+
+## Persistent memory (separate from this file)
+
+- `starfield-vats-mod-design` — overall design, status, backlog, the full
+  "Crash on locking" misdiagnosis history, ship-combat VATS backlog idea.
+- `starfield-vats-ui-hook` — render hook + UI overlay specifics, the
+  BetterConsole vtable race, ImGui/display-size fix.
+- `commonlibsf-unmapped-ids` — the general "mapped ID ≠ safe" pattern.
+- `feedback-commit-every-vats-build` — commit after every deployed build,
+  no exceptions.
 
 This file exists as a single self-contained recap for a fresh chat, not a
-replacement for those.
+replacement for those — but for the hitscan/aim-assist problem specifically,
+this file is currently the most complete record.
