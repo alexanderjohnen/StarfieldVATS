@@ -17,6 +17,30 @@ namespace VATS
 			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
 		}
 
+		// Sweeps every 8-byte-aligned qword in [0, a_size) from a_base,
+		// treating each as a candidate pointer and checking whether it
+		// dereferences to something with formType == kPROJ - the same
+		// "sweep + cross-check formType" technique that found the real
+		// BGSAimAssistModel offset in AimAssistProbe.cpp. Used below once
+		// the header's claimed AMMO_DATA::projectile offset turned out to
+		// hold an unresolved FormID (upper 4 bytes exactly zero, unlike
+		// every real pointer seen elsewhere in this process) instead of a
+		// live pointer.
+		void SweepForProjectile(const char* a_label, std::uint64_t a_base, std::size_t a_size)
+		{
+			for (std::size_t off = 0; off < a_size; off += 8) {
+				std::uint64_t candidate = 0;
+				if (!Read(reinterpret_cast<const void*>(a_base), off, candidate) || candidate < 0x10000) {
+					continue;  // null/tiny - not a plausible heap or module pointer
+				}
+				std::uint8_t formType = 0;
+				if (Read(reinterpret_cast<const void*>(candidate), GameOffsets::kFormType, formType) && formType == 0x3A /* kPROJ */) {
+					REX::INFO("[VATS] projflag sweep: {}+0x{:X} = 0x{:X} -> formType=0x3A (kPROJ) - CANDIDATE MATCH",
+						a_label, off, candidate);
+				}
+			}
+		}
+
 		// Same equipped-weapon resolution as AimAssistProbe.cpp (see that
 		// file for how each offset here was confirmed live 2026-08-22) -
 		// duplicated rather than shared, matching this project's existing
@@ -155,6 +179,14 @@ namespace VATS
 					}
 				}
 				REX::INFO("[VATS] projflag raw dump ammo=0x{:X}: {}", ammo, hex);
+
+				// TESAmmo is 0x240 total (static_assert-backed); WeaponAmmoData
+				// is 0x184 (per its header, though that struct's own field
+				// offsets are already known-unreliable - see kWeaponAmmoDataAmmo
+				// above - so its declared size is a lower-confidence bound,
+				// swept anyway since it's the best number available).
+				SweepForProjectile("ammo", ammo, 0x240);
+				SweepForProjectile("weaponAmmoData", weaponAmmoData, 0x184);
 			}
 		}
 
