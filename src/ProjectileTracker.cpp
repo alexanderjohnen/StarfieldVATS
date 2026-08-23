@@ -39,6 +39,7 @@ namespace VATS
 		constexpr std::size_t kMovementDirection = 0x158;
 		constexpr std::size_t kVelocity = 0x164;
 		constexpr std::size_t kShooterHandle = 0x180;
+		constexpr std::size_t kDesiredTargetHandle = 0x184;
 		constexpr std::size_t kAge = 0x220;
 
 		// Only ever touch a projectile within this age window: old enough
@@ -171,6 +172,28 @@ namespace VATS
 			// safe-by-construction instead.
 			(void)Write(reinterpret_cast<void*>(entry), kMovementDirection, dir);
 			(void)Write(reinterpret_cast<void*>(entry), kVelocity, newVelocity);
+
+			// On a hit, also point the round's own desiredTargetHandle at
+			// the target (2026-08-22, Alexander's observation: ship-combat
+			// missile lock-on already does real-time homing toward a
+			// locked target natively - this is presumably the field that
+			// drives it). Uses the target's formID directly as the handle
+			// value, same "persistent ref" assumption as kPlayerRefHandle
+			// above - unlike the player, an arbitrary combat NPC is NOT
+			// guaranteed persistent (some are dynamically spawned, whose
+			// real handle differs from their formID). If wrong, this
+			// degrades gracefully: a handle that resolves to nothing or
+			// the wrong object just means no extra native homing this
+			// frame, not a crash - handle resolution failure is a normal,
+			// expected case this engine is built to tolerate, and our own
+			// direct velocity/movementDirection write above already
+			// guarantees this frame's redirect regardless of whether this
+			// extra hint does anything. Only on hit - a missed shot should
+			// not gain native homing assistance toward the target either.
+			if (a_hit) {
+				const std::uint32_t targetHandle = a_target->GetFormID();
+				(void)Write(reinterpret_cast<void*>(entry), kDesiredTargetHandle, targetHandle);
+			}
 
 			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f} dir=({:.2f},{:.2f},{:.2f})",
 				a_hit ? "HIT" : "MISS", entry, age, speed, dir.x, dir.y, dir.z);
