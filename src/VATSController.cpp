@@ -2,6 +2,7 @@
 
 #include "CrosshairVisibility.h"
 #include "EngineInputLayer.h"
+#include "HitMarkerVisibility.h"
 #include "Settings.h"
 #include "Targeting.h"
 
@@ -161,6 +162,7 @@ namespace VATS
 		EngineInputLayer::SetBlocked(false);
 		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
+		HitMarkerVisibility::Restore();
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
 		// been touched from the game thread so far in this project. File
@@ -252,6 +254,7 @@ namespace VATS
 
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
+				HitMarkerVisibility::Hide();
 			}
 			// EngineInputLayer::SetAdsBlocked(true) disabled again
 			// 2026-08-23: confirmed via screenshot that USER_EVENT_FLAG::
@@ -312,6 +315,7 @@ namespace VATS
 		EngineInputLayer::SetBlocked(false);
 		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
+		HitMarkerVisibility::Restore();
 		REX::INFO("[VATS] OFF");
 		if (console) {
 			console->Log("[VATS] OFF");
