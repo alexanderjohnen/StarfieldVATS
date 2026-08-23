@@ -1,55 +1,46 @@
-# CommonLibSF Plugin Template
+# StarfieldVATS
 
-This is a basic plugin template using CommonLibSF.
+A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-time targeting — no time-slow, no menu pause. A hotkey locks onto a target while the game keeps running, shows a live hit-chance readout, and steers the fired shot to land (or deliberately miss) according to that rolled chance, without ever visibly snapping the camera or weapon onto the target.
 
-### Requirements
-* [XMake](https://xmake.io) [3.0.0+]
-* C++23 Compiler (MSVC, Clang-CL)
+> **This project was built collaboratively with Claude (Anthropic), primarily through the Claude Code agent.** The large majority of the code, the in-game reverse-engineering (struct offsets, engine behavior), and this documentation were written by Claude, working from Alexander Johnen's direction, hypotheses, design decisions, and in-game testing — Claude cannot run Starfield itself. See [`docs/CONTRIBUTIONS.md`](docs/CONTRIBUTIONS.md) for a concrete breakdown of who did what. Every commit in this repository's history that Claude authored or co-authored carries a `Co-Authored-By: Claude` trailer, so the split is also traceable directly in `git log`.
 
-## Getting Started
-```properties
-git clone --recurse-submodules https://github.com/libxse/commonlibsf-template
-cd commonlibsf-template
-```
+## What it does
 
-### Build
-To build the project, run the following command:
+- A single hotkey locks onto whatever's under the crosshair while the in-game hand scanner is open, and tracks that actor's position afterward regardless of camera direction.
+- Hit chance is shown live, based on distance and line-of-sight to the target — the same "high chance despite an imprecise reticle" feel as Fallout 4/76 VATS, not a screen-space aiming check.
+- A shot's actual trajectory is bent in flight to land per the rolled chance — for weapons with real, simulated projectiles this redirects the live projectile object; for ordinarily-hitscan weapons this flips a data flag that makes Starfield spawn a real, in-flight projectile in the first place (see [`docs/FINDINGS.md`](docs/FINDINGS.md) for how that was found), which the same redirect logic then steers.
+- The weapon and camera never visibly snap onto the target — only the round's own flight path changes.
+
+## Status
+
+Actively in development. Hitscan-to-real-projectile conversion and redirect are working for the weapons tested so far; a few known gaps remain (skeletal/pose-aware aim point, some concurrency-timing edge cases). See [`docs/FINDINGS.md`](docs/FINDINGS.md) for the technical detail behind what's confirmed working, and open issues for what's still being chased.
+
+## Documentation
+
+- [`docs/FINDINGS.md`](docs/FINDINGS.md) — verified CommonLibSF struct-offset corrections, crash-causing gaps, and dead ends found while building this, cross-checked in-game and (where possible) against independently-authored reference data. Hard facts only, clearly separated from anything still unconfirmed.
+- [`docs/CONTRIBUTIONS.md`](docs/CONTRIBUTIONS.md) — who contributed what, human and AI.
+
+## Requirements & building
+
+- [XMake](https://xmake.io) 3.0.0+
+- C++23 compiler (MSVC, Clang-CL)
+
 ```bat
+git clone --recurse-submodules https://github.com/alexanderjohnen/StarfieldVATS
+cd StarfieldVATS
 xmake build
 ```
 
-> ***Note:*** *This will generate a `build/windows/` directory in the **project's root directory** with the build output.*
+Set `XSE_SF_MODS_PATH` (a mod manager's mods folder) or `XSE_SF_GAME_PATH` (a Starfield install folder) to redirect the build output there directly. `deploy.ps1` builds and copies the plugin DLL/PDB/INI to a configured game install in one step.
 
-### Build Output (Optional)
-If you want to redirect the build output, set one of the following environment variables:
+Built on [CommonLibSF](https://github.com/libxse/commonlibsf) via the [commonlibsf-template](https://github.com/libxse/commonlibsf-template).
 
-- Path to a Mod Manager mods folder: `XSE_SF_MODS_PATH`
+## Disclaimer
 
-  or
+Unofficial fan project. Not affiliated with or endorsed by Bethesda Game Studios or Bethesda Softworks. Starfield is a trademark of Bethesda Softworks LLC.
 
-- Path to a Starfield install folder: `XSE_SF_GAME_PATH`
+## License
 
-### Project Generation (Optional)
-If you use Visual Studio, run the following command:
-```bat
-xmake project -k vsxmake
-```
+GPL-3.0 — see [`LICENSE`](LICENSE). This follows from CommonLibSF itself being GPL-3.0 licensed; as a derivative/combined work, this project is bound by the same terms.
 
-> ***Note:*** *This will generate a `vsxmakeXXXX/` directory in the **project's root directory** using the latest version of Visual Studio installed on the system.*
-
-**Alternatively**, if you do not use Visual Studio, you can generate a `compile_commands.json` file for use with a laguage server like clangd in any code editor that supports it, like vscode:
-```bat
-xmake project -k compile_commands
-```
-
-> ***Note:*** *You must have a language server extension installed to make use of this file. I recommend `clangd`. Do not have more than one installed at a time as they will conflict with each other. I also recommend installing the `xmake` extension if available to make building the project easier.*
-
-### Upgrading Packages (Optional)
-If you want to upgrade the project's dependencies, run the following commands:
-```bat
-xmake repo --update
-xmake require --upgrade
-```
-
-## Documentation
-Please refer to the [Wiki](../../wiki/Home) for more advanced topics.
+GPL-3.0 permits commercial redistribution as long as source stays available under the same license — it does not, and cannot, prohibit that outright. That said: this project exists as a hobby/community effort, and the intent is for it to stay that way. Please don't sell it, or a build based on it, to other players.
