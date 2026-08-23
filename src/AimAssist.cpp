@@ -4,6 +4,7 @@
 #include "GameOffsets.h"
 #include "ProjectileFlagProbe.h"
 #include "ProjectileTracker.h"
+#include "ProjectileTypeOverride.h"
 #include "SafeMem.h"
 #include "Settings.h"
 #include "Targeting.h"
@@ -214,6 +215,15 @@ namespace VATS
 			constexpr auto kSlowPollInterval = std::chrono::milliseconds(20);
 			constexpr auto kMaxHoldDuration = std::chrono::seconds(10);  // safety net if a button-up is ever missed
 
+			// First actual behavior-changing write in the hitscan
+			// investigation (2026-08-23) - see ProjectileTypeOverride.h.
+			// Engaged for the whole hold (covers every round in an
+			// automatic burst), disengaged the instant the hold ends -
+			// see that header for why the window is kept as tight as
+			// possible (the underlying BGSProjectile is shared, not per-
+			// actor).
+			const auto typeOverride = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
+
 			std::unordered_set<std::uint64_t> handled;
 			const auto                        start = std::chrono::steady_clock::now();
 			while (s_buttonHeld.load() && Controller::Get().GetMode() == VATSMode::kLocked) {
@@ -234,6 +244,7 @@ namespace VATS
 
 				std::this_thread::sleep_for(elapsed < kFastPollWindow ? kFastPollInterval : kSlowPollInterval);
 			}
+			ProjectileTypeOverride::Disengage(typeOverride);
 			REX::INFO("[VATS] aim-assist: hold ended");
 		}
 
