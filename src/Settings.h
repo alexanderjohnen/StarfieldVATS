@@ -91,18 +91,12 @@ namespace VATS
 
 		// --- HUD extras (added alongside the hitscan-redirect work) ---
 
-		// Blocks manual aim-down-sights while Locked (AdsBlocker.cpp) - the
-		// weapon/camera should never visibly reorient onto the target, only
-		// the round itself curves (see AimAssist.h), so a manual ADS during
-		// a lock would fight that.
+		// Blocks manual aim-down-sights while Locked (AdsBlocker.cpp) by
+		// forcing the camera out of RE::CameraState::kIronSights the moment
+		// it enters that state - button-agnostic (reacts to the resulting
+		// camera state, not any specific keybind), so unlike the other keys
+		// on this struct this one needs no VK to keep in sync by hand.
 		bool blockAdsWhileLocked{ true };
-
-		// Virtual-key code of the button that triggers ADS in Alexander's
-		// actual control binding. Only VK_RBUTTON/VK_MBUTTON/VK_XBUTTON1/
-		// VK_XBUTTON2 are recognized (see AdsBlocker.cpp - what a low-level
-		// mouse hook can actually see). Must be kept in sync by hand, same
-		// caveat as scannerToggleKeyVK above.
-		std::uint32_t adsBlockKeyVK{ 0x02 };  // VK_RBUTTON
 
 		// Hides Starfield's native crosshair while Locked (our own HUD
 		// target box replaces it) via CrosshairVisibility.cpp. Best-effort -

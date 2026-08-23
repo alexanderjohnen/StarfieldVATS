@@ -2,16 +2,25 @@
 
 namespace VATS
 {
-	// Suppresses the aim-down-sights button (Settings::adsBlockKeyVK,
-	// default VK_RBUTTON) at the OS level via a low-level mouse hook while
-	// VATS is Locked, so Starfield never sees the press and never enters
-	// ADS - the whole point of this mod is that the camera/weapon never
-	// visibly reorients onto the target (see AimAssist.h), so a manual ADS
-	// during a lock would fight that. Same technique and shape as
-	// BackKeyInterceptor (which does the equivalent for the back/Tab key),
-	// just WH_MOUSE_LL instead of WH_KEYBOARD_LL. Only the down edge is
-	// swallowed, matching BackKeyInterceptor's reasoning: an orphan
-	// button-up reaching the game is harmless.
+	// Forces the player's camera out of iron-sights (RE::CameraState::
+	// kIronSights) whenever it enters that state while VATS is Locked - the
+	// weapon/camera should never visibly reorient onto the target, only the
+	// round itself curves (see AimAssist.h), so a manual ADS during a lock
+	// would fight that.
+	//
+	// Replaces an earlier WH_MOUSE_LL-hook-based approach (swallow the ADS
+	// button at the OS level) that correctly intercepted the button message
+	// (confirmed via log) but had zero effect on ADS actually engaging -
+	// Starfield evidently reads that input through a path an OS-level
+	// message hook can't see (raw input, most likely), the same class of
+	// problem EngineInputLayer.h documents for the Tab-key interceptor.
+	// This reacts to the actual engine-side effect (the camera state
+	// transition) instead of trying to suppress its cause - found
+	// 2026-08-23 by decompiling HONKCORE's hudmenu.gfx (a pure Scaleform
+	// HUD replacement mod, no SFSE dependency) and tracing its "isAiming"
+	// widget-visibility condition back to a camera-state-driven signal, not
+	// an actor/animation-graph flag - see AdsBlocker.cpp for the full
+	// trail.
 	class AdsBlocker
 	{
 	public:
