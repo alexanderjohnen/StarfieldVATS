@@ -187,29 +187,45 @@ namespace VATS
 				continue;
 			}
 
-			// A fresh, not-yet-handled, player-fired round. Mark it
-			// handled unconditionally from here on, even if a read/write
-			// below fails — otherwise a dead-end entry would be retried
-			// every tick for the rest of the hold.
-			a_handled.insert(entry);
-
+			// A fresh, not-yet-handled, player-fired round.
+			//
+			// Found 2026-08-23: do NOT mark it handled yet at this point.
+			// The corrected velocity offset (0x154, see above) reads all-
+			// zero at age=0.000 in every sample seen so far - the game
+			// hasn't assigned the round's real post-launch velocity on its
+			// very first frame yet, exactly what this file's
+			// kMaxRedirectAgeSeconds comment already predicted. Since
+			// shooterHandle now matches immediately (unlike before the
+			// offset fix, when a permanent mismatch accidentally caused
+			// endless retries), inserting into a_handled here burned every
+			// round's only attempt on that too-early first sighting -
+			// zero redirects ever fired despite the shooterHandle/age
+			// gates finally passing. Only give up immediately on a HARD
+			// failure (the entry itself is unreadable, e.g. despawned
+			// between being found and read); a merely-too-early read
+			// keeps retrying every ~2ms until the age window
+			// (kMaxRedirectAgeSeconds) naturally excludes it above.
 			RE::NiPoint3 projPos{};
 			RE::NiPoint3 oldVelocity{};
 			if (!Read(reinterpret_cast<const void*>(entry), GameOffsets::kLocation, projPos) ||
 				!Read(reinterpret_cast<const void*>(entry), kVelocity, oldVelocity)) {
+				a_handled.insert(entry);  // stale/invalid pointer - not worth retrying
 				continue;
 			}
 
 			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
 			if (speed < 1.0e-3f) {
-				continue;  // stationary/degenerate — leave alone rather than risk writing a NaN direction
+				continue;  // too early, velocity not assigned yet - retry next tick, don't mark handled
 			}
 
 			RE::NiPoint3 dir{ targetPos.x - projPos.x, targetPos.y - projPos.y, targetPos.z - projPos.z };
 			const float  dirLen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
 			if (dirLen < 1.0e-3f) {
+				a_handled.insert(entry);  // degenerate (projectile already at target) - not worth retrying
 				continue;
 			}
+
+			a_handled.insert(entry);  // about to actually write - only now is this round truly spoken for
 			dir.x /= dirLen;
 			dir.y /= dirLen;
 			dir.z /= dirLen;
