@@ -3,90 +3,89 @@
 #include "Settings.h"
 #include "VATSController.h"
 
-#include <chrono>
-#include <thread>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#undef ERROR  // wingdi.h's ERROR macro clashes with REX::ERROR below
 
 namespace VATS
 {
 	namespace
 	{
-		// RE::PlayerCamera::QCameraEquals(kIronSights)/SetCameraState
-		// (RE/P/PlayerCamera.h) - a real, already-used CommonLibSF pair:
-		// ForceFirstPerson()/ForceThirdPerson() in that same header are
-		// thin wrappers around this exact SetCameraState call, so it's a
-		// trusted primitive, not a fresh guess. Only
-		// PlayerCamera::GetSingleton() involves a REL::ID at all (the
-		// singleton pointer); QCameraEquals is a plain pointer comparison
-		// (currentState == cameraStates[kIronSights]), safe to read from
-		// any thread. SetCameraState is routed through the SFSE task
-		// interface to run on the game thread, matching this project's
-		// established caution around calling engine functions from an
-		// arbitrary background thread (see VATSController.cpp's
-		// CloseScannerIfOpen comment on why IsMenuOpen specifically was
-		// once crash-prone off the game thread).
-		//
-		// Polls at a light cadence rather than reacting to an input event -
-		// there's no reliable input-level signal for "about to ADS" (see
-		// AdsBlocker.h), so this just continuously enforces "not in iron
-		// sights while Locked" instead.
-		constexpr auto kPollInterval = std::chrono::milliseconds(20);
-
-		std::atomic<bool> s_wasBlocking{ false };  // throttles the log line to just the on/off edges
-
-		void EnforceNoAds()
+		// Real key-up simulation (SendInput) - same proven technique
+		// VATSController.cpp's scanner-close logic already uses
+		// successfully. Mouse buttons only, matching what
+		// Settings::adsReleaseKeyVK is documented to accept.
+		void SendButtonUp(std::uint32_t a_vk)
 		{
-			if (!Settings::Get().blockAdsWhileLocked || Controller::Get().GetMode() != VATSMode::kLocked) {
-				s_wasBlocking.store(false, std::memory_order_relaxed);
+			INPUT up{};
+			up.type = INPUT_MOUSE;
+			switch (a_vk) {
+			case VK_RBUTTON:
+				up.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+				break;
+			case VK_MBUTTON:
+				up.mi.dwFlags = MOUSEEVENTF_MIDDLEUP;
+				break;
+			case VK_XBUTTON1:
+				up.mi.dwFlags = MOUSEEVENTF_XUP;
+				up.mi.mouseData = XBUTTON1;
+				break;
+			case VK_XBUTTON2:
+				up.mi.dwFlags = MOUSEEVENTF_XUP;
+				up.mi.mouseData = XBUTTON2;
+				break;
+			default:
 				return;
 			}
+			::SendInput(1, &up, sizeof(INPUT));
+		}
 
-			auto* camera = RE::PlayerCamera::GetSingleton();
-			if (!camera || !camera->QCameraEquals(RE::CameraState::kIronSights)) {
-				s_wasBlocking.store(false, std::memory_order_relaxed);
-				return;
-			}
-
-			if (!s_wasBlocking.exchange(true, std::memory_order_relaxed)) {
-				REX::INFO("[VATS] ADS: camera entered iron-sights while Locked, forcing back to first-person");
-			}
-
-			auto* tasks = SFSE::GetTaskInterface();
-			if (!tasks) {
-				return;
-			}
-			tasks->AddTask([]() {
-				// Re-check on the game thread - state may have changed
-				// between the poll and this task actually running.
-				auto* cam = RE::PlayerCamera::GetSingleton();
-				if (cam && cam->QCameraEquals(RE::CameraState::kIronSights)) {
-					cam->SetCameraState(RE::CameraState::kFirstPerson);
+		class StartSink : public RE::BSTEventSink<RE::PlayerControls::PlayerIronSightsStartEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::PlayerControls::PlayerIronSightsStartEvent&, RE::BSTEventSource<RE::PlayerControls::PlayerIronSightsStartEvent>*) override
+			{
+				if (!Settings::Get().blockAdsWhileLocked || Controller::Get().GetMode() != VATSMode::kLocked) {
+					return RE::BSEventNotifyControl::kContinue;
 				}
-			});
-		}
-	}
+				REX::INFO("[VATS] ADS: PlayerIronSightsStartEvent while Locked, forcing camera back + synthetic release");
+				if (auto* camera = RE::PlayerCamera::GetSingleton()) {
+					camera->SetCameraState(RE::CameraState::kFirstPerson);
+				}
+				SendButtonUp(Settings::Get().adsReleaseKeyVK);
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
 
-	void AdsBlocker::ThreadProc(const std::stop_token& a_stop)
-	{
-		REX::INFO("ADS blocker started");
-		while (!a_stop.stop_requested()) {
-			EnforceNoAds();
-			std::this_thread::sleep_for(kPollInterval);
-		}
+		class EndSink : public RE::BSTEventSink<RE::PlayerControls::PlayerIronSightsEndEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::PlayerControls::PlayerIronSightsEndEvent&, RE::BSTEventSource<RE::PlayerControls::PlayerIronSightsEndEvent>*) override
+			{
+				// Logged unconditionally (not gated on Locked) purely as
+				// confirmation the event pair fires at all and roughly when -
+				// useful ground truth for the Cutter-focus-mode question in
+				// AdsBlocker.h's header comment. Remove once that's settled.
+				REX::INFO("[VATS] ADS: PlayerIronSightsEndEvent");
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		StartSink s_startSink;
+		EndSink   s_endSink;
 	}
 
 	void AdsBlocker::Start()
 	{
-		if (m_thread.joinable()) {
+		auto* startSource = RE::PlayerControls::PlayerIronSightsStartEvent::GetEventSource();
+		auto* endSource = RE::PlayerControls::PlayerIronSightsEndEvent::GetEventSource();
+		if (!startSource || !endSource) {
+			REX::WARN("[VATS] ADS blocker: GetEventSource() returned null, not registered");
 			return;
 		}
-		m_thread = std::jthread(&AdsBlocker::ThreadProc);
-	}
-
-	void AdsBlocker::Stop()
-	{
-		if (m_thread.joinable()) {
-			m_thread.request_stop();
-			m_thread.join();
-		}
+		startSource->RegisterSink(&s_startSink);
+		endSource->RegisterSink(&s_endSink);
+		REX::INFO("[VATS] ADS blocker registered (PlayerIronSightsStartEvent/EndEvent)");
 	}
 }
