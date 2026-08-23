@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <random>
 #include <thread>
 #include <unordered_set>
@@ -215,6 +216,22 @@ namespace VATS
 			constexpr auto kSlowPollInterval = std::chrono::milliseconds(20);
 			constexpr auto kMaxHoldDuration = std::chrono::seconds(10);  // safety net if a button-up is ever missed
 
+			// Found 2026-08-23: two holds out of 43 in a test session ended
+			// with ZERO "projectile candidate" lines at all - not a missed
+			// redirect, the scan never saw any fresh round in the cell
+			// reference array during the whole hold. Both were unusually
+			// short (~85-90ms, a quick semi-auto tap). Starfield weapons
+			// have a real attack-delay between trigger-down and the shot
+			// actually firing (e.g. the Shingen mod's own WFIR data showed
+			// "Attack Delay (Seconds): 0.058824") - a fast enough tap can
+			// release the mouse button before the round has even spawned,
+			// and the scan loop used to stop instantly on button-up. Keep
+			// scanning for a short grace period after release instead, so
+			// a shot whose spawn lagged behind the click still gets a
+			// chance to be found and redirected (and the type override
+			// stays engaged long enough to matter for it, too).
+			constexpr auto kPostReleaseGrace = std::chrono::milliseconds(250);
+
 			// First actual behavior-changing write in the hitscan
 			// investigation (2026-08-23) - see ProjectileTypeOverride.h.
 			// Engaged for the whole hold (covers every round in an
@@ -226,11 +243,22 @@ namespace VATS
 
 			std::unordered_set<std::uint64_t> handled;
 			const auto                        start = std::chrono::steady_clock::now();
-			while (s_buttonHeld.load() && Controller::Get().GetMode() == VATSMode::kLocked) {
+			std::optional<std::chrono::steady_clock::time_point> releasedAt;
+			while (Controller::Get().GetMode() == VATSMode::kLocked) {
 				const auto elapsed = std::chrono::steady_clock::now() - start;
 				if (elapsed > kMaxHoldDuration) {
 					REX::WARN("[VATS] aim-assist: hold exceeded safety timeout, stopping redirect scan");
 					break;
+				}
+
+				if (s_buttonHeld.load()) {
+					releasedAt.reset();
+				} else {
+					if (!releasedAt) {
+						releasedAt = std::chrono::steady_clock::now();
+					} else if (std::chrono::steady_clock::now() - *releasedAt > kPostReleaseGrace) {
+						break;
+					}
 				}
 
 				const auto currentState = Controller::Get().GetOverlayState();
