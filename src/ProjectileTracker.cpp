@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <random>
+#include <string>
+#include <unordered_map>
 
 namespace VATS
 {
@@ -124,6 +127,41 @@ namespace VATS
 			const bool    ageRead = Read(reinterpret_cast<const void*>(entry), kAge, age);
 			REX::INFO("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
 				entry, formType, shooterHandle, shooterHandleRead, age, ageRead);
+
+			// Diagnostic (2026-08-23): confirmed via a real test session that
+			// shooterHandle read 0 and age read 0.000 on literally every one
+			// of 618 candidate log lines above, across 8 distinct rocket
+			// entries and dozens of consecutive frames each - a constant
+			// value that never once changes is the signature of a wrong
+			// offset, not a legitimately-unset field (same class of bug as
+			// TESObjectCELL::references being off by 8 from its own
+			// offsetof() - see commonlibsf-unmapped-ids memory). The
+			// static_assert on RE::Projectile's total size (Projectile.h)
+			// only proves the class is the right SIZE, not that every field
+			// inside it sits at the offset the header claims. This dumps a
+			// wider raw range around both suspect fields, twice per entry
+			// (first sighting and ~40ms later, given the 2ms fast-poll
+			// interval), so the two dumps can be diffed by hand: whichever
+			// dword actually increases between dump #1 and #20 is the real
+			// age, and whichever dword equals 0x14 is the real
+			// shooterHandle. Remove once GameOffsets/kShooterHandle/kAge
+			// above are corrected and redirects are confirmed firing.
+			{
+				static std::unordered_map<std::uint64_t, int> s_dumpCount;
+				const int                                      n = ++s_dumpCount[entry];
+				if (n == 1 || n == 20) {
+					std::string hex;
+					char        word[24];
+					for (std::size_t off = 0x140; off < 0x240; off += 4) {
+						std::uint32_t v = 0;
+						if (Read(reinterpret_cast<const void*>(entry), off, v)) {
+							std::snprintf(word, sizeof(word), "%03zX:%08X ", off, v);
+							hex += word;
+						}
+					}
+					REX::INFO("[VATS] projectile raw dump #{} entry=0x{:X}: {}", n, entry, hex);
+				}
+			}
 
 			if (!shooterHandleRead || shooterHandle != kPlayerRefHandle) {
 				continue;
