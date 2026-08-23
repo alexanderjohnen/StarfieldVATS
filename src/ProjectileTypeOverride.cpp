@@ -3,6 +3,9 @@
 #include "GameOffsets.h"
 #include "SafeMem.h"
 
+#include <mutex>
+#include <unordered_map>
+
 namespace VATS
 {
 	namespace
@@ -114,6 +117,24 @@ namespace VATS
 
 			return projectile;
 		}
+
+		// Reference-counted per projectile (2026-08-23) - AimAssist.cpp's
+		// SteeringLoop now releases its "one steering thread at a time"
+		// gate (s_steering) as soon as the button is released rather than
+		// after its full post-release grace period, specifically so a
+		// fast follow-up click isn't silently dropped (see AimAssist.cpp's
+		// comment on kPostReleaseGrace). That means two SteeringLoop
+		// instances can legitimately overlap in time now - the previous
+		// hold's grace-period tail still running while a new hold has
+		// already started. A plain single-token Engage/Disengage would
+		// have the older thread's Disengage stomp the type back to
+		// hitscan while the newer thread's hold is still relying on it
+		// being real. Tracking a refcount per projectile pointer instead:
+		// only the first Engage actually writes, only the Engage/Disengage
+		// pair that brings the count back to zero restores the original
+		// value.
+		std::mutex                                        s_mutex;
+		std::unordered_map<std::uint64_t, std::pair<int, std::uint8_t>> s_refCounts;  // projectile -> {count, originalType}
 	}
 
 	ProjectileTypeOverride::Token ProjectileTypeOverride::Engage(RE::Actor* a_actor)
@@ -125,25 +146,31 @@ namespace VATS
 			return token;
 		}
 
-		std::uint8_t currentType = 0;
-		if (!Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataType, currentType)) {
-			return token;
+		std::lock_guard<std::mutex> lock(s_mutex);
+
+		auto it = s_refCounts.find(projectile);
+		if (it == s_refCounts.end()) {
+			std::uint8_t currentType = 0;
+			if (!Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataType, currentType)) {
+				return token;
+			}
+			if (currentType == kRealProjectileTypeValue) {
+				// Already a real projectile (rocket/grenade/Shingen-like) -
+				// ProjectileTracker already handles these, nothing to do,
+				// and nothing to track (an untracked projectile is simply
+				// never found by Disengage - see below).
+				return token;
+			}
+			if (!Write(reinterpret_cast<void*>(projectile), kProjectileData + kProjectileDataType, kRealProjectileTypeValue)) {
+				return token;
+			}
+			it = s_refCounts.emplace(projectile, std::pair{ 0, currentType }).first;
+			REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}", projectile, currentType, kRealProjectileTypeValue);
 		}
 
-		if (currentType == kRealProjectileTypeValue) {
-			// Already a real projectile (rocket/grenade/Shingen-like) -
-			// ProjectileTracker already handles these, nothing to do.
-			return token;
-		}
-
-		if (!Write(reinterpret_cast<void*>(projectile), kProjectileData + kProjectileDataType, kRealProjectileTypeValue)) {
-			return token;
-		}
-
+		++it->second.first;
 		token.projectile = projectile;
-		token.originalType = currentType;
 		token.active = true;
-		REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}", projectile, currentType, kRealProjectileTypeValue);
 		return token;
 	}
 
@@ -152,7 +179,18 @@ namespace VATS
 		if (!a_token.active || !a_token.projectile) {
 			return;
 		}
-		const bool wrote = Write(reinterpret_cast<void*>(a_token.projectile), kProjectileData + kProjectileDataType, a_token.originalType);
-		REX::INFO("[VATS] projtype: disengaged, projectile=0x{:X} type -> 0x{:02X} (ok={})", a_token.projectile, a_token.originalType, wrote);
+
+		std::lock_guard<std::mutex> lock(s_mutex);
+		auto                        it = s_refCounts.find(a_token.projectile);
+		if (it == s_refCounts.end()) {
+			return;  // shouldn't happen, but nothing to restore if it does
+		}
+		if (--it->second.first > 0) {
+			return;  // another overlapping hold still needs this to stay real
+		}
+		const std::uint8_t originalType = it->second.second;
+		s_refCounts.erase(it);
+		const bool wrote = Write(reinterpret_cast<void*>(a_token.projectile), kProjectileData + kProjectileDataType, originalType);
+		REX::INFO("[VATS] projtype: disengaged, projectile=0x{:X} type -> 0x{:02X} (ok={})", a_token.projectile, originalType, wrote);
 	}
 }

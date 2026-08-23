@@ -256,6 +256,21 @@ namespace VATS
 				} else {
 					if (!releasedAt) {
 						releasedAt = std::chrono::steady_clock::now();
+						// Found 2026-08-23: releasing s_steering only after
+						// this whole function returns (grace period
+						// included) meant a fast follow-up click - one
+						// that arrives before the grace period finishes -
+						// got silently dropped (HookProc's `!s_steering`
+						// check failed, no new thread spawned at all, that
+						// shot got no redirect/type-override treatment
+						// whatsoever). Release the gate the instant the
+						// button is actually released instead, so a new
+						// click can start its own hold immediately; this
+						// thread just keeps scanning in the background for
+						// the grace period. The two holds can now
+						// legitimately overlap - see ProjectileTypeOverride
+						// for why that's safe (reference-counted).
+						s_steering.store(false);
 					} else if (std::chrono::steady_clock::now() - *releasedAt > kPostReleaseGrace) {
 						break;
 					}

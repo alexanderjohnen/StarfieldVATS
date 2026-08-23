@@ -35,13 +35,19 @@ namespace VATS
 	// of one held trigger, disengaged the instant the hold ends) to
 	// minimize that window, same tradeoff already accepted for
 	// AimAssistProbe's aimAssistEnabled write.
+	//
+	// Reference-counted per projectile pointer (2026-08-23) - two holds
+	// can legitimately overlap now that AimAssist.cpp releases its
+	// single-steering-thread gate as soon as the button is released
+	// rather than after the post-release grace period finishes (see that
+	// file). Only the first Engage for a given projectile writes; only
+	// the Disengage that brings the count back to zero restores it.
 	class ProjectileTypeOverride
 	{
 	public:
 		struct Token
 		{
 			std::uint64_t projectile = 0;
-			std::uint8_t  originalType = 0;
 			bool          active = false;
 		};
 
