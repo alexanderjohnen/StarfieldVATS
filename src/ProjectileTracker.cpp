@@ -32,18 +32,35 @@ namespace VATS
 		constexpr std::uint8_t kFormTypeProjectileMin = 0x4C;  // kPMIS
 		constexpr std::uint8_t kFormTypeProjectileMax = 0x54;  // kPEMI
 
-		// The player reference's own persistent formID — see this file's
-		// header comment for why this is a safe stand-in for a resolved
-		// TESPointerHandle here.
-		constexpr std::uint32_t kPlayerRefHandle = 0x14;
+		// Corrected 2026-08-23 via in-game raw-memory diffing (see the dump
+		// diagnostic below) — CommonLibSF's Projectile.h offsets were
+		// wrong by a uniform -0x10 (16 bytes) for this build. Verified
+		// against three independent numeric invariants, not just "it
+		// looks plausible":
+		//   - movementDirection (now 0x148, header claimed 0x158): read
+		//     vector had length 1.00 - a normalized direction vector,
+		//     exactly what this field must be.
+		//   - velocity (now 0x154, header claimed 0x164): read vector had
+		//     length ~120 - a plausible missile speed, not noise.
+		//   - age (now 0x210, header claimed 0x220): read 0.000 at first
+		//     sighting, 0.056 ~40ms later at the tracker's 2ms poll
+		//     cadence - a real elapsed-time field, finally advancing (the
+		//     header offset read a constant 0.000 on 100% of 618
+		//     candidate log lines in the prior test).
+		// shooterHandle (now 0x170, header claimed 0x180) does NOT fit the
+		// same pattern as cleanly: it reads a constant 1, not a
+		// TESPointerHandle-shaped value matching the player's formID
+		// (0x14). Read as a plain bool ("was this fired by the player")
+		// instead of a handle - see kShooterIsPlayer below. If a future
+		// test shows enemy-fired projectiles also read 1 here, this guess
+		// is wrong and needs revisiting.
+		constexpr std::size_t kMovementDirection = 0x148;
+		constexpr std::size_t kVelocity = 0x154;
+		constexpr std::size_t kShooterHandle = 0x170;
+		constexpr std::size_t kDesiredTargetHandle = 0x174;
+		constexpr std::size_t kAge = 0x210;
 
-		// RE::Projectile field offsets — see Projectile.h in this
-		// project's vendored CommonLibSF for the authoritative layout.
-		constexpr std::size_t kMovementDirection = 0x158;
-		constexpr std::size_t kVelocity = 0x164;
-		constexpr std::size_t kShooterHandle = 0x180;
-		constexpr std::size_t kDesiredTargetHandle = 0x184;
-		constexpr std::size_t kAge = 0x220;
+		constexpr std::uint32_t kShooterIsPlayer = 1;
 
 		// Only ever touch a projectile within this age window: old enough
 		// that its velocity is already the real post-launch value (not a
@@ -163,7 +180,7 @@ namespace VATS
 				}
 			}
 
-			if (!shooterHandleRead || shooterHandle != kPlayerRefHandle) {
+			if (!shooterHandleRead || shooterHandle != kShooterIsPlayer) {
 				continue;
 			}
 			if (!ageRead || age < 0.0f || age > kMaxRedirectAgeSeconds) {

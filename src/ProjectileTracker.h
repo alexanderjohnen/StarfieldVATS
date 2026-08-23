@@ -22,22 +22,19 @@ namespace VATS
 	// redirected independently, while guaranteeing the same round is never
 	// redirected twice.
 	//
-	// Matches player-fired projectiles via RE::Projectile::shooterHandle
-	// == 0x14 — the player reference's own persistent formID, which for a
-	// persistent (non-dynamically-created) reference IS its
-	// TESPointerHandle value directly, no resolution needed. Deliberately
-	// avoids this fork's only mapped handle-resolution function
-	// (BSPointerHandleManagerInterface::GetSmartPointer) — that one is
-	// already on this project's own list of "mapped but crashed anyway"
-	// engine calls (see commonlibsf-unmapped-ids memory), so a plain-data
-	// comparison against the well-known player formID is strictly safer.
-	//
-	// The actual struct offsets (movementDirection@0x158, velocity@0x164,
-	// shooterHandle@0x180, age@0x220) match
-	// lib/commonlibsf/include/RE/P/Projectile.h exactly, which carries a
-	// static_assert on the whole class's size (0x250) — much higher
-	// confidence than a lone offsetof() claim (see
-	// commonlibsf-unmapped-ids memory on why that distinction matters).
+	// Matches player-fired projectiles via a field at Projectile+0x170
+	// reading exactly 1 — NOT the TESPointerHandle-style formID match
+	// this originally assumed. See ProjectileTracker.cpp's comment for
+	// the full story: CommonLibSF's Projectile.h offsets
+	// (movementDirection@0x158, velocity@0x164, shooterHandle@0x180,
+	// age@0x220 — despite a static_assert on the whole class's size,
+	// which only proves the SIZE is right, not every field's offset)
+	// were wrong by a uniform -0x10 for this build, discovered
+	// 2026-08-23 via in-game raw-memory diffing after the offsets-as-
+	// documented produced zero working redirects across 13 real test
+	// shots. Corrected offsets: movementDirection@0x148, velocity@0x154,
+	// shooterHandle@0x170 (read as a bool, not a handle — see
+	// kShooterIsPlayer), age@0x210.
 	//
 	// Writes are NOT synchronized against the game's own simulation
 	// thread (no BSSpinLock acquired — see the .cpp for why that tradeoff
