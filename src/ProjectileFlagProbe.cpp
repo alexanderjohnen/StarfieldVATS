@@ -17,6 +17,14 @@ namespace VATS
 			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
 		}
 
+		constexpr std::uint8_t  kFormTypePROJ = 0x3A;  // RE::FormType::kPROJ (58)
+		constexpr std::size_t   kProjectileData = 0x128;  // RE::BGSProjectile::data
+		constexpr std::size_t   kProjectileDataFlags = 0x48;  // RE::BGSProjectileData::flags (within data)
+		constexpr std::size_t   kProjectileDataGravity = 0x4C;
+		constexpr std::size_t   kProjectileDataSpeed = 0x50;
+		constexpr std::size_t   kProjectileDataRange = 0x54;
+		constexpr std::uint32_t kFlagHitScan = 1u << 0;
+
 		// Sweeps every 8-byte-aligned qword in [0, a_size) from a_base,
 		// treating each as a candidate pointer and checking whether it
 		// dereferences to something with formType == kPROJ - the same
@@ -34,11 +42,43 @@ namespace VATS
 					continue;  // null/tiny - not a plausible heap or module pointer
 				}
 				std::uint8_t formType = 0;
-				if (Read(reinterpret_cast<const void*>(candidate), GameOffsets::kFormType, formType) && formType == 0x3A /* kPROJ */) {
+				if (Read(reinterpret_cast<const void*>(candidate), GameOffsets::kFormType, formType) && formType == kFormTypePROJ) {
 					REX::INFO("[VATS] projflag sweep: {}+0x{:X} = 0x{:X} -> formType=0x3A (kPROJ) - CANDIDATE MATCH",
 						a_label, off, candidate);
 				}
 			}
+		}
+
+		// Logs flags/gravity/speed/range for one resolved BGSProjectile
+		// candidate. Needed because the sweep (2026-08-23) found THREE
+		// distinct live BGSProjectile pointers reachable from the equipped
+		// weapon (weaponAmmoData+0x20, weaponAmmoData+0x100, ammo+0x200),
+		// not the single one CommonLibSF's header claims (AMMO_DATA::
+		// projectile at ammo+0x1F8, which turned out to hold an unresolved
+		// FormID, not a pointer - see LogCurrentWeaponProjectileFlags's raw
+		// dump). weaponAmmoData+0x20 sits right after WeaponAmmoData::ammo
+		// (+0x18) - the header calls that span "pad_0028", almost
+		// certainly wrong, same pattern as the ammo offset itself.
+		// weaponAmmoData+0x100 is a second, different pointer - possibly a
+		// distinct "VATS variant" slot, given BGSProjectileData already has
+		// its own vatsProjectile field (BGSProjectile.h) - unconfirmed,
+		// logging both to compare their actual flags rather than assuming
+		// which one the engine actually fires with.
+		void LogProjectileCandidate(const char* a_label, std::uint64_t a_projectile)
+		{
+			std::uint8_t formType = 0;
+			if (!Read(reinterpret_cast<const void*>(a_projectile), GameOffsets::kFormType, formType) || formType != kFormTypePROJ) {
+				REX::INFO("[VATS] projflag candidate {}: 0x{:X} formType=0x{:02X} (not kPROJ, skipping)", a_label, a_projectile, formType);
+				return;
+			}
+			std::uint32_t rawFlags = 0;
+			float         gravity = 0.0f, speed = 0.0f, range = 0.0f;
+			const bool    flagsRead = Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataFlags, rawFlags);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataGravity, gravity);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataSpeed, speed);
+			(void)Read(reinterpret_cast<const void*>(a_projectile), kProjectileData + kProjectileDataRange, range);
+			REX::INFO("[VATS] projflag candidate {}: projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f}",
+				a_label, a_projectile, rawFlags, flagsRead, flagsRead && (rawFlags & kFlagHitScan) != 0, gravity, speed, range);
 		}
 
 		// Same equipped-weapon resolution as AimAssistProbe.cpp (see that
@@ -46,15 +86,15 @@ namespace VATS
 		// duplicated rather than shared, matching this project's existing
 		// per-file style (ProjectileTracker.cpp also keeps its own local
 		// Read/Write helpers rather than a shared header).
-		constexpr std::size_t  kInventoryList = 0xA0;
-		constexpr std::size_t  kInventoryListData = 0x28;
-		constexpr std::size_t  kArraySize = 0x00;
-		constexpr std::size_t  kArrayCapacity = 0x04;
-		constexpr std::size_t  kArrayData = 0x08;
-		constexpr std::size_t  kItemStride = 0x28;
-		constexpr std::size_t  kItemObject = 0x00;
-		constexpr std::size_t  kItemInstanceData = 0x08;
-		constexpr std::size_t  kItemFlags = 0x20;
+		constexpr std::size_t   kInventoryList = 0xA0;
+		constexpr std::size_t   kInventoryListData = 0x28;
+		constexpr std::size_t   kArraySize = 0x00;
+		constexpr std::size_t   kArrayCapacity = 0x04;
+		constexpr std::size_t   kArrayData = 0x08;
+		constexpr std::size_t   kItemStride = 0x28;
+		constexpr std::size_t   kItemObject = 0x00;
+		constexpr std::size_t   kItemInstanceData = 0x08;
+		constexpr std::size_t   kItemFlags = 0x20;
 		constexpr std::uint32_t kSlotMask = 0x7;
 		constexpr std::uint8_t  kFormTypeWEAP = 0x30;
 
@@ -66,15 +106,14 @@ namespace VATS
 		// decimal - misread once as decimal (0x1F instead of 0x31), which
 		// made every cross-check fail even though the pointer chain was
 		// actually resolving correctly. kAMMO's real value is 0x31.
-		constexpr std::uint8_t  kFormTypeAMMO = 0x31;               // RE::FormType::kAMMO
-		constexpr std::size_t  kAmmoDataProjectile = 0x1F8;         // RE::TESAmmo::data.projectile (AMMO_DATA is at 0x1F8, projectile is its first member)
-		constexpr std::uint8_t  kFormTypePROJ = 0x3A;               // RE::FormType::kPROJ (58)
-		constexpr std::size_t  kProjectileData = 0x128;             // RE::BGSProjectile::data
-		constexpr std::size_t  kProjectileDataFlags = 0x48;         // RE::BGSProjectileData::flags (within data)
-		constexpr std::size_t  kProjectileDataGravity = 0x4C;
-		constexpr std::size_t  kProjectileDataSpeed = 0x50;
-		constexpr std::size_t  kProjectileDataRange = 0x54;
-		constexpr std::uint32_t kFlagHitScan = 1u << 0;
+		constexpr std::uint8_t kFormTypeAMMO = 0x31;  // RE::FormType::kAMMO
+
+		// Sweep-confirmed 2026-08-23 (see SweepForProjectile above) - the
+		// two most promising live BGSProjectile* candidates found within
+		// WeaponAmmoData, replacing the broken ammo+0x1F8 (AMMO_DATA::
+		// projectile, an unresolved FormID) path entirely.
+		constexpr std::size_t kWeaponAmmoDataProjectile = 0x20;
+		constexpr std::size_t kWeaponAmmoDataVatsProjectile = 0x100;
 	}
 
 	void ProjectileFlagProbe::LogCurrentWeaponProjectileFlags(RE::Actor* a_actor)
@@ -145,27 +184,9 @@ namespace VATS
 			return;
 		}
 
-		std::uint64_t projectile = 0;
-		if (!Read(reinterpret_cast<const void*>(ammo), kAmmoDataProjectile, projectile) || !projectile) {
-			REX::INFO("[VATS] projflag: ammo=0x{:X} has no projectile pointer", ammo);
-			return;
-		}
-
-		// Diagnostic (2026-08-23): the value read at the header's claimed
-		// AMMO_DATA::projectile offset (ammo+0x1F8) looks nothing like the
-		// real 64-bit heap pointers seen everywhere else in this process
-		// (those all look like 0x1F5xxxxxxxxx - 12 hex digits) - it reads
-		// as a small ~32-bit value instead, the shape of an unresolved
-		// TESFormID rather than a live BGSProjectile*. Possible: this
-		// project's static_assert-trusting technique has a blind spot
-		// here specifically - an 8-byte pointer and a 4-byte FormID +
-		// 4 bytes padding produce the IDENTICAL total struct size and the
-		// IDENTICAL offsets for every field after it (health/damage/
-		// flags), so AMMO_DATA's static_assert(sizeof(...) == 0x18) can't
-		// distinguish the two hypotheses at all. Dumps a wider raw range
-		// once so we can look for a genuine nearby pointer (offset-shift
-		// theory) vs. confirm it's really just a bare FormID (lazy-
-		// reference theory, needing a form-lookup we don't have yet).
+		// One-time-per-ammo diagnostics (raw dump + sweep) - kept around in
+		// case a future weapon/ammo type resolves differently than the two
+		// candidates below, not because we still doubt those two.
 		{
 			static std::unordered_set<std::uint64_t> s_dumped;
 			if (s_dumped.insert(ammo).second) {
@@ -179,32 +200,21 @@ namespace VATS
 					}
 				}
 				REX::INFO("[VATS] projflag raw dump ammo=0x{:X}: {}", ammo, hex);
-
-				// TESAmmo is 0x240 total (static_assert-backed); WeaponAmmoData
-				// is 0x184 (per its header, though that struct's own field
-				// offsets are already known-unreliable - see kWeaponAmmoDataAmmo
-				// above - so its declared size is a lower-confidence bound,
-				// swept anyway since it's the best number available).
 				SweepForProjectile("ammo", ammo, 0x240);
 				SweepForProjectile("weaponAmmoData", weaponAmmoData, 0x184);
 			}
 		}
 
-		std::uint8_t projFormType = 0;
-		if (!Read(reinterpret_cast<const void*>(projectile), GameOffsets::kFormType, projFormType) || projFormType != kFormTypePROJ) {
-			REX::WARN("[VATS] projflag: cross-check failed - projectile=0x{:X} formType=0x{:02X}, expected kPROJ=0x{:02X} - chain may have shifted",
-				projectile, projFormType, kFormTypePROJ);
-			return;
+		// The two sweep-confirmed candidates (2026-08-23) - logged every
+		// shot so we can compare their hitScan/speed/gravity/range across
+		// different equipped weapons, not just once.
+		std::uint64_t normalProjectile = 0;
+		std::uint64_t vatsProjectile = 0;
+		if (Read(reinterpret_cast<const void*>(weaponAmmoData), kWeaponAmmoDataProjectile, normalProjectile) && normalProjectile) {
+			LogProjectileCandidate("weaponAmmoData+0x20 (normal?)", normalProjectile);
 		}
-
-		std::uint32_t rawFlags = 0;
-		float         gravity = 0.0f, speed = 0.0f, range = 0.0f;
-		const bool    flagsRead = Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataFlags, rawFlags);
-		(void)Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataGravity, gravity);
-		(void)Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataSpeed, speed);
-		(void)Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataRange, range);
-
-		REX::INFO("[VATS] projflag: ammo=0x{:X} projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f}",
-			ammo, projectile, rawFlags, flagsRead, flagsRead && (rawFlags & kFlagHitScan) != 0, gravity, speed, range);
+		if (Read(reinterpret_cast<const void*>(weaponAmmoData), kWeaponAmmoDataVatsProjectile, vatsProjectile) && vatsProjectile) {
+			LogProjectileCandidate("weaponAmmoData+0x100 (vats-variant?)", vatsProjectile);
+		}
 	}
 }
