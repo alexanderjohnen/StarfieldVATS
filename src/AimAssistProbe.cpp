@@ -46,7 +46,6 @@ namespace VATS
 		constexpr std::uint8_t  kFormTypeWEAP = 0x30;        // RE::FormType::kWEAP
 		constexpr std::size_t kInstanceDataWeaponDataAim = 0x18;    // RE::TESObjectWEAPInstanceData::WeaponDataAim
 		constexpr std::size_t kWeaponDataAimAimModel = 0x28;        // RE::WeaponDataAim::aimModel (known-good, cross-check field)
-		constexpr std::size_t kWeaponDataAimPad30 = 0x30;           // RE::WeaponDataAim::pad30 - HYPOTHESIS: BGSAimAssistModel*
 		constexpr std::size_t kBaseFormTData = 0x38;                // RE::BGSBaseFormT<T,...>::data (embedded, not a pointer)
 		constexpr std::size_t kAimAssistBulletBendingConeAngle = 0x38;  // RE::AimAssistData::bulletBendingConeAngle
 		constexpr std::size_t kAimAssistEnabled = 0x5C;                 // RE::AimAssistData::aimAssistEnabled
@@ -136,29 +135,52 @@ namespace VATS
 			weapon, weaponDataAim, aimModel, aimModelFormType, kFormTypeAMDL,
 			(aimModelFormTypeRead && aimModelFormType == kFormTypeAMDL) ? "MATCH (chain up to here confirmed)" : "MISMATCH (chain is wrong before pad30, stop here)");
 
-		std::uint64_t pad30 = 0;
-		const bool    pad30Read = Read(reinterpret_cast<const void*>(weaponDataAim), kWeaponDataAimPad30, pad30);
-		if (!pad30Read || !pad30) {
-			REX::INFO("[VATS] aimassist-probe: pad30 read={} value=0x{:X} - null or unreadable", pad30Read, pad30);
-			return;
+		// pad30 confirmed 2026-08-22 to be kWWED (BGSWwiseEventForm, an
+		// audio cue) instead - the hypothesis was wrong, but the chain up
+		// to weaponDataAim is now solidly confirmed (aimModel's formType
+		// matched kAMDL every single time across many shots). Rather than
+		// guess a second single offset, sweep every pointer-shaped field
+		// in WeaponDataAim (per its known layout, see TESObjectWEAP.h)
+		// and log whatever formType each one actually holds, so the next
+		// log directly shows where (if anywhere) a kAAMD form lives in
+		// this struct instead of requiring another guess-rebuild cycle.
+		struct SweepField
+		{
+			const char*  name;
+			std::size_t  offset;
+		};
+		constexpr SweepField kSweepFields[] = {
+			{ "pad0", 0x00 },
+			{ "pa8", 0x08 },
+			{ "aimDownSightTemplate", 0x18 },
+			{ "pad20", 0x20 },
+			{ "aimModel", 0x28 },
+			{ "pad30", 0x30 },
+			{ "pad38", 0x38 },
+			{ "pad40", 0x40 },
+			{ "pad48", 0x48 },
+			{ "pad50", 0x50 },
+		};
+		for (const auto& field : kSweepFields) {
+			std::uint64_t value = 0;
+			if (!Read(reinterpret_cast<const void*>(weaponDataAim), field.offset, value) || !value) {
+				REX::INFO("[VATS] aimassist-probe: WeaponDataAim+0x{:02X} ({}) = null/unreadable", field.offset, field.name);
+				continue;
+			}
+			std::uint8_t fieldFormType = 0;
+			const bool   fieldFormTypeRead = Read(reinterpret_cast<const void*>(value), GameOffsets::kFormType, fieldFormType);
+			REX::INFO("[VATS] aimassist-probe: WeaponDataAim+0x{:02X} ({}) = 0x{:X}, formType=0x{:02X} (read={}){}",
+				field.offset, field.name, value, fieldFormType, fieldFormTypeRead,
+				(fieldFormTypeRead && fieldFormType == kFormTypeAAMD) ? " <-- kAAMD MATCH, this is BGSAimAssistModel" : "");
+
+			if (fieldFormTypeRead && fieldFormType == kFormTypeAAMD) {
+				float      bulletBendingConeAngle = 0.0f;
+				const bool bbcaRead = Read(reinterpret_cast<const void*>(value), kBaseFormTData + kAimAssistBulletBendingConeAngle, bulletBendingConeAngle);
+				bool       aimAssistEnabled = false;
+				const bool enabledRead = Read(reinterpret_cast<const void*>(value), kBaseFormTData + kAimAssistEnabled, aimAssistEnabled);
+				REX::INFO("[VATS] aimassist-probe: FOUND at +0x{:02X}: bulletBendingConeAngle={:.3f} (read={}) aimAssistEnabled={} (read={})",
+					field.offset, bulletBendingConeAngle, bbcaRead, aimAssistEnabled, enabledRead);
+			}
 		}
-
-		std::uint8_t pad30FormType = 0;
-		const bool   pad30FormTypeRead = Read(reinterpret_cast<const void*>(pad30), GameOffsets::kFormType, pad30FormType);
-		const bool   pad30IsAimAssistModel = pad30FormTypeRead && pad30FormType == kFormTypeAAMD;
-		REX::INFO("[VATS] aimassist-probe: pad30=0x{:X} formType=0x{:02X} (expect 0x{:02X} kAAMD) -> {}",
-			pad30, pad30FormType, kFormTypeAAMD,
-			pad30IsAimAssistModel ? "MATCH - pad30 IS BGSAimAssistModel" : "MISMATCH - hypothesis is WRONG");
-
-		if (!pad30IsAimAssistModel) {
-			return;
-		}
-
-		float      bulletBendingConeAngle = 0.0f;
-		const bool bbcaRead = Read(reinterpret_cast<const void*>(pad30), kBaseFormTData + kAimAssistBulletBendingConeAngle, bulletBendingConeAngle);
-		bool       aimAssistEnabled = false;
-		const bool enabledRead = Read(reinterpret_cast<const void*>(pad30), kBaseFormTData + kAimAssistEnabled, aimAssistEnabled);
-		REX::INFO("[VATS] aimassist-probe: bulletBendingConeAngle={:.3f} (read={}) aimAssistEnabled={} (read={})",
-			bulletBendingConeAngle, bbcaRead, aimAssistEnabled, enabledRead);
 	}
 }
