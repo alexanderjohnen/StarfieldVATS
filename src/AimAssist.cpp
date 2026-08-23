@@ -2,6 +2,7 @@
 
 #include "AimAssistProbe.h"
 #include "GameOffsets.h"
+#include "ProjectileFlagProbe.h"
 #include "ProjectileTracker.h"
 #include "SafeMem.h"
 #include "Settings.h"
@@ -159,6 +160,15 @@ namespace VATS
 			// check elsewhere that a data flag flip can't reach?
 			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
 				AimAssistProbe::ForceAimAssist(player);
+
+				// Read-only probe (2026-08-23, Alexander's idea): can a
+				// weapon's hitscan-vs-projectile behavior be flipped at
+				// runtime, so ProjectileTracker's already-working redirect
+				// applies to every weapon instead of needing to solve the
+				// hitscan raycast-redirect problem separately? Logs the
+				// equipped weapon's ammo/projectile flags only - no write
+				// yet. See ProjectileFlagProbe.h for the full chain.
+				ProjectileFlagProbe::LogCurrentWeaponProjectileFlags(player);
 			}
 
 			// Chance (and therefore the hit/miss roll) is based on distance
