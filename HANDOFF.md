@@ -1,14 +1,17 @@
-# StarfieldVATS — Handoff / Project Snapshot (2026-08-23, evening)
+# StarfieldVATS — Handoff / Project Snapshot (2026-08-23, late evening)
 
 Read this first in a new chat session to pick up where things left off. This is a
 point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**This supersedes the previous version of this file from earlier today.** The
-hitscan/real-projectile problem that previous version called "THE BIG OPEN
-PROBLEM" has a working solution now — see below. Don't re-read the old framing
-as still-open; it isn't.
+**This supersedes the previous version of this file from earlier the same day.**
+That version covered the hitscan/real-projectile breakthrough (still true, see
+below, untouched this round) but predates an entire later session of HUD/QoL
+work (crosshair, health bar, hit/miss feedback, click-detection fix, native
+combat-HUD elements, four separate ADS-blocking attempts). Don't re-read the
+"Other current status" section from the old version — it's replaced wholesale
+below.
 
 ## What this is
 
@@ -17,13 +20,14 @@ hotkey locks a target while the game keeps running (no time-slow, no menu
 pause), shows a hit-chance percentage, and shots land (or deliberately miss)
 according to that percentage — all without the camera/weapon visibly
 snapping onto the target. Project root: `C:\Dev\StarfieldVATS`, git repo with
-real commit history since 2026-08-22. **Now public and open-source** at
+real commit history since 2026-08-22. **Public and open-source** at
 https://github.com/alexanderjohnen/StarfieldVATS (GPL-3.0, inherited from
 CommonLibSF) — `docs/FINDINGS.md` there has the confirmed struct-offset
 corrections in a cleaner, more citable form than this file; `docs/
 CONTRIBUTIONS.md` documents who did what. Keep both in sync with major
-changes going forward. Game: Steam, `G:\Program Files (x86)\Steam\steamapps\
-common\Starfield`, v1.16.244.
+changes going forward (CONTRIBUTIONS.md has NOT been updated with this
+session's work yet — do that before it goes stale). Game: Steam, `G:\Program
+Files (x86)\Steam\steamapps\common\Starfield`, v1.16.244.
 
 Alexander tests in-game; Claude cannot. Iterative build → deploy → Alexander
 tests → reports back → repeat. **Always read the SFSE log yourself**
@@ -40,199 +44,258 @@ powershell -ExecutionPolicy Bypass -File deploy.ps1
 
 Fails with a file-lock error whenever Starfield is running — ask Alexander to
 close it first. `deploy.ps1` never overwrites the live `StarfieldVATS.ini`
-once it exists, only seeds it on first deploy.
+once it exists, only seeds it on first deploy — new settings this session
+default correctly even though Alexander's live ini doesn't list them.
 
-## THE HITSCAN PROBLEM — SOLVED (mostly), here's how
+## THE HITSCAN PROBLEM — SOLVED, unchanged this session
 
-Alexander's idea: instead of redirecting an instantaneous hitscan raycast
-(which has no in-flight object to redirect, and would have required
-disassembling Starfield's internal `RangedAttackModule`/aim-assist functions —
-high-risk, unmapped, no header, the thing the *previous* version of this file
-spent a full section warning about), flip the weapon's ammo into behaving like
-a **real, simulated projectile** at runtime while Locked. Then the
-already-working projectile redirect (rockets/grenades) just... works on
-regular guns too.
+Weapons' ammo is flipped to behave like a real, simulated projectile at
+runtime while Locked (`ProjectileTypeOverride.cpp`), so the already-working
+projectile redirect (`ProjectileTracker.cpp`) works on regular guns too, not
+just rockets/grenades. Confirmed working in-game across many test sessions.
+Full detail in the previous handoff version (git history) and `docs/
+FINDINGS.md`. **Still no ground-truth hit-damage confirmation** —
+`RE::TESHitEvent::GetEventSource()`/`BSTEventSource<T>::RegisterSink` crashes
+on an unmapped Address Library ID (`src/HitEventLogger.cpp/h`, disabled in
+`main.cpp`) — unchanged, not re-attempted this session.
 
-**Confirmed via `ProjectileFlagProbe.cpp` (read-only diagnostic) across 9
-weapons** (7 hitscan, a rocket launcher, and "Shingen" — a Nexus Mods
-homing-bullet weapon inspected via xEdit for ground truth): a byte at
-`BGSProjectile::data + 0x84` reads `0x00` on both confirmed-real-projectile
-weapons and `0x02` on every hitscan weapon, zero exceptions. `flags`/
-`gravity`/`speed`/`range` for Shingen matched its xEdit-authored values
-exactly, so the offset chain to get there is solid — see `docs/FINDINGS.md`
-for the full offset corrections this took (CommonLibSF's headers were wrong
-in five separate places along this chain, each independently verified).
+## This session's work: HUD/QoL polish + four ADS-block attempts
 
-**`ProjectileTypeOverride.cpp`** force-writes `0x00` into that byte on the
-equipped weapon's live projectile (`WeaponAmmoData+0x20` — also undocumented
-in the header, found by sweeping for a `formType==kPROJ` pointer) for the
-duration of one held trigger, restores the original value when the hold ends.
-Reference-counted per projectile pointer (not a single token) because two
-holds can legitimately overlap in time now — see the click-handling fix
-below.
-
-**Confirmed working in-game**: hitscan weapons now visibly curve their shots
-toward a Locked target, matching the rolled hit/miss chance, the same way
-rockets/grenades already did. Several follow-on bugs were found and fixed
-while testing this (see "Lessons" below) — as of this writing, Alexander has
-not reported a "goes straight" case since the last fix (kPBEA exclusion +
-the click/concurrency fix), but this has happened before and then recurred
-for a different reason, so don't treat it as fully closed without more
-testing.
-
-**What's NOT done**: there's no ground-truth confirmation that a redirected
-shot actually deals damage in the right place — everything so far only
-confirms the round's velocity/direction was rewritten, not what happened
-after. An attempt to wire up `RE::TESHitEvent` for this crashed the game
-instantly (see "Known-broken/open" below) and is currently disabled.
-
-## Other current status
+Started from three feature requests (hide crosshair while Locked, block ADS
+while Locked, show target health) and grew considerably once testing
+surfaced more native HUD elements and a genuine click-detection bug.
 
 ### Confirmed working
-- Off → Locked on a single hotkey press, only while the hand scanner is open;
-  scanner auto-closes via simulated keypress (`SendInput`, Alexander's idea —
-  see `docs/CONTRIBUTIONS.md` for why this beat the alternatives).
-- Locked persists/tracks correctly regardless of camera direction; ends
-  outright (not just hides) on Pause/DataMenu/Dialogue/LoadingMenu/StarMap.
-- Distance-based hit chance (LOS gate exists at lock-time via `commandTarget`,
-  see below for the *not*-yet-done per-shot LOS gating).
-- Hitscan-to-real-projectile conversion + redirect (this session's main work,
-  see above).
-- Overlay no longer draws over native `MessageBoxMenu` popups (found today —
-  Alexander screenshotted the VATS HUD overlapping a Scanner tutorial tip).
+- **Crosshair hiding** (`CrosshairVisibility.cpp`) — toggles the real
+  `bCrosshairEnabled:GamePlay` INIPref setting (found via a community dump of
+  Starfield's known ini settings, stepmodifications.org topic 19019 — NOT
+  guessed). Confirmed via log: `crosshair: found bool setting
+  'bCrosshairEnabled:GamePlay' via INIPrefSettingCollection`.
+- **Click detection fix** (`AimAssist.cpp`) — removed the global
+  `s_steering` single-thread gate that could silently drop an entire fast
+  follow-up click if it arrived before the previous `SteeringLoop`'s
+  ~2-20ms poll tick noticed the button release (zero roll, zero HUD
+  feedback, zero redirect attempt for that click — this is what Alexander
+  was seeing as "misses that aren't tracked"). Every press now spawns its
+  own `SteeringLoop`, tagged with a per-press generation counter
+  (`IsMyPressStillHeld`) so an older hold's loop can't be fooled by a newer
+  press starting during its post-release grace window.
+  `ProjectileTypeOverride` was already reference-counted specifically to
+  support overlapping holds, so removing the gate didn't need anything else
+  to change. Also records a guaranteed-miss `RecordShotResult(false)` in the
+  two early-return branches (target off-screen at hold start, zero chance)
+  instead of returning silently — a real trigger pull now always gives HUD
+  feedback.
+- **Hit/miss HUD flash** (`Controller::RecordShotResult`/`GetLastShotResult`
+  in `VATSController.h/cpp`, drawn in `Overlay.cpp`) — target box flashes red
+  for 900ms on a hit, shows "MISS" above the box on a miss. Confirmed
+  working per Alexander ("Hit und Miss funktioniert").
+- **Target health bar renders** — a red bar + white legendary-segment pips
+  draws under the target box (`Overlay.cpp`'s `DrawHealthBar`). Visually
+  confirmed via screenshot. **Does NOT yet track real damage — see below,
+  this is the most valuable open item.**
 
 ### Known-broken / open
-- **No ground-truth hit confirmation.** `RE::TESHitEvent::GetEventSource()`
-  (or the generic `BSTEventSource<T>::RegisterSink` it needs — first time
-  this project has used either) hard-crashes on every launch: `REL/IDDB.cpp
-  (417): Failed to find offset for Address Library ID! Invalid ID: 0`. At
-  least one required `REL::ID` isn't mapped in the Address Library for
-  1.16.244.0. `src/HitEventLogger.cpp/h` has the intended implementation,
-  but its `Start()` call in `main.cpp` is commented out. Needs either a
-  mapped alternative event/ID, or reporting the gap upstream to CommonLibSF.
-  This is the most valuable next thing to unblock — it's the only way to
-  stop inferring "did the redirect actually work" from indirect signals.
-- **Pose-unaware aim point.** The redirect target is the actor's ref-origin
-  (feet) plus a fixed chest-height offset (`GameOffsets::kAimPointChestZ`,
-  `AimAssist.cpp`'s `ResolveAimWorldPos`) — doesn't account for prone/crouch.
-  Alexander reported shooting a prone target while the aim point stayed at
-  standing-chest height, zero hits. Needs real skeletal/bone-based targeting
-  (deferred since the start of the project) or at minimum a posture-aware Z
-  offset — not started, explicitly deferred by Alexander to "one thing at a
-  time" after the hitscan work.
-- **LOS/wall-blocking for hit chance is still a no-op at fire time** (only
-  checked once, at lock time, via `commandTarget`). `HasDetectionLOS` is
-  still stubbed to always return true (see the older crash history in
-  `starfield-vats-mod-design` memory for why).
-- **Tab still does not end the lock** (`BackKeyInterceptor.cpp`'s hook
-  installs but never logs "back key seen" — root cause not found, see the
-  git history for the fuller investigation from 2026-08-22/23).
-- The `type=0x02→0x00` finding is a strong, clean correlation across 9
-  samples, not an independently proven causal mechanism — see `docs/
-  FINDINGS.md`'s explicit caveat on this. If a weapon type ever shows
-  different behavior, this is the first thing to re-examine.
-- `lib/commonlibsf` has shown a modified submodule pointer (git status) for
-  several sessions now, never intentionally committed — hasn't been
-  investigated, probably harmless (a local checkout drift), but flag it to
-  Alexander if it's still there.
 
-## Architecture (current files, brief)
+**Health bar shows a static number, never updates (HIGH PRIORITY, 3
+hypotheses tried and disproven this session — don't re-try any of these):**
+1. ~~`avStorage.baseValues`/`modifiers` keyed by a 4-byte AV index
+   (CommonLibSF's declared `BSTTuple<uint32_t, T>`)~~ — disproven: reading
+   with that stride produces corrupted-looking entries (keys that are
+   really the low 32 bits of 8-byte pointers, values that are really their
+   high 32 bits misread as floats).
+2. ~~Real key is `ActorValueInfo*` (8-byte pointer), health's *current*
+   value lives in `avStorage.modifiers` as an `ACTOR_VALUE_MODIFIER::
+   kDamage` entry~~ — disproven: `avStorage.modifiers` never has a health
+   entry at all even after confirmed damage was dealt (`found=false`,
+   `modifiers.size=20` — a real, populated array, just never touched for
+   health specifically).
+3. ~~Damage is written straight into `avStorage.baseValues` (no modifier
+   layer), so reading that value live tracks current health~~ — disproven
+   by a clean, deliberate test: Alexander did `getav health` (480.00), hit
+   the target once, did `getav health` again (461.90) — the mod's own
+   `current` reading (logged every change) stayed at 480.0 across that
+   entire window despite confirmed hits landing (log has both the
+   `aim-assist: hold started -> HIT` and `projectile redirect: HIT` lines
+   in between the two `getav` calls). Whatever `avStorage.baseValues` holds
+   for health, it is NOT live current health — probably a static/design-time
+   max, coincidentally equal to `getav health` only because the very first
+   test target happened to be undamaged.
 
-- `src/main.cpp` — SFSE entry, installs hooks/watchers on `kPostDataLoad`.
-  `HitEventLogger::Start()` is commented out (crashes, see above).
-- `src/HotkeyWatcher.cpp/h`, `src/BackKeyInterceptor.cpp/h` — hotkey polling.
-- `src/VATSController.cpp/h` — Off/Locked state machine, `ForceOff()`.
-- `src/Targeting.cpp/h` — `GetCrosshairActivationTarget()`, `HasDetectionLOS`
-  (stubbed true).
-- `src/AimAssist.cpp/h` — fire-button hook, hit/miss roll, `SteeringLoop()`
-  (per-hold redirect scan + type-override engage/disengage). Recently
-  changed: releases its single-steering-thread gate as soon as the button is
-  released (not after the post-release grace period) so fast follow-up
-  clicks aren't silently dropped — see git log 2026-08-23 for why.
-- `src/ProjectileTracker.cpp/h` — redirects real, in-flight `RE::Projectile`
-  objects (now covers both original slow-ordnance weapons AND hitscan
-  weapons once type-overridden). Excludes `kPBEA` (BeamProjectile,
-  0x4F) from its candidate scan — that's a weapon's decorative laser-sight
-  beam, not the actual fired round; redirecting it instead of the real round
-  was one cause of "shots go straight."
-- **`src/ProjectileFlagProbe.cpp/h`** (new today) — read-only diagnostic that
-  found/confirmed the offset chain and the `type` byte correlation above.
-- **`src/ProjectileTypeOverride.cpp/h`** (new today) — the actual
-  hitscan-to-real-projectile write, reference-counted per projectile.
-- **`src/HitEventLogger.cpp/h`** (new today, disabled) — intended
-  ground-truth hit confirmation via `TESHitEvent`, currently crashes.
-- `src/AimAssistProbe.cpp/h` — native aim-assist exploration
-  (`aimAssistEnabled` force-write, confirmed insufficient alone — superseded
-  by the type-override approach above for practical purposes, kept as-is).
-- `src/UI/Overlay.cpp/h` — HUD; now also skips drawing (not `ForceOff()`)
-  while a `MessageBoxMenu` is open.
-- `src/UI/CameraProject.cpp/h`, `src/UI/D3DHook.cpp/h` — render hook +
-  projection, stable, not touched this session.
-- `src/GameOffsets.h`, `src/SafeMem.h/cpp` — centralized verified offsets;
-  `SafeRead`/`SafeWrite`, SEH-guarded.
-- `src/Settings.h/cpp`, `res/StarfieldVATS.ini` — INI-backed config.
+   **Next lead, untested**: HONKCORE's `hudmenu.gfx` (a pure Scaleform HUD
+   replacement with zero SFSE dependency — proof the data it uses is
+   already pushed into the AS layer by the native engine) has a real
+   `EnemyHealthMeter_mc`/`EnemyHealthHolder_mc` widget fed by an
+   `UpdateEnemyHealthData` callback, with sibling fields `EMDamageBar_mc`
+   (electromagnetic/shield damage), `currLegendaryRank`,
+   `currLegendarySegment` (confirms the legendary-segment idea used for the
+   HUD pips was on the right track), `bIsStunned`. **Reading this via
+   `ScaleformGFxASMovieRootBase::GetVariable` (the same safe, zero-new-
+   REL::ID mechanism `CrosshairVisibility`/`CombatHudVisibility` already
+   use) instead of raw `avStorage` memory is the recommended next attempt**
+   — sidesteps the whole "where does Starfield actually store live health"
+   question by reading whatever value the engine already computed and
+   pushed to the HUD. Exact AS variable path is unconfirmed; use
+   `IMenu::GetRootPath()` on the live `HUDMenu` instance (see
+   `CombatHudVisibility.cpp` for the pattern — real root path is `'root1'`,
+   NOT `'_root'` as commonly assumed from Skyrim/FO4 conventions) rather
+   than guessing blind.
 
-## Lessons from this session (2026-08-23)
+   `src/HealthReader.cpp` currently reads `avStorage.baseValues` live +
+   caches the highest-ever-seen value as "max" — functionally wrong (bar
+   just won't move) but harmless/safe, left as the current (broken) default
+   pending the `EnemyHealthMeter_mc` attempt.
 
-1. **A CommonLibSF struct-offset error isn't always a clean, single wrong
-   number — it can be a systemic shift.** `RE::Projectile`'s
-   movementDirection/velocity/age were all off by a uniform `-0x10`;
-   `BGSProjectile::data`'s base was off by `+0x8`, which then correctly
-   explains every field inside it without further per-field guessing. When
-   one field looks wrong, check whether a whole neighboring block is
-   shifted by a constant before treating each field as an independent guess.
-2. **A `static_assert` on total struct size doesn't prove every field inside
-   is at the claimed offset.** `AMMO_DATA`'s static_assert passed even
-   though its first field (`projectile`) was actually an unresolved
-   `TESFormID` + padding, not the `BGSProjectile*` pointer the header
-   claimed — an 8-byte pointer and a 4-byte FormID + 4 bytes padding
-   produce an identical total size.
-3. **`FormTypes.h`'s inline comments are hex without a "0x" prefix, not
-   decimal** — misread once (`kAMMO` as `0x1F` instead of `0x31`), which
-   made a working pointer chain look broken for a full test cycle.
-4. **A byte-for-byte match against an independently-authored reference (a
-   real mod's xEdit data) is much stronger confirmation than internal
-   self-consistency alone** — this is what turned "plausible offset" into
-   "confirmed offset" for the whole `BGSProjectile::data` chain.
-5. **Marking an entry "handled" before confirming a write actually
-   succeeded can burn its only real attempt.** `ProjectileTracker` used to
-   mark a projectile handled as soon as its `shooterHandle`/`age` gates
-   passed, before checking whether `velocity` was even non-zero yet (it
-   reads zero for the first ~10ms after spawn) — once the shooterHandle
-   offset got fixed and started matching immediately, this meant every
-   round's only redirect attempt happened during that dead window. Fixed by
-   only marking handled once a write is about to actually happen.
-6. **A fix that changes timing can silently reintroduce a different bug.**
-   Adding a post-release grace period (to catch shots whose spawn lags
-   behind the click) made the "only one steering thread at a time" gate
-   block fast follow-up clicks far more often, since the gate wasn't
-   released until the whole grace period finished. The fix for the second
-   bug required also making the previously-single-token
-   `ProjectileTypeOverride` state reference-counted, since the two fixes
-   together mean overlapping holds are now a normal occurrence, not a rare
-   race.
-7. **A mapped, non-zero-looking header entry can still be entirely absent
-   from the Address Library for a specific game build.** `RE::TESHitEvent::
-   GetEventSource()` compiles cleanly and looks exactly like every other
-   `BSTEventSource<T>` usage, but crashes instantly — "Invalid ID: 0" is
-   CommonLibSF's own clean abort when it can't resolve the address, not
-   the kind of wild-pointer crash a wrong calling convention causes. Same
-   underlying lesson as `commonlibsf-unmapped-ids` memory, new instance.
+**Native combat-HUD elements (hit marker, kill marker, damage numbers, crit
+text/banner) still visible despite VATS's own overlay being the intended
+replacement** (`CombatHudVisibility.cpp`) — none of the tried
+`GetVariable`/`SetVariable` paths resolved, even using the correct HUDMenu
+root path (`'root1'`, via `IMenu::GetRootPath()`). Strings dump of
+`hudmenu.gfx` found the clip names (`DamageNumberText_mc`, `CritText_mc`,
+`CritBanner_mc`, `HitIndicator_mc`, `KillIndicator_mc`) and the string
+`SpawnNewClip` right next to `onEnterFrame#onHitDamageIndicatorAnimationFinish`
+— **strong suspicion these clips are dynamically created per-hit and
+removed after their animation finishes, not persistent objects with a
+settable `_visible`**, which would explain why every path guess failed
+regardless of correctness: `IsAvailable()` checked once at Lock time (before
+any hit occurs) would correctly report "not found" for something that
+doesn't exist yet. If true, hiding these needs either (a) continuous
+per-frame polling to catch and hide them the instant they spawn (may still
+show one brief flash), or (b) intercepting the native call that pushes
+`HudHitKillIndicatorData`/invokes `onHitKillDataChange` before it reaches
+Scaleform at all (real new reverse-engineering, no lead on the native
+function yet). Not attempted — next thing to try if picked back up.
+
+**ADS blocking — four approaches tried, all failed, no fifth attempted this
+session (don't re-try any of these without new information):**
+1. OS-level `WH_MOUSE_LL` swallow of the configured button (deleted code,
+   see git history) — the hook correctly fired and swallowed the button
+   (confirmed via log), but ADS still visibly engaged anyway. Same class of
+   problem `EngineInputLayer.h` already documented for the Tab-key
+   interceptor: Starfield reads some input through a path an OS-level
+   message hook can't see (raw input, most likely).
+2. `RE::PlayerCamera::QCameraEquals(CameraState::kIronSights)` polling
+   (deleted code) — the engine never once entered `kIronSights` during a
+   real, visually-confirmed ADS (screenshot showed a scoped view; log never
+   showed the poller's "camera entered iron-sights" line even once).
+   Starfield's ADS apparently isn't a `PlayerCamera` state transition at
+   all — possibly a per-weapon FOV/animation blend instead (matches
+   Alexander's own observation that the Cutter uses a completely different
+   "focus mode" instead of real ADS when its aim button is held, and that
+   weapon mods like Shingen replace the ADS *animation* rather than
+   touching a shared camera state).
+3. `RE::PlayerControls::PlayerIronSightsStartEvent`/`EndEvent` registration
+   (`src/AdsBlocker.h/cpp`, currently disabled in `main.cpp`) — **crashed
+   the game outright** on the main menu, before any save loaded: `REL/
+   IDDB.cpp(417): Failed to find offset for Address Library ID! Invalid ID:
+   0`, the same clean CommonLibSF abort `HitEventLogger` already hit. One of
+   `PlayerIronSightsStartEvent::GetEventSource`,
+   `PlayerIronSightsEndEvent::GetEventSource`, or
+   `BSTEventSource<T>::RegisterSink` itself isn't mapped for 1.16.244.0.
+   Confirmed via screenshot, fixed by commenting out the `Start()` call.
+4. `USER_EVENT_FLAG::Fighting` via `EngineInputLayer::SetAdsBlocked`
+   (implemented, currently unused/disabled in `VATSController.cpp`'s
+   `Advance()`) — confirmed via screenshot to holster the weapon entirely
+   on lock, not just block ADS. Same over-broad-flag pattern already known
+   for `TabMenuMaybe`/`POVSwitch`. `EngineInputLayer::SetAdsBlocked` itself
+   is kept implemented (harmless, unused) in case a narrower flag
+   combination is found later.
+
+   **Fifth idea, explicitly NOT attempted (Alexander's own suggestion,
+   genuinely promising but blocked by tooling, not risk)**: unbind/rebind
+   the ADS control at the `ControlMap` level instead of detecting/reacting
+   to input or state. A real `ControlMap` singleton (`BSTSingletonSDM<
+   ControlMap>`, same pattern `PlayerCamera` uses) and a
+   `nsControlMappingData::RemapHandler` function both exist and are named
+   in CommonLibSF's raw RTTI ID tables (`IDs_RTTI.h`), but **neither has a
+   curated `ID::ControlMap::*` singleton-pointer entry in `IDs.h`** the way
+   `PlayerCamera` does — meaning there is currently no known address to
+   even start from, not just an unverified one. Implementing this needs
+   either a real disassembler (IDA/Ghidra — not available in a chat
+   session) to find the singleton address independently, or finding another
+   published SFSE mod's source that's already solved runtime control
+   remapping (searched, found none — `StarZoom`'s source was checked and
+   uses `INIPrefSettingCollection`/FOV settings instead, not `ControlMap`
+   at all). Alexander is asking around; revisit if a lead turns up.
+
+- **Pose-unaware aim point, no per-shot LOS gating, Tab not ending lock,
+  the `type=0x02→0x00` correlation caveat, `lib/commonlibsf` submodule
+  drift** — all unchanged from the previous handoff version, not touched
+  this session. See git history for detail if needed.
+
+## Architecture (files touched or added this session)
+
+- **`src/CrosshairVisibility.cpp/h`** — hides native crosshair via
+  `bCrosshairEnabled:GamePlay` INIPref. Confirmed working.
+- **`src/CombatHudVisibility.cpp/h`** — attempts to hide hit marker/kill
+  marker/damage numbers/crit text via `ScaleformGFxASMovieRootBase::
+  SetVariable`, using `IMenu::GetRootPath()` for the real HUDMenu root
+  (`'root1'`). Not yet working — see "Known-broken" above (likely
+  dynamically-spawned clips, wrong strategy).
+- **`src/HealthReader.cpp/h`** — reads target health from
+  `Actor::avStorage`. Base-value lookup mechanically works (pointer-keyed,
+  16-byte stride, empirically confirmed) but the value it finds isn't live
+  current health — see "Known-broken" above for the `EnemyHealthMeter_mc`
+  lead to try next. Also reads `legendaryRank` for the HUD's segment-pip
+  count (same caveat, unconfirmed against a real legendary enemy).
+- **`src/AdsBlocker.h/cpp`** — currently disabled (`main.cpp`'s
+  `Start()` call commented out) after the `PlayerIronSightsStartEvent`
+  crash. Kept in the tree with a full comment trail of what was tried and
+  why it failed, per this project's own established convention (see
+  `HitEventLogger.h`).
+- **`src/EngineInputLayer.h/cpp`** — added `SetAdsBlocked` (toggles
+  `USER_EVENT_FLAG::Fighting`), implemented but unused (too broad, see
+  above).
+- **`src/AimAssist.cpp`** — removed `s_steering` gate, added per-press
+  generation tracking (`IsMyPressStillHeld`), records guaranteed-miss
+  results in early-return branches. See "Confirmed working" above.
+- **`src/VATSController.h/cpp`** — added `RecordShotResult`/
+  `GetLastShotResult` (two atomics, cross-thread hit/miss state for the
+  HUD flash); wires `CrosshairVisibility`/`CombatHudVisibility`/
+  `EngineInputLayer::SetAdsBlocked` (currently a no-op call site, disabled)
+  into the Lock/Unlock/`ForceOff` transitions.
+- **`src/UI/Overlay.cpp`** — added `DrawHealthBar` (red bar + white
+  legendary-segment pips) and the hit/miss red-flash/"MISS"-text logic in
+  `DrawIfVisible`.
+- **`src/Settings.h/cpp`, `res/StarfieldVATS.ini`** — added
+  `bBlockAdsWhileLocked`, `iAdsReleaseKey`, `bHideCrosshairWhileLocked`,
+  `bShowTargetHealth`.
+- Deleted this session (superseded/dead ends, not worth resurrecting
+  without new information): `src/AdsProbe.h/cpp` (raw-memory-dump
+  diagnostic, superseded once the real signal turned out not to be on the
+  Actor object at all), `src/HitMarkerVisibility.h/cpp` (superseded by the
+  broader `CombatHudVisibility`).
+
+## How the Scaleform/HUD investigation actually happened (useful technique,
+reusable for the health/combat-HUD leads above)
+
+Alexander pointed out that HONKCORE (`Data\interface\hudmenu.gfx`, a pure
+Scaleform HUD replacement mod with zero SFSE dependency) must be reading
+whatever the native engine already exposes, since it has no native code of
+its own. Extracting readable ASCII strings from that compiled file (`grep
+-a -o -E '[ -~]{5,}' hudmenu.gfx`) surfaced real AS variable/condition names
+("isAiming", "bCrosshairEnabled"-adjacent settings, "EnemyHealthMeter_mc",
+"DamageNumberText_mc", etc.) without needing a full Scaleform/SWF
+decompiler. Combined with `RE::UI::GetMenuMovie("HUDMenu")` →
+`asMovieRoot->GetVariable/SetVariable/IsAvailable` (real virtual calls, zero
+new REL::ID risk beyond the menu lookup itself, which is a plain data
+lookup) and `IMenu::GetRootPath()` (a real virtual call giving the actual
+root path instead of guessing `_root`), this is a solid, low-risk technique
+for reading/writing anything the native engine already pushes into the HUD
+— **use this same technique for the `EnemyHealthMeter_mc` health lead
+before falling back to more `avStorage` guessing.**
 
 ## Persistent memory (separate from this file)
 
-- `starfield-vats-mod-design` — overall design, status, backlog. **The "Open
-  problem: making hitscan weapons hit/miss" section is now stale** — update
-  it to point here / to `docs/FINDINGS.md` rather than re-reading it as
-  still-open.
+- `starfield-vats-mod-design` — overall design, status, backlog.
 - `starfield-vats-ui-hook` — render hook + UI overlay specifics.
 - `commonlibsf-unmapped-ids` (file: `feedback-commonlibsf-unmapped-ids.md`)
-  — the general "mapped ID ≠ safe" pattern, now with a second confirmed
-  instance (TESHitEvent) beyond the original four.
+  — the general "mapped ID ≠ safe" pattern; now three confirmed instances
+  (TESHitEvent, PlayerIronSightsStartEvent/EndEvent).
 - `feedback-commit-every-vats-build` — commit after every deployed build.
 - `feedback-model-tier-recommendations` — Sonnet vs Fable 5 guidance.
 
 This file exists as a single self-contained recap for a fresh chat. For the
-hitscan/offset work specifically, `docs/FINDINGS.md` in the repo is now the
-more polished, public-facing version of the same information — keep them
-consistent if either changes.
+hitscan/offset work specifically, `docs/FINDINGS.md` in the repo is the more
+polished, public-facing version — keep them consistent if either changes.
+`docs/CONTRIBUTIONS.md` has NOT been updated with this session's work yet.
