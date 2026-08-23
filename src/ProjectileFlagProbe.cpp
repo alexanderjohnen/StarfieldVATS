@@ -18,7 +18,14 @@ namespace VATS
 		}
 
 		constexpr std::uint8_t  kFormTypePROJ = 0x3A;  // RE::FormType::kPROJ (58)
-		constexpr std::size_t   kProjectileData = 0x128;  // RE::BGSProjectile::data
+		// Corrected 2026-08-23 via raw-memory decoding (hand-verified
+		// IEEE-754 floats: flags/gravity/speed/range read as
+		// 0x208/0.0/500.0/400.0 and 0x820C/0.0/1000.0/500.0 for two real
+		// weapons - fully plausible ballistics, unlike the all-zero reads
+		// at the header's claimed +0x128). The header's data offset was
+		// wrong by a uniform +0x8 for this build - same "trust the data,
+		// not the header" pattern as ProjectileTracker.cpp's -0x10 fix.
+		constexpr std::size_t   kProjectileData = 0x130;  // RE::BGSProjectile::data
 		constexpr std::size_t   kProjectileDataFlags = 0x48;  // RE::BGSProjectileData::flags (within data)
 		constexpr std::size_t   kProjectileDataGravity = 0x4C;
 		constexpr std::size_t   kProjectileDataSpeed = 0x50;
