@@ -2,6 +2,8 @@
 
 A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-time targeting — no time-slow, no menu pause. A hotkey locks onto a target while the game keeps running, shows a live hit-chance readout, and steers the fired shot to land (or deliberately miss) according to that rolled chance, without ever visibly snapping the camera or weapon onto the target.
 
+> **Work in progress — not ready for regular play.** This is an active reverse-engineering/development project, not a finished mod. Expect rough edges, unfinished features, and behavior that changes between builds; see [Status](#status) below for specifics before installing it to actually play with.
+
 > **This project was built collaboratively with Claude (Anthropic), primarily through the Claude Code agent.** The large majority of the code, the in-game reverse-engineering (struct offsets, engine behavior), and this documentation were written by Claude, working from Alexander Johnen's direction, hypotheses, design decisions, and in-game testing — Claude cannot run Starfield itself. See [`docs/CONTRIBUTIONS.md`](docs/CONTRIBUTIONS.md) for a concrete breakdown of who did what. Every commit in this repository's history that Claude authored or co-authored carries a `Co-Authored-By: Claude` trailer, so the split is also traceable directly in `git log`.
 
 ## What it does
@@ -13,7 +15,15 @@ A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-ti
 
 ## Status
 
-Actively in development. Hitscan-to-real-projectile conversion and redirect are working for the weapons tested so far; a few known gaps remain (skeletal/pose-aware aim point, some concurrency-timing edge cases). See [`docs/FINDINGS.md`](docs/FINDINGS.md) for the technical detail behind what's confirmed working, and open issues for what's still being chased.
+**Work in progress.** Core targeting and the hitscan-to-real-projectile redirect are working for the weapons tested so far, but this is not a polished, install-and-forget mod yet. Known gaps as of this writing:
+
+- The aim point is a fixed height above an actor's feet — it does not account for pose, so a prone or crouching target is aimed at as if they were standing.
+- Hit chance does not yet factor in line-of-sight/occlusion at the moment of firing (only at the moment of locking on) — walls don't currently lower the odds the way they eventually should.
+- There's no in-game confirmation yet that a redirected shot actually deals damage where intended, only that the round's trajectory was rewritten — see [`docs/FINDINGS.md`](docs/FINDINGS.md) for the attempt at wiring up real hit confirmation, currently blocked on an unmapped engine ID.
+- The back/cancel key doesn't reliably end a lock yet.
+- Offsets in [`docs/FINDINGS.md`](docs/FINDINGS.md) are tied to Starfield v1.16.244.0 and can drift with future game patches.
+
+See [`docs/FINDINGS.md`](docs/FINDINGS.md) for the technical detail behind what's confirmed working.
 
 ## Documentation
 
