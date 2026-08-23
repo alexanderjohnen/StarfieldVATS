@@ -30,4 +30,19 @@ namespace VATS
 	// (aim while Locked, or just aim normally to get a baseline) shows
 	// whether anything actually changes between the two samples.
 	void LogAimStateSnapshot(const char* a_tag);
+
+	// Diagnostic (2026-08-23): neither the graph-variable candidates nor
+	// actorState1/actorState2 changed between an "ADS button swallowed"
+	// snapshot and one 200ms later, yet Alexander confirmed ADS still
+	// visibly engaged - the real signal isn't in either place this probe
+	// already checks. Dumps a wide raw dword window of the player Actor
+	// object (0x0-0x400) so two dumps, one tagged "ads-down" (button
+	// pressed, current WEAPON aim animation about to start) and one
+	// "ads-up" (released), can be diffed by hand for whatever offset
+	// actually flips - same technique ProjectileTracker.cpp used to find
+	// RE::Projectile's real offsets. Called on every button transition
+	// regardless of VATS lock state, so a clean *unlocked* baseline (aim
+	// normally, nothing being swallowed) can be compared against a locked
+	// attempt.
+	void DumpPlayerRawRange(const char* a_tag);
 }

@@ -1,6 +1,9 @@
 #include "AdsProbe.h"
 
+#include "SafeMem.h"
+
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <thread>
 
@@ -54,5 +57,37 @@ namespace VATS
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 			LogSnapshotOnce((tag + "+200ms").c_str());
 		}).detach();
+	}
+
+	void DumpPlayerRawRange(const char* a_tag)
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		const auto* base = reinterpret_cast<const std::byte*>(player);
+		constexpr std::size_t kStart = 0x0;
+		constexpr std::size_t kEnd = 0x400;
+
+		std::string line;
+		char        cell[24];
+		int         perLine = 0;
+		for (std::size_t off = kStart; off < kEnd; off += 4) {
+			std::uint32_t raw = 0;
+			if (!SafeRead(base + off, &raw, sizeof(raw))) {
+				continue;
+			}
+			std::snprintf(cell, sizeof(cell), "%03zX:%08X ", off, raw);
+			line += cell;
+			if (++perLine >= 8) {
+				REX::INFO("[VATS] ads raw dump [{}]: {}", a_tag, line);
+				line.clear();
+				perLine = 0;
+			}
+		}
+		if (!line.empty()) {
+			REX::INFO("[VATS] ads raw dump [{}]: {}", a_tag, line);
+		}
 	}
 }

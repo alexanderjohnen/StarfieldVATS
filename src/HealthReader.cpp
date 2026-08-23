@@ -1,6 +1,9 @@
 #include "HealthReader.h"
 
+#include "SafeMem.h"
+
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_set>
 
@@ -33,6 +36,44 @@ namespace VATS
 			REX::INFO("[VATS] health: resolved health AV index={}", index);
 			a_out = index;
 			return true;
+		}
+
+		// Diagnostic (2026-08-23): the typed avStorage.baseValues walk above
+		// found a populated-looking-but-clearly-wrong array (huge scattered
+		// keys, all-zero values) - a sign of reading through a bad pointer
+		// somewhere, not just "index 24 is missing". Rather than guess a
+		// correction, dump raw floats across a wide window straddling the
+		// header's claimed avStorage offset (0x260) so a known-good value
+		// (Alexander's `getav health` on the same actor, checked in-game)
+		// can be located by inspection - same "wide dump, diff/search by
+		// hand" technique ProjectileTracker.cpp used to correct
+		// RE::Projectile's offsets. SafeRead-guarded since, unlike boolBits/
+		// avStorage's own typed access above, this deliberately walks past
+		// what the header claims is valid.
+		void DumpRawFloatWindow(RE::Actor* a_actor, std::size_t a_start, std::size_t a_end)
+		{
+			const auto* base = reinterpret_cast<const std::byte*>(a_actor);
+			std::string line;
+			char        cell[40];
+			int         perLine = 0;
+			for (std::size_t off = a_start; off < a_end; off += 4) {
+				std::uint32_t raw = 0;
+				if (!SafeRead(base + off, &raw, sizeof(raw))) {
+					continue;
+				}
+				float f = 0.0f;
+				std::memcpy(&f, &raw, sizeof(f));
+				std::snprintf(cell, sizeof(cell), "%03zX:%08X(%.2f) ", off, raw, f);
+				line += cell;
+				if (++perLine >= 6) {
+					REX::INFO("[VATS] health raw dump: {}", line);
+					line.clear();
+					perLine = 0;
+				}
+			}
+			if (!line.empty()) {
+				REX::INFO("[VATS] health raw dump: {}", line);
+			}
 		}
 	}
 
@@ -81,6 +122,7 @@ namespace VATS
 				}
 				REX::WARN("[VATS] health: no baseValues entry for index={} on formID=0x{:08X}, size={}, first entries: {}",
 					healthIndex, formID, arr.size(), dump);
+				DumpRawFloatWindow(a_actor, 0x1E0, 0x400);
 			}
 			return false;
 		}
