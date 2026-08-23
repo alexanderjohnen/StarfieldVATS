@@ -23,7 +23,20 @@ namespace
 			// Targeting.cpp).
 			VATS::AimAssist::Start();
 			VATS::EngineInputLayer::Init();
-			VATS::HitEventLogger::Start();
+			// Disabled 2026-08-23: instant hard crash on every launch
+			// (a clean CommonLibSF-level abort, not a wild-pointer crash -
+			// "REL/IDDB.cpp(417): Failed to find offset for Address
+			// Library ID! Invalid ID: 0"). One of the REL::IDs this needs
+			// (RE::TESHitEvent::GetEventSource and/or
+			// BSTEventSource<T>::RegisterSink - this is the first time
+			// this project has used either) isn't actually mapped in the
+			// Address Library for game version 1.16.244.0, despite being
+			// declared in the CommonLibSF header - compiles fine, never
+			// verified against this Starfield build. See HitEventLogger.h
+			// for the full ground-truth-hit-confirmation idea; needs a
+			// mapped alternative (or the ID gap reported upstream) before
+			// this can be re-enabled.
+			// VATS::HitEventLogger::Start();
 			break;
 		default:
 			break;
