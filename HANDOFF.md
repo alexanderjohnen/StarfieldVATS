@@ -5,8 +5,11 @@ point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**Updated 2026-08-24**: ADS is no longer a stuck problem — see "ADS handling"
-below. Everything else in this file is otherwise unchanged from 2026-08-23.
+**Updated 2026-08-24 (two rounds today)**: ADS is no longer a stuck problem —
+see "ADS handling" below. Combat-HUD hiding (hit marker/damage numbers) now
+has a real fix, not just failed guesses — see "Combat-HUD hiding" below. The
+health bar has a second, still-unconfirmed attempt — see "Health bar" below.
+Everything else in this file is otherwise unchanged from 2026-08-23.
 
 **This supersedes the previous version of this file from 2026-08-23 evening.**
 That version covered the hitscan/real-projectile breakthrough (still true, see
@@ -100,8 +103,9 @@ surfaced more native HUD elements and a genuine click-detection bug.
 
 ### Known-broken / open
 
-**Health bar shows a static number, never updates (HIGH PRIORITY, 3
-hypotheses tried and disproven this session — don't re-try any of these):**
+**Health bar — second attempt made 2026-08-24, still UNCONFIRMED.** Three
+avStorage-based hypotheses were tried and disproven in the prior session
+(kept below for the record, don't re-try any of these):
 1. ~~`avStorage.baseValues`/`modifiers` keyed by a 4-byte AV index
    (CommonLibSF's declared `BSTTuple<uint32_t, T>`)~~ — disproven: reading
    with that stride produces corrupted-looking entries (keys that are
@@ -118,56 +122,62 @@ hypotheses tried and disproven this session — don't re-try any of these):**
    by a clean, deliberate test: Alexander did `getav health` (480.00), hit
    the target once, did `getav health` again (461.90) — the mod's own
    `current` reading (logged every change) stayed at 480.0 across that
-   entire window despite confirmed hits landing (log has both the
-   `aim-assist: hold started -> HIT` and `projectile redirect: HIT` lines
-   in between the two `getav` calls). Whatever `avStorage.baseValues` holds
-   for health, it is NOT live current health — probably a static/design-time
-   max, coincidentally equal to `getav health` only because the very first
-   test target happened to be undamaged.
+   entire window despite confirmed hits landing. `src/HealthReader.cpp`
+   still contains this known-broken read as the last-resort fallback (see
+   below) — not the primary path anymore.
 
-   **Next lead, untested**: HONKCORE's `hudmenu.gfx` (a pure Scaleform HUD
-   replacement with zero SFSE dependency — proof the data it uses is
-   already pushed into the AS layer by the native engine) has a real
-   `EnemyHealthMeter_mc`/`EnemyHealthHolder_mc` widget fed by an
-   `UpdateEnemyHealthData` callback, with sibling fields `EMDamageBar_mc`
-   (electromagnetic/shield damage), `currLegendaryRank`,
-   `currLegendarySegment` (confirms the legendary-segment idea used for the
-   HUD pips was on the right track), `bIsStunned`. **Reading this via
-   `ScaleformGFxASMovieRootBase::GetVariable` (the same safe, zero-new-
-   REL::ID mechanism `CrosshairVisibility`/`CombatHudVisibility` already
-   use) instead of raw `avStorage` memory is the recommended next attempt**
-   — sidesteps the whole "where does Starfield actually store live health"
-   question by reading whatever value the engine already computed and
-   pushed to the HUD. Exact AS variable path is unconfirmed; use
-   `IMenu::GetRootPath()` on the live `HUDMenu` instance (see
-   `CombatHudVisibility.cpp` for the pattern — real root path is `'root1'`,
-   NOT `'_root'` as commonly assumed from Skyrim/FO4 conventions) rather
-   than guessing blind.
-
-   `src/HealthReader.cpp` currently reads `avStorage.baseValues` live +
-   caches the highest-ever-seen value as "max" — functionally wrong (bar
-   just won't move) but harmless/safe, left as the current (broken) default
-   pending the `EnemyHealthMeter_mc` attempt.
+**2026-08-24 second attempt: `src/HealthWidgetReader.h/cpp`, wired into
+`Overlay.cpp` ahead of the old `HealthReader::GetActorHealth` fallback.**
+Reads HONKCORE's `EnemyHealthMeter_mc` widget (the lead from the previous
+handoff — HONKCORE's `hudmenu.gfx` has zero SFSE dependency, so whatever it
+displays must already be data the native engine pushes to the HUD) via
+`ScaleformGFxASMovieRootBase::GetVariable` — same zero-new-REL::ID
+mechanism `CrosshairVisibility`/`CombatHudVisibility` already use. The exact
+AS variable path was still unknown, so `Probe()` tries a matrix of parent
+paths (real `IMenu::GetRootPath()` plus static `_root...` fallbacks) x
+property suffixes (`.percent`, `.value`, `._xscale`, `._width`, etc.), logs
+every combination that resolves (path, type, value), and best-effort
+auto-picks the first numeric hit as the live candidate. **This is
+diagnostic-guess, not confirmed** — same status the three disproven
+avStorage hypotheses each had before testing ruled them out. Two open
+risks: (a) the auto-picked path may just be wrong (that's what the probe
+log is for — read it after a real combat test), (b) even if the path is
+right, it's unconfirmed whether this native widget tracks the specific
+actor VATS has Locked, versus whatever the vanilla combat/AI system
+considers the player's "current" engaged target — nothing in this project
+ever sets that association. **Next session: read the SFSE log after
+Alexander fights something with VATS active, check whether a
+`health-widget: using '...' as best-effort candidate` line appears and
+whether the in-game bar actually moved on a hit; if it didn't, the full
+`health-widget: '...' = ...` log lines above it are the next lead.**
 
 **Native combat-HUD elements (hit marker, kill marker, damage numbers, crit
-text/banner) still visible despite VATS's own overlay being the intended
-replacement** (`CombatHudVisibility.cpp`) — none of the tried
-`GetVariable`/`SetVariable` paths resolved, even using the correct HUDMenu
-root path (`'root1'`, via `IMenu::GetRootPath()`). Strings dump of
-`hudmenu.gfx` found the clip names (`DamageNumberText_mc`, `CritText_mc`,
-`CritBanner_mc`, `HitIndicator_mc`, `KillIndicator_mc`) and the string
-`SpawnNewClip` right next to `onEnterFrame#onHitDamageIndicatorAnimationFinish`
-— **strong suspicion these clips are dynamically created per-hit and
-removed after their animation finishes, not persistent objects with a
-settable `_visible`**, which would explain why every path guess failed
-regardless of correctness: `IsAvailable()` checked once at Lock time (before
-any hit occurs) would correctly report "not found" for something that
-doesn't exist yet. If true, hiding these needs either (a) continuous
-per-frame polling to catch and hide them the instant they spawn (may still
-show one brief flash), or (b) intercepting the native call that pushes
-`HudHitKillIndicatorData`/invokes `onHitKillDataChange` before it reaches
-Scaleform at all (real new reverse-engineering, no lead on the native
-function yet). Not attempted — next thing to try if picked back up.
+text/banner) — real fix attempted 2026-08-24, mechanism now sound, still
+UNCONFIRMED whether it fully works in practice.** Root cause found in the
+prior session: a strings dump of `hudmenu.gfx` found `SpawnNewClip` right
+next to `onHitDamageIndicatorAnimationFinish`, meaning these clips
+(`DamageNumberText_mc`, `CritText_mc`, `CritBanner_mc`, `HitIndicator_mc`,
+`KillIndicator_mc`) are almost certainly created fresh on each hit and
+destroyed once their animation finishes — a one-shot `Hide()` call at Lock
+time (the original design) ran before any hit had happened, so it always
+found nothing, regardless of whether the guessed paths were even right.
+Fixed by turning `CombatHudVisibility::Hide()` into `HideActive()`, called
+every frame while Locked from `Overlay::Draw()` instead of once from
+`VATSController.cpp`'s lock transition — each candidate `(prefix, clip)`
+path is re-checked every frame, so a clip spawned mid-combat gets caught
+and hidden within a frame or two rather than never being found. Still
+open: whether the *paths themselves* are actually correct was never
+confirmed (the original per-hit-existence problem may have been masking a
+separate wrong-path problem) — same open question Alexander should look
+for in the log (`combat-hud: hid newly-visible '...'` lines) after a real
+combat test. If nothing logs at all despite a confirmed hit, the paths
+themselves are still wrong and need fresh guessing/probing, same approach
+as `HealthWidgetReader.cpp` above. A possible one-frame flash before the
+hide catches up is expected and acceptable per Alexander's original ask
+(hide is the primary goal, not zero-frame-perfect suppression); intercepting
+the native call before it reaches Scaleform at all (real new reverse
+engineering, no lead on the function) remains the fallback if per-frame
+hiding turns out insufficient.
 
 **ADS handling — SOLVED 2026-08-24, via a completely different strategy.**
 Four approaches at *blocking* ADS while Locked were tried and failed (kept
@@ -235,17 +245,26 @@ scanner interactions).
 
 - **`src/CrosshairVisibility.cpp/h`** — hides native crosshair via
   `bCrosshairEnabled:GamePlay` INIPref. Confirmed working.
-- **`src/CombatHudVisibility.cpp/h`** — attempts to hide hit marker/kill
-  marker/damage numbers/crit text via `ScaleformGFxASMovieRootBase::
-  SetVariable`, using `IMenu::GetRootPath()` for the real HUDMenu root
-  (`'root1'`). Not yet working — see "Known-broken" above (likely
-  dynamically-spawned clips, wrong strategy).
-- **`src/HealthReader.cpp/h`** — reads target health from
-  `Actor::avStorage`. Base-value lookup mechanically works (pointer-keyed,
-  16-byte stride, empirically confirmed) but the value it finds isn't live
-  current health — see "Known-broken" above for the `EnemyHealthMeter_mc`
-  lead to try next. Also reads `legendaryRank` for the HUD's segment-pip
-  count (same caveat, unconfirmed against a real legendary enemy).
+- **`src/CombatHudVisibility.cpp/h`** — reworked 2026-08-24: `Hide()` (a
+  one-shot call at Lock time) is now `HideActive()`, called every frame
+  while Locked from `Overlay::Draw()` instead — see "Known-broken" above
+  for why the one-shot version could never have worked regardless of path
+  correctness. Still hides hit marker/kill marker/damage numbers/crit text
+  via `ScaleformGFxASMovieRootBase::GetVariable`/`SetVariable`, using
+  `IMenu::GetRootPath()` for the real HUDMenu root. Whether the candidate
+  paths themselves are correct is still unconfirmed.
+- **`src/HealthReader.cpp/h`** — unchanged this session, now the last-
+  resort fallback (see `HealthWidgetReader` below). Reads target health
+  from `Actor::avStorage`; base-value lookup mechanically works but the
+  value it finds isn't live current health (see "Known-broken" above).
+  Still used for `legendaryRank` (HUD segment-pip count), untouched by this
+  session's health-bar work.
+- **`src/HealthWidgetReader.cpp/h`** (new, 2026-08-24) — second attempt at
+  live target health, reading HONKCORE's `EnemyHealthMeter_mc` HUD widget
+  instead of `Actor::avStorage`. Probes a matrix of candidate AS paths,
+  logs every one that resolves, best-effort auto-picks the first numeric
+  hit. Wired into `Overlay.cpp` ahead of `HealthReader::GetActorHealth`.
+  **Unconfirmed** — see "Known-broken" above.
 - **`src/AdsBlocker.h/cpp`** — rewritten 2026-08-24: no longer tries to
   block ADS (the `PlayerIronSightsStartEvent` version that crashed is
   gone). Now a `WH_MOUSE_LL` hook that calls `Controller::Get().ForceOff()`
