@@ -49,7 +49,8 @@ namespace VATS
 	// live HUDMenu AS3 VM's internal state from the D3D Present thread,
 	// racing the engine's own background script evaluation) - and this
 	// project has already had two other confirmed hard failures from
-	// Scaleform meddling in the same session (see HealthWidgetReader.h).
+	// Scaleform meddling in the same session (the now-removed
+	// HealthWidgetReader.cpp - see git history/HANDOFF.md).
 	// HideActive() itself is left implemented (harmless if never called)
 	// in case a safer invocation strategy is found later - do not re-wire
 	// it to run every frame from the render thread without first ruling

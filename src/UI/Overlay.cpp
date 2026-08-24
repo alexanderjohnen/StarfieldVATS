@@ -3,8 +3,6 @@
 #include "CameraProject.h"
 #include "CombatHudVisibility.h"
 #include "GameOffsets.h"
-#include "HealthReader.h"
-#include "HealthWidgetReader.h"
 #include "SafeMem.h"
 #include "Settings.h"
 #include "Targeting.h"
@@ -131,45 +129,6 @@ namespace VATS::UI
 				DrawCenteredText(dl, a_px, a_py + 2.0f, a_value, a_color);
 			} else {
 				DrawCenteredText(dl, a_px, a_py - 6.0f, a_label, a_color);
-			}
-		}
-
-		// Segmented boss/legendary health bar, matching Starfield's own
-		// look (screenshot + Alexander's description, 2026-08-23): a red
-		// bar for the currently-active health pool, with a row of small
-		// white pips above it marking how many additional full pools this
-		// enemy has in reserve (a_extraSegments — best-effort, see
-		// HealthReader::GetActorExtraHealthSegments). a_extraSegments == 0
-		// draws just the plain red bar, the correct look for the vast
-		// majority of non-legendary enemies.
-		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max, std::uint32_t a_extraSegments)
-		{
-			constexpr float kBarWidth = 116.0f;
-			constexpr float kBarHeight = 7.0f;
-			constexpr float kPipHeight = 4.0f;
-			constexpr float kPipGap = 2.0f;
-			constexpr float kRowGap = 3.0f;
-
-			const float x0 = a_centerX - kBarWidth * 0.5f;
-			const float x1 = a_centerX + kBarWidth * 0.5f;
-
-			if (a_extraSegments > 0) {
-				const float pipRowY = a_y - kRowGap - kPipHeight;
-				const float pipWidth = (kBarWidth - kPipGap * static_cast<float>(a_extraSegments - 1)) / static_cast<float>(a_extraSegments);
-				float       px = x0;
-				for (std::uint32_t i = 0; i < a_extraSegments; ++i) {
-					a_dl->AddRectFilled(ImVec2{ px - 1.0f, pipRowY - 1.0f }, ImVec2{ px + pipWidth + 1.0f, pipRowY + kPipHeight + 1.0f }, kOutline);
-					a_dl->AddRectFilled(ImVec2{ px, pipRowY }, ImVec2{ px + pipWidth, pipRowY + kPipHeight }, IM_COL32(235, 238, 240, 235));
-					px += pipWidth + kPipGap;
-				}
-			}
-
-			a_dl->AddRectFilled(ImVec2{ x0 - 1.5f, a_y - 1.5f }, ImVec2{ x1 + 1.5f, a_y + kBarHeight + 1.5f }, kOutline);
-			a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x1, a_y + kBarHeight }, IM_COL32(50, 12, 12, 220));
-
-			const float frac = a_max > 0.0f ? std::clamp(a_current / a_max, 0.0f, 1.0f) : 0.0f;
-			if (frac > 0.0f) {
-				a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x0 + kBarWidth * frac, a_y + kBarHeight }, IM_COL32(210, 40, 40, 235));
 			}
 		}
 
@@ -314,9 +273,7 @@ namespace VATS::UI
 			// longer depends on crosshair proximity, only distance/LOS).
 			// Shown live so Alexander can see exactly what the aim-assist
 			// would roll against right now, not just after firing.
-			char  value[32] = "--";
-			bool  haveHealth = false;
-			HealthReading hp{};
+			char value[32] = "--";
 			if (dist >= 0.0f) {
 				float chancePercent = 0.0f;
 				if (auto* player = RE::PlayerCharacter::GetSingleton(); player && HasDetectionLOS(player, a_actor)) {
@@ -329,26 +286,6 @@ namespace VATS::UI
 					chancePercent = t * static_cast<float>(settings.centerHitChancePercent);
 				}
 				std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
-
-				// Best-effort, two layers (2026-08-24): try the native HUD
-				// widget reading first (HealthWidgetReader - reads whatever
-				// value the engine itself already computed and pushed to
-				// the HUD, unconfirmed which exact path is correct, see
-				// that header), falling back to the older avStorage-based
-				// GetActorHealth (HealthReader.h - known not to track live
-				// damage, kept only so the bar still shows *something*
-				// rather than nothing). Bar is simply skipped if both fail,
-				// same "degrade quietly" pattern as everything else here.
-				if (Settings::Get().showTargetHealth) {
-					float healthPercent = 0.0f;
-					if (HealthWidgetReader::GetLiveHealthPercent(healthPercent)) {
-						hp.current = healthPercent;
-						hp.max = 100.0f;
-						haveHealth = true;
-					} else {
-						haveHealth = GetActorHealth(a_actor, hp);
-					}
-				}
 			}
 
 			// Flash the box red on a hit, or show "MISS" above it, for a
@@ -373,13 +310,7 @@ namespace VATS::UI
 				DrawCenteredText(dl, px, py - 36.0f - 20.0f, "MISS", kHitColor);
 			}
 
-			float tetherStartY = py + 36.0f;
-			if (haveHealth) {
-				const std::uint32_t extraSegments = GetActorExtraHealthSegments(a_actor);
-				const float         barY = py + 40.0f + (extraSegments > 0 ? 8.0f : 0.0f);
-				DrawHealthBar(dl, px, barY, hp.current, hp.max, extraSegments);
-				tetherStartY = barY + 7.0f + 6.0f;
-			}
+			const float tetherStartY = py + 36.0f;
 
 			// Small tether line from box toward screen bottom, echoing the
 			// FO4 VATS look; subtle, mostly for readability against clutter.
@@ -605,8 +536,9 @@ namespace VATS::UI
 		// state getting corrupted by concurrent, unsynchronized access from
 		// two threads, surfacing later on whichever thread happens to touch
 		// it next. Given two other confirmed Scaleform-related hard
-		// failures earlier the same session (see HealthWidgetReader.h),
-		// this is being pulled back rather than pushed further while
+		// failures earlier the same session (the now-removed
+		// HealthWidgetReader.cpp's health-widget probe - see git history/
+		// HANDOFF.md), this is being pulled back rather than pushed further while
 		// unconfirmed. Hit marker/damage number hiding is back to not
 		// really working (same as before this session's attempt) until a
 		// safer mechanism exists - see CombatHudVisibility.h.

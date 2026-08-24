@@ -22,8 +22,9 @@ namespace VATS
 	// pointer) plus Setting::GetBool/SetBool, not a single Scaleform call
 	// anywhere. A wrong guess degrades to "setting not found, hide/restore
 	// is a no-op" rather than any crash risk - unlike everything else
-	// touched today, see HealthWidgetReader.h/CombatHudVisibility.h for why
-	// that distinction matters this particular session.
+	// touched today, see CombatHudVisibility.h (and git history for the
+	// now-removed HealthWidgetReader.cpp) for why that distinction matters
+	// this particular session.
 	class DamageNumbersVisibility
 	{
 	public:
