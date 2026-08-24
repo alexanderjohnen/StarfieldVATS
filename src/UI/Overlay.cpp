@@ -2,6 +2,7 @@
 
 #include "CameraProject.h"
 #include "CombatHudVisibility.h"
+#include "CombatTargetOverride.h"
 #include "GameOffsets.h"
 #include "SafeMem.h"
 #include "Settings.h"
@@ -565,6 +566,14 @@ namespace VATS::UI
 				return;
 			}
 		}
+
+		// EXPERIMENTAL (2026-08-24, Alexander's idea) - see
+		// CombatTargetOverride.h. Must run every frame, not just once at
+		// Lock time - confirmed via the read-only probe that the engine
+		// itself overwrites this field continuously, stomping a one-shot
+		// write within about a second. A plain SafeWrite, not Scaleform -
+		// unrelated to the CombatHudVisibility concern above.
+		CombatTargetOverride::Refresh(state.actor.get());
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
 

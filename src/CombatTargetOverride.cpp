@@ -37,6 +37,20 @@ namespace VATS
 		REX::INFO("[VATS] combat-target override: engaged, wrote formID=0x{:08X} (was 0x{:08X})", formID, original);
 	}
 
+	void CombatTargetOverride::Refresh(RE::Actor* a_target)
+	{
+		if (!s_engaged || !a_target) {
+			return;
+		}
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+		auto*        addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
+		const std::uint32_t formID = a_target->GetFormID();
+		(void)SafeWrite(addr, &formID, sizeof(formID));
+	}
+
 	void CombatTargetOverride::Disengage()
 	{
 		if (!s_engaged) {

@@ -27,6 +27,23 @@ namespace VATS
 	// in this project (commonlibsf-unmapped-ids memory) - this only ever
 	// writes/restores a plain uint32, never reads it back through any
 	// handle-resolution call.
+	//
+	// 2026-08-24, first real test: a single write at Lock time was
+	// confirmed via the read-only probe to survive barely over a second
+	// before the native engine's own per-frame update stomped it back to
+	// whatever the real crosshair reticle is doing (flickering between the
+	// real value and 0, exactly like before Engage() was ever called) -
+	// Alexander confirmed the native health bar didn't stay either.
+	// currentCombatTarget is evidently recomputed by the engine
+	// continuously (every frame, or close to it), not a sticky value a mod
+	// can set once. Fixed by adding Refresh() - a cheap, unconditional
+	// re-write with no bookkeeping, meant to be called every frame while
+	// Locked (Overlay::Draw()) so our value keeps winning the race against
+	// the engine's own overwrite. Unlike the Scaleform per-frame touching
+	// that caused trouble earlier this session, this is a plain
+	// SafeWrite-guarded memory write, no VM/object lifecycle involved -
+	// same risk class as ProjectileTracker.cpp's already-accepted
+	// per-frame velocity writes.
 	class CombatTargetOverride
 	{
 	public:
@@ -37,6 +54,13 @@ namespace VATS
 		// PlayerCharacter/a_target is unavailable or the read/write fails
 		// (SafeRead/SafeWrite-guarded throughout).
 		static void Engage(RE::Actor* a_target);
+
+		// Call every frame while Locked (Overlay::Draw()), after Engage()
+		// - re-writes a_target's formID unconditionally, no read/compare,
+		// to keep winning the race against the engine's own per-frame
+		// overwrite. No-op if never engaged (Engage() failed or wasn't
+		// called this lock).
+		static void Refresh(RE::Actor* a_target);
 
 		// Call once when a lock ends (Controller::ForceOff()/Advance()'s
 		// unlock branch). Restores whatever value Engage() saw before
