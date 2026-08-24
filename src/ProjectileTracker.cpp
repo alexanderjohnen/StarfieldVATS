@@ -148,8 +148,18 @@ namespace VATS
 			// bug is geometry/timing; a reverted one means the engine (or
 			// Havok) owns these fields and the whole velocity-write
 			// approach can't work as-is.
-			if (a_state.haveWritten && !a_state.readbackLogged) {
-				a_state.readbackLogged = true;
+			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
+			const bool  inFlight = speed >= 1.0e-3f;
+
+			// Logs at most twice per round: once right after the pre-launch
+			// write, and once more after the round is actually moving -
+			// the pre-launch readback alone turned out to prove very little
+			// (2026-08-25: it reported "WRITE STUCK" while the round was
+			// still sitting at age=0.000 with zero velocity, i.e. it only
+			// showed nothing had overwritten us within ~3ms, not that the
+			// value survived the engine's own launch).
+			if (a_state.haveWritten && (a_state.readbackCount == 0 || (a_state.readbackCount == 1 && inFlight))) {
+				++a_state.readbackCount;
 				RE::NiPoint3 curDir{};
 				float        curAge = -1.0f;
 				const bool   dirRead = Read(reinterpret_cast<const void*>(a_entry), kMovementDirection, curDir);
@@ -163,8 +173,6 @@ namespace VATS
 					drift >= 0.0f && drift < 0.01f ? "WRITE STUCK" : "OVERWRITTEN BY ENGINE",
 					oldVelocity.x, oldVelocity.y, oldVelocity.z);
 			}
-
-			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
 
 			RE::NiPoint3 dir{ a_aimPoint.x - projPos.x, a_aimPoint.y - projPos.y, a_aimPoint.z - projPos.z };
 			const float  dirLen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);

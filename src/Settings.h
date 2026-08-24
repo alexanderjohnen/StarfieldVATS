@@ -113,5 +113,16 @@ namespace VATS
 		// Shows the Locked target's current/max health in the HUD box
 		// (HealthReader.cpp). Restored 2026-08-25, see HealthReader.h.
 		bool showTargetHealth{ true };
+
+		// Speed (m/s) forced onto the equipped weapon's projectile while
+		// Locked, alongside the hitscan->real-projectile type flip
+		// (ProjectileTypeOverride.cpp). A vanilla ballistic round travels
+		// at 500 m/s, which at a measured typical engagement distance of
+		// ~6m means the round reaches its target inside a SINGLE game
+		// frame - there is physically no in-flight window to steer it,
+		// which is why redirect never visibly worked for guns while it
+		// always worked for (slow) rockets. Lowering the speed gives the
+		// round real flight time to be homed. 0 disables the override.
+		float lockedProjectileSpeed{ 80.0f };
 	};
 }

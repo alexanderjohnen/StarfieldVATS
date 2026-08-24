@@ -2,6 +2,7 @@
 
 #include "GameOffsets.h"
 #include "SafeMem.h"
+#include "Settings.h"
 
 #include <mutex>
 #include <unordered_map>
@@ -45,6 +46,11 @@ namespace VATS
 		// for a real mod weapon).
 		constexpr std::size_t kProjectileData = 0x130;
 		constexpr std::size_t kProjectileDataType = 0x84;
+		// Same struct, same already-proven-writable memory as the type byte
+		// above - offset taken from ProjectileFlagProbe.cpp, whose logged
+		// value for this field has matched the weapon's real speed on every
+		// sample (500.0 for standard ballistics, 120.0 for the rocket).
+		constexpr std::size_t kProjectileDataSpeed = 0x50;
 
 		// The value seen on both confirmed-real-projectile weapons tested
 		// (rocket launcher, Shingen homing mod). Every tested hitscan
@@ -133,8 +139,16 @@ namespace VATS
 		// only the first Engage actually writes, only the Engage/Disengage
 		// pair that brings the count back to zero restores the original
 		// value.
-		std::mutex                                        s_mutex;
-		std::unordered_map<std::uint64_t, std::pair<int, std::uint8_t>> s_refCounts;  // projectile -> {count, originalType}
+		struct OverrideState
+		{
+			int          count{ 0 };
+			std::uint8_t originalType{ 0 };
+			float        originalSpeed{ 0.0f };
+			bool         speedOverridden{ false };
+		};
+
+		std::mutex                                       s_mutex;
+		std::unordered_map<std::uint64_t, OverrideState> s_refCounts;
 	}
 
 	ProjectileTypeOverride::Token ProjectileTypeOverride::Engage(RE::Actor* a_actor)
@@ -158,17 +172,47 @@ namespace VATS
 				// Already a real projectile (rocket/grenade/Shingen-like) -
 				// ProjectileTracker already handles these, nothing to do,
 				// and nothing to track (an untracked projectile is simply
-				// never found by Disengage - see below).
+				// never found by Disengage - see below). Deliberately also
+				// skips the speed override below: these are the weapons the
+				// redirect has always worked on, precisely because they're
+				// already slow enough to home. Don't touch what works.
 				return token;
 			}
 			if (!Write(reinterpret_cast<void*>(projectile), kProjectileData + kProjectileDataType, kRealProjectileTypeValue)) {
 				return token;
 			}
-			it = s_refCounts.emplace(projectile, std::pair{ 0, currentType }).first;
-			REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}", projectile, currentType, kRealProjectileTypeValue);
+
+			OverrideState st;
+			st.originalType = currentType;
+
+			// Speed override (2026-08-25) - the fix for the real root cause
+			// behind "the bullet just goes where I was looking". Measured
+			// from a live session: a standard round travels at 500 m/s and
+			// a typical engagement distance is ~6m, so the round covers the
+			// whole distance within a SINGLE game frame. Since the engine
+			// only updates a projectile once per frame, there is literally
+			// no in-flight moment at which its trajectory can be rewritten,
+			// no matter how fast this mod polls - which is exactly why the
+			// redirect always worked on (slow) rockets and never on guns.
+			// Forcing a much lower speed for the duration of the hold gives
+			// the round real flight time to be homed. Restored on
+			// Disengage together with the type byte.
+			const float desiredSpeed = Settings::Get().lockedProjectileSpeed;
+			float       currentSpeed = 0.0f;
+			if (desiredSpeed > 0.0f &&
+				Read(reinterpret_cast<const void*>(projectile), kProjectileData + kProjectileDataSpeed, currentSpeed) &&
+				currentSpeed > desiredSpeed &&
+				Write(reinterpret_cast<void*>(projectile), kProjectileData + kProjectileDataSpeed, desiredSpeed)) {
+				st.originalSpeed = currentSpeed;
+				st.speedOverridden = true;
+			}
+
+			it = s_refCounts.emplace(projectile, st).first;
+			REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}, speed {:.1f} -> {:.1f} (overridden={})",
+				projectile, currentType, kRealProjectileTypeValue, st.originalSpeed, desiredSpeed, st.speedOverridden);
 		}
 
-		++it->second.first;
+		++it->second.count;
 		token.projectile = projectile;
 		token.active = true;
 		return token;
@@ -185,12 +229,17 @@ namespace VATS
 		if (it == s_refCounts.end()) {
 			return;  // shouldn't happen, but nothing to restore if it does
 		}
-		if (--it->second.first > 0) {
+		if (--it->second.count > 0) {
 			return;  // another overlapping hold still needs this to stay real
 		}
-		const std::uint8_t originalType = it->second.second;
+		const OverrideState st = it->second;
 		s_refCounts.erase(it);
-		const bool wrote = Write(reinterpret_cast<void*>(a_token.projectile), kProjectileData + kProjectileDataType, originalType);
-		REX::INFO("[VATS] projtype: disengaged, projectile=0x{:X} type -> 0x{:02X} (ok={})", a_token.projectile, originalType, wrote);
+		const bool wrote = Write(reinterpret_cast<void*>(a_token.projectile), kProjectileData + kProjectileDataType, st.originalType);
+		bool       speedRestored = false;
+		if (st.speedOverridden) {
+			speedRestored = Write(reinterpret_cast<void*>(a_token.projectile), kProjectileData + kProjectileDataSpeed, st.originalSpeed);
+		}
+		REX::INFO("[VATS] projtype: disengaged, projectile=0x{:X} type -> 0x{:02X} (ok={}), speed -> {:.1f} (restored={})",
+			a_token.projectile, st.originalType, wrote, st.originalSpeed, speedRestored);
 	}
 }

@@ -77,7 +77,7 @@ namespace VATS
 			// this project already backed out of once.
 			RE::NiPoint3 lastWrittenDir{};
 			bool         haveWritten{ false };
-			bool         readbackLogged{ false };
+			int          readbackCount{ 0 };  // max 2 lines per round: once pre-launch, once in flight
 		};
 
 		static void RedirectFreshProjectiles(RE::Actor* a_target, bool a_hit, std::unordered_map<std::uint64_t, TrackedState>& a_tracked);
