@@ -1,7 +1,6 @@
 #include "Overlay.h"
 
 #include "CameraProject.h"
-#include "CombatHudVisibility.h"
 #include "CombatTargetOverride.h"
 #include "GameOffsets.h"
 #include "SafeMem.h"
@@ -525,28 +524,6 @@ namespace VATS::UI
 
 		// Locked
 
-		// DISABLED 2026-08-24, same day it was added - see
-		// CombatHudVisibility.h for the full story. Calling this every
-		// frame (instead of once at lock time) touches the live HUDMenu
-		// Scaleform VM roughly 60x/sec from the D3D Present thread, for as
-		// long as VATS stays Locked. A crash report from the same test
-		// session showed an unrelated background engine job thread
-		// ("BSJobs 10") faulting deep inside Scaleform's own AS3 VM, with a
-		// *different* installed mod's DLL on that thread's call stack, not
-		// ours - consistent with (though not proven to be) VM-internal
-		// state getting corrupted by concurrent, unsynchronized access from
-		// two threads, surfacing later on whichever thread happens to touch
-		// it next. Given two other confirmed Scaleform-related hard
-		// failures earlier the same session (the now-removed
-		// HealthWidgetReader.cpp's health-widget probe - see git history/
-		// HANDOFF.md), this is being pulled back rather than pushed further while
-		// unconfirmed. Hit marker/damage number hiding is back to not
-		// really working (same as before this session's attempt) until a
-		// safer mechanism exists - see CombatHudVisibility.h.
-		// if (Settings::Get().hideCrosshairWhileLocked) {
-		// 	CombatHudVisibility::HideActive();
-		// }
-
 		if (!state.actor) {
 			LogIfChanged(DrawOutcome::kNoTarget, 0, "locked but no target (unexpected)");
 			return;
@@ -572,7 +549,8 @@ namespace VATS::UI
 		// Lock time - confirmed via the read-only probe that the engine
 		// itself overwrites this field continuously, stomping a one-shot
 		// write within about a second. A plain SafeWrite, not Scaleform -
-		// unrelated to the CombatHudVisibility concern above.
+		// unrelated to CombatHudVisibility's one-shot Scaleform toggle
+		// (VATSController.cpp's Lock/Unlock, not called from here at all).
 		CombatTargetOverride::Refresh(state.actor.get());
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);

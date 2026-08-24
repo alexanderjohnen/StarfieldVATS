@@ -2,65 +2,60 @@
 
 namespace VATS
 {
-	// Hides Starfield's native hit-feedback HUD elements (hit marker, kill
-	// marker, floating damage numbers, crit text/banner) while VATS is
-	// Locked - all confirmed to live together as sibling MovieClips inside
-	// one "HitDamageIndicatorClip" container within HUDMenu's Scaleform
-	// movie (found 2026-08-23 via a strings dump of hudmenu.gfx: the
-	// native onHitKillDataChange callback pushes a HudHitKillIndicatorData
-	// struct - fScreenX/fScreenY/fDamage/bShowDamageNumber/bInScopes/
-	// uHitType/bIsMitigated - to this clip, which contains
-	// DamageNumberText_mc, CritText_mc, CritBanner_mc, HitIndicator_mc, and
-	// KillIndicator_mc as children). None of these are covered by
-	// CrosshairVisibility's game-setting toggle - they're repopulated fresh
-	// from native data on every hit, not gated by a persistent setting.
-	// Supersedes the earlier standalone HitMarkerVisibility, whose
-	// candidate paths were guessed before this fuller picture of the
-	// display-list nesting was found.
+	// Hides Starfield's native hit marker, kill marker, and crit banner
+	// while VATS is Locked, restoring them on unlock - our own hit/miss
+	// flash (Overlay.cpp) already gives that feedback. Floating damage
+	// numbers are deliberately NOT attempted here anymore (see below) -
+	// use DamageNumbersVisibility.cpp for those instead.
 	//
-	// Hides each clip directly by name via ScaleformGFxASMovieRootBase::
-	// SetVariable/GetVariable (same mechanism CrosshairVisibility uses),
-	// tried under several candidate parent-path prefixes since the exact
-	// nesting under HUDMenu's root timeline is unconfirmed - only symbol
-	// names were found via the strings dump, not their actual placement.
+	// History, 2026-08-23/24 (see HANDOFF.md/git log for the full blow-by-
+	// blow): originally believed all five elements (DamageNumberText_mc,
+	// CritText_mc, CritBanner_mc, HitIndicator_mc, KillIndicator_mc) lived
+	// as siblings inside one dynamically-spawned "HitDamageIndicatorClip"
+	// container, and that a one-shot Hide() at Lock time found nothing
+	// because the container didn't exist yet (clips spawn per-hit). Fixed
+	// by polling every frame instead - but that introduced a *different*
+	// problem: touching the live HUDMenu AS3 VM ~60x/sec from the D3D
+	// Present thread, for the whole Locked duration, is suspected (not
+	// proven) to have caused a later crash report showing an unrelated
+	// engine job thread faulting inside Scaleform's own VM. Disabled
+	// again the same session.
 	//
-	// 2026-08-24: a single Hide() call at Lock time (the original design)
-	// never found any of these paths available, because they weren't wrong
-	// - they're right, but the clips genuinely don't exist yet at Lock
-	// time. The strings dump also found "SpawnNewClip" sitting right next
-	// to "onHitDamageIndicatorAnimationFinish", strongly suggesting these
-	// are created fresh on each hit and destroyed once their animation
-	// finishes - a one-shot check before any hit has happened will always
-	// find nothing. "Fixed" by calling HideActive() every frame while
-	// Locked instead of once, each (prefix, clip) candidate re-checked
-	// every frame so a clip spawning mid-combat gets caught within a frame
-	// or two - mechanically sound, but see the DISABLED note below.
+	// A real JPEXS decompile of hudmenu.gfx (docs/hudmenu-decompiled/,
+	// 2026-08-24) then settled the actual structure: `HitDamageIndicator.
+	// as`'s `SpawnNewClip()` really does addChild() a fresh, anonymously-
+	// named `HitDamageIndicatorClip` per hit (containing
+	// `DamageNumberText_mc`) - genuinely, permanently unreachable by any
+	// static path, full stop, not worth ever probing again. But
+	// `HitKillIndicator.as` (`HitIndicator_mc`, `KillIndicator_mc`,
+	// `CritBanner_mc` nested under `HitIndicator_mc`) is a DIFFERENT,
+	// persistent, timeline-placed object - constructed once, subscribes to
+	// `BSUIDataManager` once, never destroyed - not dynamically spawned at
+	// all. The original "never found" failure for THESE three was
+	// therefore a wrong-*path* guess, not a timing problem - a one-shot
+	// Hide()/Restore() (this file's current design, same safe pattern as
+	// CrosshairVisibility/DamageNumbersVisibility - no per-frame Scaleform
+	// touching, zero relation to the crash-suspected mechanism above)
+	// should work fine IF the container's real instance name is guessed
+	// correctly. Unconfirmed as of this rewrite - see kContainerNames/
+	// kFallbackParents in the .cpp for the current guesses and the log for
+	// which one (if any) resolved.
 	//
-	// DISABLED again, same day: the Overlay::Draw() call site that invoked
-	// HideActive() every frame was commented out after a crash report from
-	// the same test session showed an unrelated background engine job
-	// thread ("BSJobs 10") faulting deep inside Scaleform's own AS3 VM,
-	// with a *different* installed mod's DLL on that thread's call stack -
-	// not StarfieldVATS.dll anywhere in it. Not proven to be caused by
-	// this function, but going from one Scaleform touch per lock to ~60/sec
-	// for the whole Locked duration is the one thing this project changed
-	// this session that plausibly increases exposure to a genuine
-	// thread-safety violation (unsynchronized concurrent access to the
-	// live HUDMenu AS3 VM's internal state from the D3D Present thread,
-	// racing the engine's own background script evaluation) - and this
-	// project has already had two other confirmed hard failures from
-	// Scaleform meddling in the same session (the now-removed
-	// HealthWidgetReader.cpp - see git history/HANDOFF.md).
-	// HideActive() itself is left implemented (harmless if never called)
-	// in case a safer invocation strategy is found later - do not re-wire
-	// it to run every frame from the render thread without first ruling
-	// out the thread-safety theory above.
+	// Editing HONKCORE's hudmenu.gfx directly (JPEXS) was considered and
+	// rejected 2026-08-24, Alexander's own call: it would hide the marker
+	// permanently (not just while VATS is Locked), and the edit would need
+	// to be redone on every HONKCORE update. This runtime toggle avoids
+	// both problems.
 	class CombatHudVisibility
 	{
 	public:
-		// Currently unused - see the DISABLED note above. Was meant to be
-		// called every frame while Locked, not once at lock time.
+		// Call once when a lock starts. Searches for the candidate
+		// container paths (cached after the first call), hides whatever
+		// resolves. Safe no-op if nothing resolves.
 		static void HideActive();
+
+		// Call once when a lock ends. Restores exactly what the matching
+		// HideActive() actually hid - safe no-op otherwise.
 		static void Restore();
 	};
 }

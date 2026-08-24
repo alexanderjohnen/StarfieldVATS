@@ -271,12 +271,15 @@ namespace VATS
 				// unreachable anyway, see CombatHudVisibility.h) - same
 				// safe one-shot mechanism as CrosshairVisibility above.
 				DamageNumbersVisibility::Hide();
-				// CombatHudVisibility::HideActive() is NOT called here
-				// (unlike CrosshairVisibility::Hide() above) - 2026-08-24,
-				// see CombatHudVisibility.h: hit marker/damage number clips
-				// don't exist yet at Lock time, so a one-shot call here
-				// would never find them. It's called every frame instead,
-				// from Overlay::Draw() while Locked.
+				// CombatHudVisibility (2026-08-24, rewritten) - hides the
+				// native hit marker/kill marker/crit banner. Back to a
+				// one-shot call here, same as Crosshair/DamageNumbers above
+				// - the JPEXS decompile confirmed HitKillIndicator (the
+				// container for these three) is a persistent object, not
+				// spawned per-hit like the damage-number popups, so a
+				// one-shot find-and-hide is the right shape after all. See
+				// CombatHudVisibility.h for the full history.
+				CombatHudVisibility::HideActive();
 			}
 			// EngineInputLayer::SetAdsBlocked(true) disabled again
 			// 2026-08-23: confirmed via screenshot that USER_EVENT_FLAG::

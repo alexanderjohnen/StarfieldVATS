@@ -7,27 +7,26 @@ namespace VATS
 {
 	namespace
 	{
-		// Static fallback prefixes, kept in case GetRealRootPrefixes below
-		// can't resolve anything - common Bethesda HUD root-path
-		// conventions (Skyrim/FO4-era AS2 style, since these clip names use
-		// classic AS2 MovieClip "_mc" naming despite HONKCORE's AS3 widget
-		// framework sitting on top).
-		constexpr const char* kFallbackPrefixes[] = {
-			"_root.HitDamageIndicatorClip",
-			"_root.HUDMovieBaseInstance.HitDamageIndicatorClip",
+		// Candidate instance names for the HitKillIndicator container itself
+		// (scripts/HitKillIndicator.as in docs/hudmenu-decompiled/ - a
+		// persistent, timeline-placed object per the decompile, NOT
+		// dynamically spawned like the damage-number popups, so a one-shot
+		// find-and-hide should work if one of these guesses is right).
+		// Real instance name/nesting is unconfirmed - only the class name
+		// and its public children are known from the decompiled script,
+		// not where the FLA timeline actually places it.
+		constexpr const char* kContainerNames[] = {
+			"HitKillIndicator_mc",
+			"HitKillIndicator",
+		};
+		constexpr const char* kFallbackParents[] = {
 			"_root",
 			"_root.HUDMovieBaseInstance",
-		};
-		constexpr const char* kClipNames[] = {
-			"DamageNumberText_mc",
-			"CritText_mc",
-			"CritBanner_mc",
-			"HitIndicator_mc",
-			"KillIndicator_mc",
+			"_root.HitDamageIndicatorClip",  // old guess, kept just in case
 		};
 
-		std::vector<std::string> s_prefixes;
-		bool                     s_prefixesBuilt = false;
+		std::vector<std::string> s_containerPaths;
+		bool                     s_searched = false;
 
 		[[nodiscard]] RE::Scaleform::GFx::ASMovieRootBase* GetHudMovieRoot()
 		{
@@ -36,67 +35,91 @@ namespace VATS
 			return movie ? movie->asMovieRoot.get() : nullptr;
 		}
 
-		// Only the parent-path candidates are cached (built once) - unlike
-		// the old FindPaths(), this doesn't try to resolve actual (prefix,
-		// clip) paths up front, since the clips themselves come and go.
-		// HideActive()/Restore() re-check availability fresh every call.
-		void BuildPrefixes()
+		// Builds the list of full container paths to try (parent + name),
+		// once. Real HUDMenu root path (IMenu::GetRootPath()) tried first,
+		// then static fallbacks - same pattern CrosshairVisibility/
+		// DamageNumbersVisibility already use successfully.
+		void BuildContainerPaths()
 		{
-			s_prefixesBuilt = true;
-			auto* ui = RE::UI::GetSingleton();
-			auto  menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
+			s_searched = true;
+			std::vector<std::string> parents;
+			auto*                    ui = RE::UI::GetSingleton();
+			auto                     menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
 			if (menu) {
-				const char* realRoot = menu->GetRootPath();
-				if (realRoot && realRoot[0] != '\0') {
+				if (const char* realRoot = menu->GetRootPath(); realRoot && realRoot[0] != '\0') {
 					REX::INFO("[VATS] combat-hud: HUDMenu root path = '{}'", realRoot);
-					s_prefixes.push_back(realRoot);
-					s_prefixes.push_back(std::string(realRoot) + ".HitDamageIndicatorClip");
+					parents.push_back(realRoot);
+					parents.push_back(std::string(realRoot) + ".HUDMovieBaseInstance");
 				}
 			}
-			for (const char* fallback : kFallbackPrefixes) {
-				s_prefixes.push_back(fallback);
+			for (const char* fallback : kFallbackParents) {
+				parents.push_back(fallback);
 			}
+
+			for (const auto& parent : parents) {
+				for (const char* name : kContainerNames) {
+					s_containerPaths.push_back(parent + "." + name);
+				}
+			}
+		}
+
+		// (path, wasVisible) pairs actually toggled this Lock, so Restore()
+		// only touches what Hide() actually changed.
+		std::vector<std::pair<std::string, bool>> s_hidden;
+
+		void TryHideLeaf(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_path)
+		{
+			RE::Scaleform::GFx::Value current;
+			if (!a_root->GetVariable(&current, a_path.c_str()) || !current.IsBoolean()) {
+				return;  // not present or not a boolean - nothing to do
+			}
+			const bool wasVisible = current.GetBoolean();
+			if (wasVisible) {
+				const RE::Scaleform::GFx::Value falseVal(false);
+				a_root->SetVariable(a_path.c_str(), falseVal);
+			}
+			s_hidden.emplace_back(a_path, wasVisible);
+			REX::INFO("[VATS] combat-hud: found '{}' (was visible={})", a_path, wasVisible);
 		}
 	}
 
 	void CombatHudVisibility::HideActive()
 	{
-		if (!s_prefixesBuilt) {
-			BuildPrefixes();
+		if (!s_searched) {
+			BuildContainerPaths();
 		}
 		auto* root = GetHudMovieRoot();
 		if (!root) {
 			return;
 		}
-		for (const auto& prefix : s_prefixes) {
-			for (const char* clip : kClipNames) {
-				const std::string path = prefix + "." + clip + "._visible";
-				RE::Scaleform::GFx::Value current;
-				if (!root->GetVariable(&current, path.c_str()) || !current.IsBoolean() || !current.GetBoolean()) {
-					continue;  // not present, wrong type, or already hidden - nothing to do
-				}
-				const RE::Scaleform::GFx::Value falseVal(false);
-				root->SetVariable(path.c_str(), falseVal);
-				REX::INFO("[VATS] combat-hud: hid newly-visible '{}'", path);
-			}
+
+		s_hidden.clear();
+		for (const auto& container : s_containerPaths) {
+			// HitIndicator_mc/KillIndicator_mc are direct children of the
+			// container; CritBanner_mc is nested one level deeper under
+			// HitIndicator_mc specifically (per HitKillIndicator.as:
+			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling.
+			TryHideLeaf(root, container + ".HitIndicator_mc._visible");
+			TryHideLeaf(root, container + ".KillIndicator_mc._visible");
+			TryHideLeaf(root, container + ".HitIndicator_mc.CritBanner_mc._visible");
+		}
+		if (s_hidden.empty()) {
+			REX::WARN("[VATS] combat-hud: none of the candidate HitKillIndicator paths resolved - see kContainerNames/kFallbackParents in CombatHudVisibility.cpp, or the logged HUDMenu root path above for a better guess");
 		}
 	}
 
 	void CombatHudVisibility::Restore()
 	{
 		auto* root = GetHudMovieRoot();
-		if (!root || !s_prefixesBuilt) {
+		if (!root) {
 			return;
 		}
-		for (const auto& prefix : s_prefixes) {
-			for (const char* clip : kClipNames) {
-				const std::string path = prefix + "." + clip + "._visible";
-				if (!root->IsAvailable(path.c_str())) {
-					continue;
-				}
+		for (const auto& [path, wasVisible] : s_hidden) {
+			if (wasVisible) {
 				const RE::Scaleform::GFx::Value trueVal(true);
 				root->SetVariable(path.c_str(), trueVal);
 			}
 		}
+		s_hidden.clear();
 	}
 }
