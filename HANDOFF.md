@@ -5,11 +5,14 @@ point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**Updated 2026-08-24 (two rounds today)**: ADS is no longer a stuck problem —
-see "ADS handling" below. Combat-HUD hiding (hit marker/damage numbers) now
-has a real fix, not just failed guesses — see "Combat-HUD hiding" below. The
-health bar has a second, still-unconfirmed attempt — see "Health bar" below.
-Everything else in this file is otherwise unchanged from 2026-08-23.
+**Updated 2026-08-24 (three rounds today)**: ADS is no longer a stuck
+problem — see "ADS handling" below. Combat-HUD hiding (hit marker/damage
+numbers) now has a real fix, not just failed guesses — still needs an
+in-game confirmation. The health bar's second attempt (a Scaleform widget
+probe) caused two severe failures in a row — a hard crash, then a
+whole-PC freeze — and has been **retired**, see "Health bar" below before
+going anywhere near that mechanism again. Everything else in this file is
+otherwise unchanged from 2026-08-23.
 
 **This supersedes the previous version of this file from 2026-08-23 evening.**
 That version covered the hitscan/real-projectile breakthrough (still true, see
@@ -126,45 +129,48 @@ avStorage-based hypotheses were tried and disproven in the prior session
    still contains this known-broken read as the last-resort fallback (see
    below) — not the primary path anymore.
 
-**Crash fix, same day**: the first deployed version of this probe hard-
-crashed the game on the very first Lock, with no crash log at all. Root
-cause: the probe's `""` (bare clip) suffix returned a `kDisplayObject`-typed
-`Value` - a live, refcounted Scaleform object handle - and letting that
-local `Value` go out of scope invoked `Value::ObjectInterface::
-ObjectRelease` (`REL::ID` 169746), never exercised anywhere in this project
-before. Fixed by removing the `""` suffix entirely - every remaining
-candidate now names an actual property, expected to resolve to a primitive
-or fail cleanly. See `commonlibsf-unmapped-ids` memory for the write-up (a
-5th confirmed instance of the "relocated function call = risk" pattern,
-this time hidden inside a `Value`'s own destructor rather than an obviously-
-a-function-call site). Rebuilt/redeployed same session; **still needs a
-fresh in-game confirmation that Locking no longer crashes** before trusting
-anything else below.
+**2026-08-24: second attempt made, then RETIRED after two severe failures
+in a row — do not re-attempt without a fundamentally different approach.**
+`src/HealthWidgetReader.h/cpp` was wired into `Overlay.cpp` ahead of the old
+`HealthReader::GetActorHealth` fallback, reading HONKCORE's
+`EnemyHealthMeter_mc` widget (the lead from the previous handoff) via
+`ScaleformGFxASMovieRootBase::GetVariable` — same mechanism
+`CrosshairVisibility`/`CombatHudVisibility` already use for booleans. The
+exact AS variable path was unknown, so a `Probe()` tried a matrix of
+candidate paths, logging every one that resolved:
+1. First version's probe included a `""` (bare clip) suffix. That returned
+   a `kDisplayObject`-typed `Value` — a live, refcounted Scaleform object
+   handle — and letting the local `Value` go out of scope invoked
+   `Value::ObjectInterface::ObjectRelease` (`REL::ID` 169746), never
+   exercised anywhere in this project before. **Hard-crashed the game
+   instantly on the very first Lock, with no crash log at all.**
+2. Fix attempt: removed the `""` suffix, keeping only named property
+   candidates (`.percent`, `.value`, `._xscale`, etc.) on the theory that a
+   named property reliably resolves to a primitive. **This was wrong and
+   made things worse**: the very next deploy, querying only those named
+   properties, **froze the entire game and — per Alexander — the whole
+   PC's input until the process was killed via Task Manager.** SFSE log
+   again cut off mid-probe with zero further output, same "beyond merely
+   wrong" signature as the crash it replaced, just a different failure
+   mode (Scaleform/AS3 property access can itself resolve to another
+   object or trigger script evaluation — a named property is not a safe
+   guarantee of getting back a primitive).
 
-**2026-08-24 second attempt: `src/HealthWidgetReader.h/cpp`, wired into
-`Overlay.cpp` ahead of the old `HealthReader::GetActorHealth` fallback.**
-Reads HONKCORE's `EnemyHealthMeter_mc` widget (the lead from the previous
-handoff — HONKCORE's `hudmenu.gfx` has zero SFSE dependency, so whatever it
-displays must already be data the native engine pushes to the HUD) via
-`ScaleformGFxASMovieRootBase::GetVariable` — same zero-new-REL::ID
-mechanism `CrosshairVisibility`/`CombatHudVisibility` already use. The exact
-AS variable path was still unknown, so `Probe()` tries a matrix of parent
-paths (real `IMenu::GetRootPath()` plus static `_root...` fallbacks) x
-property suffixes (`.percent`, `.value`, `._xscale`, `._width`, etc.), logs
-every combination that resolves (path, type, value), and best-effort
-auto-picks the first numeric hit as the live candidate. **This is
-diagnostic-guess, not confirmed** — same status the three disproven
-avStorage hypotheses each had before testing ruled them out. Two open
-risks: (a) the auto-picked path may just be wrong (that's what the probe
-log is for — read it after a real combat test), (b) even if the path is
-right, it's unconfirmed whether this native widget tracks the specific
-actor VATS has Locked, versus whatever the vanilla combat/AI system
-considers the player's "current" engaged target — nothing in this project
-ever sets that association. **Next session: read the SFSE log after
-Alexander fights something with VATS active, check whether a
-`health-widget: using '...' as best-effort candidate` line appears and
-whether the in-game bar actually moved on a hit; if it didn't, the full
-`health-widget: '...' = ...` log lines above it are the next lead.**
+Given two different hard system-level failures from the same guessed-path
+probing technique, in a row, with no way to iterate locally (every attempt
+costs Alexander a full crash/freeze cycle), it was **retired rather than
+guessed at a third time**: `HealthWidgetReader::GetLiveHealthPercent()` is
+now a permanent no-op (`return false;`), so `Overlay.cpp` falls back
+unconditionally to the old, known-broken-but-safe `HealthReader::
+GetActorHealth` avStorage read — the health bar is back to "renders, static
+number" (its state before this session's health-bar work), not worse than
+before, just not fixed. See `commonlibsf-unmapped-ids` memory for the full
+write-up. **Do not re-enable Scaleform probing of unknown/guessed paths for
+anything beyond a known-primitive leaf like `_visible`** (which
+`CombatHudVisibility.cpp` uses safely, confirmed across both failing
+sessions) without a fundamentally different approach — e.g. an actual
+Scaleform/SWF decompile of `hudmenu.gfx` to know the real variable and its
+type ahead of time, instead of guessing live against the running movie.
 
 **Native combat-HUD elements (hit marker, kill marker, damage numbers, crit
 text/banner) — real fix attempted 2026-08-24, mechanism now sound, still
@@ -274,12 +280,12 @@ scanner interactions).
   value it finds isn't live current health (see "Known-broken" above).
   Still used for `legendaryRank` (HUD segment-pip count), untouched by this
   session's health-bar work.
-- **`src/HealthWidgetReader.cpp/h`** (new, 2026-08-24) — second attempt at
-  live target health, reading HONKCORE's `EnemyHealthMeter_mc` HUD widget
-  instead of `Actor::avStorage`. Probes a matrix of candidate AS paths,
-  logs every one that resolves, best-effort auto-picks the first numeric
-  hit. Wired into `Overlay.cpp` ahead of `HealthReader::GetActorHealth`.
-  **Unconfirmed** — see "Known-broken" above.
+- **`src/HealthWidgetReader.cpp/h`** (new, then retired, both 2026-08-24) —
+  `GetLiveHealthPercent()` is a permanent no-op after two different guessed-
+  path probes each hard-broke the game (a crash, then a whole-PC freeze) —
+  see "Known-broken" above for the full story before touching this file
+  again. `Overlay.cpp` still calls it first but always gets `false` back,
+  falling straight through to `HealthReader::GetActorHealth`.
 - **`src/AdsBlocker.h/cpp`** — rewritten 2026-08-24: no longer tries to
   block ADS (the `PlayerIronSightsStartEvent` version that crashed is
   gone). Now a `WH_MOUSE_LL` hook that calls `Controller::Get().ForceOff()`
