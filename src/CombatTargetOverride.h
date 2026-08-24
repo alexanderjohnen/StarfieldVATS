@@ -28,22 +28,34 @@ namespace VATS
 	// writes/restores a plain uint32, never reads it back through any
 	// handle-resolution call.
 	//
-	// 2026-08-24, first real test: a single write at Lock time was
-	// confirmed via the read-only probe to survive barely over a second
-	// before the native engine's own per-frame update stomped it back to
-	// whatever the real crosshair reticle is doing (flickering between the
-	// real value and 0, exactly like before Engage() was ever called) -
-	// Alexander confirmed the native health bar didn't stay either.
-	// currentCombatTarget is evidently recomputed by the engine
-	// continuously (every frame, or close to it), not a sticky value a mod
-	// can set once. Fixed by adding Refresh() - a cheap, unconditional
-	// re-write with no bookkeeping, meant to be called every frame while
-	// Locked (Overlay::Draw()) so our value keeps winning the race against
-	// the engine's own overwrite. Unlike the Scaleform per-frame touching
-	// that caused trouble earlier this session, this is a plain
-	// SafeWrite-guarded memory write, no VM/object lifecycle involved -
-	// same risk class as ProjectileTracker.cpp's already-accepted
-	// per-frame velocity writes.
+	// 2026-08-24, two rounds of testing, both inconclusive-to-negative:
+	// Round 1 - a single write at Lock time was confirmed via a (since
+	// removed) read-only probe to survive barely over a second before the
+	// native engine's own update stomped it back to whatever the real
+	// crosshair reticle is doing. Alexander confirmed the native health
+	// bar didn't stay either.
+	// Round 2 - added Refresh(), a per-frame re-write meant to keep
+	// winning that race (called from Overlay::Draw() while Locked). The
+	// probe showed this DIDN'T fix it: the field flip-flopped between our
+	// value and the engine's on essentially every single frame, never
+	// stably holding ours - the engine evidently recomputes this field at
+	// least once per frame, not occasionally, so a same-frequency fight
+	// just ties/loses rather than winning. The native health bar still
+	// didn't stay. Separately, the diagnostic logging that came with
+	// testing this (removed along with Refresh()'s call site) was firing
+	// on essentially every frame once the flip-flopping started, real log
+	// spam this project doesn't normally accept - suspected contributor to
+	// a real gameplay regression Alexander reported the same session (far
+	// fewer shots getting redirected than in earlier builds).
+	//
+	// Refresh()'s call site is now DISABLED (Overlay.cpp) - the function
+	// stays implemented in case a smarter invocation strategy turns up
+	// (e.g. writing from whatever thread/timing the engine's own
+	// recompute uses, if that can ever be determined), but per-frame
+	// racing from the render thread specifically didn't work. Engage()/
+	// Disengage() (one write at Lock, one restore at Unlock) are cheap and
+	// harmless, so they stay wired into VATSController.cpp even though
+	// their effect doesn't persist beyond about a second on its own.
 	class CombatTargetOverride
 	{
 	public:

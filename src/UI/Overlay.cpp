@@ -490,32 +490,20 @@ namespace VATS::UI
 			}
 		}
 
-		// Diagnostic probe (2026-08-24, Alexander's health-bar idea) —
-		// read-only, SafeRead-guarded, logs only on change. Runs regardless
-		// of VATS mode so it can be tested in plain vanilla aiming, no lock
-		// needed. Correlate the raw value against when Starfield's own
-		// native enemy health bar visibly appears (real ADS on a hostile)
-		// to test whether GameOffsets::kCurrentCombatTarget is really the
-		// field EnemyHealthMeter.as's uTargetUnderCrosshairID comes from —
-		// see GameOffsets.h for the full theory. Deliberately does NOT call
-		// BSPointerHandleManagerInterface::GetSmartPointer to resolve the
-		// handle (confirmed crash in this project) - just logs the raw
-		// value next to known formIDs (crosshair pick, VATS-locked target)
-		// so a match can be eyeballed directly in the log.
-		{
-			static std::uint32_t s_lastLoggedCombatTarget = 0;
-			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-				std::uint32_t raw = 0;
-				if (SafeRead(reinterpret_cast<const std::byte*>(player) + GameOffsets::kCurrentCombatTarget, &raw, sizeof(raw)) &&
-					raw != s_lastLoggedCombatTarget) {
-					s_lastLoggedCombatTarget = raw;
-					const std::uint32_t crosshairFormID = s_cachedPick ? s_cachedPick->GetFormID() : 0;
-					const std::uint32_t lockedFormID = state.actor ? state.actor->GetFormID() : 0;
-					REX::INFO("[VATS] probe: currentCombatTarget=0x{:08X} (crosshairPick formID=0x{:08X}, VATS-locked formID=0x{:08X})",
-						raw, crosshairFormID, lockedFormID);
-				}
-			}
-		}
+		// Diagnostic probe REMOVED 2026-08-24 (was here briefly, see git
+		// history) - confirmed its job: the engine overwrites
+		// currentCombatTarget continuously, every single frame, not just
+		// occasionally. That meant the probe's "log only on change" throttle
+		// never actually throttled anything once CombatTargetOverride::
+		// Refresh() started fighting it (see that file) - it was logging
+		// essentially every frame for the whole Locked duration, real log-
+		// spam/I-O overhead this project doesn't normally accept (every
+		// other per-frame diagnostic here is throttled to ~10Hz or on a
+		// genuine low-frequency change). Suspected contributor to a real
+		// gameplay regression Alexander reported the same test session
+		// (far fewer shots getting redirected than in earlier builds) -
+		// removed together with disabling Refresh() below rather than left
+		// in "just in case."
 
 		if (state.mode == VATSMode::kOff) {
 			LogIfChanged(DrawOutcome::kOff, 0, "off");
@@ -544,14 +532,20 @@ namespace VATS::UI
 			}
 		}
 
-		// EXPERIMENTAL (2026-08-24, Alexander's idea) - see
-		// CombatTargetOverride.h. Must run every frame, not just once at
-		// Lock time - confirmed via the read-only probe that the engine
-		// itself overwrites this field continuously, stomping a one-shot
-		// write within about a second. A plain SafeWrite, not Scaleform -
-		// unrelated to CombatHudVisibility's one-shot Scaleform toggle
-		// (VATSController.cpp's Lock/Unlock, not called from here at all).
-		CombatTargetOverride::Refresh(state.actor.get());
+		// DISABLED 2026-08-24, same day it was added - see
+		// CombatTargetOverride.h. The per-frame refresh was meant to keep
+		// winning a race against the engine's own continuous overwrite of
+		// currentCombatTarget - it never did (confirmed via the now-removed
+		// probe: the field flip-flopped between our value and the engine's
+		// on essentially every frame, never stably holding ours), and the
+		// diagnostic logging that came with testing it is suspected of
+		// contributing to a real gameplay regression Alexander reported the
+		// same session (far fewer shots getting redirected than in earlier
+		// builds). Pulled back rather than pushed further - Engage()/
+		// Disengage() (VATSController.cpp) stay in place (harmless, a
+		// single write/restore per lock), only this per-frame fight is
+		// disabled.
+		// CombatTargetOverride::Refresh(state.actor.get());
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
 
