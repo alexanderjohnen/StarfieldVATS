@@ -96,6 +96,17 @@ namespace VATS
 
 		s_hidden.clear();
 		for (const auto& container : s_containerPaths) {
+			// Diagnostic (2026-08-24): even the confirmed-real
+			// "root1.HitAndKillIndicator_mc" container didn't resolve on
+			// the first try after using it. IsAvailable() never
+			// constructs a Value (unlike GetVariable), so it's safe to
+			// call on the bare container path too, unlike the bare-clip
+			// GetVariable probe that crashed HealthWidgetReader.cpp -
+			// logs exactly which level (container itself vs. its
+			// children) is the one that doesn't resolve.
+			const bool containerAvailable = root->IsAvailable(container.c_str());
+			REX::INFO("[VATS] combat-hud: container '{}' available={}", container, containerAvailable);
+
 			// HitIndicator_mc/KillIndicator_mc are direct children of the
 			// container; CritBanner_mc is nested one level deeper under
 			// HitIndicator_mc specifically (per HitKillIndicator.as:
