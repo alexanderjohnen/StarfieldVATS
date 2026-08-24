@@ -130,8 +130,45 @@ namespace VATS
 		// point); true otherwise, including the harmless "too early, its
 		// velocity isn't assigned yet" case (kept tracked, retried next
 		// tick).
-		[[nodiscard]] bool HomeProjectile(std::uint64_t a_entry, const RE::NiPoint3& a_aimPoint, bool a_hit, RE::Actor* a_target, ProjectileTracker::TrackedState& a_state)
+		// a_hit/a_target parameters dropped 2026-08-25 along with the
+		// desiredTargetHandle write that was their only remaining use (see
+		// the comment at the end of this function). Hit-vs-miss now only
+		// affects which aim point the CALLER resolves (TrackedState::
+		// missOffset), which is already baked into a_aimPoint by then.
+		[[nodiscard]] bool HomeProjectile(std::uint64_t a_entry, const RE::NiPoint3& a_aimPoint, ProjectileTracker::TrackedState& a_state)
 		{
+			// Re-validate the object before writing ANYTHING to it
+			// (2026-08-25). a_tracked is keyed by a raw pointer, and this
+			// game's allocator recycles projectile slots aggressively - a
+			// single session's log shows one address (0x23C50F9C920) picked
+			// up as a brand-new round 23 separate times. Once a round
+			// despawns, its memory is freed and can be handed to a
+			// completely different object, but SafeRead still succeeds on
+			// it (the heap page stays mapped, the reads just return
+			// somebody else's data), so nothing here ever failed and Pass 1
+			// happily kept writing 12+12 bytes into it for up to
+			// kMaxHomingDuration. That is straightforward heap corruption,
+			// and it matches Crashlog_2026-08-24_23-52-51 exactly:
+			// EXCEPTION_ACCESS_VIOLATION on the Main thread with
+			// SharedHeapAllocator* in RDI/R13, well after the shots
+			// themselves. Latent all along, but massively amplified by the
+			// speed override - rounds now live ~6x longer, so there are far
+			// more tracked entries and far more ticks in which one can go
+			// stale. Checking formType (and that the round is still ours)
+			// costs two byte reads and makes writing into a recycled
+			// allocation structurally impossible.
+			std::uint8_t formType = 0;
+			if (!Read(reinterpret_cast<const void*>(a_entry), GameOffsets::kFormType, formType) ||
+				formType < kFormTypeProjectileMin || formType > kFormTypeProjectileMax ||
+				formType == kFormTypeBEAM) {
+				return false;  // despawned, or the slot now holds something else entirely
+			}
+			std::uint32_t shooterHandle = 0;
+			if (!Read(reinterpret_cast<const void*>(a_entry), kShooterHandle, shooterHandle) ||
+				shooterHandle != kShooterIsPlayer) {
+				return false;  // recycled into a round that isn't ours
+			}
+
 			RE::NiPoint3 projPos{};
 			RE::NiPoint3 oldVelocity{};
 			if (!Read(reinterpret_cast<const void*>(a_entry), GameOffsets::kLocation, projPos) ||
@@ -228,26 +265,22 @@ namespace VATS
 			(void)Write(reinterpret_cast<void*>(a_entry), kMovementDirection, dir);
 			(void)Write(reinterpret_cast<void*>(a_entry), kVelocity, newVelocity);
 
-			// On a hit, also point the round's own desiredTargetHandle at
-			// the target (2026-08-22, Alexander's observation: ship-combat
-			// missile lock-on already does real-time homing toward a
-			// locked target natively - this is presumably the field that
-			// drives it). Uses the target's formID directly as the handle
-			// value, same "persistent ref" assumption as elsewhere in this
-			// project - unlike the player, an arbitrary combat NPC is NOT
-			// guaranteed persistent (some are dynamically spawned, whose
-			// real handle differs from their formID). If wrong, this
-			// degrades gracefully: a handle that resolves to nothing or
-			// the wrong object just means no extra native homing this
-			// tick, not a crash. Re-written every homing tick, not just
-			// once, in case the engine itself clears it between ticks the
-			// same way currentCombatTarget turned out to (unconfirmed, but
-			// cheap to keep refreshing regardless).
-			if (a_hit) {
-				const std::uint32_t targetHandle = a_target->GetFormID();
-				(void)Write(reinterpret_cast<void*>(a_entry), kDesiredTargetHandle, targetHandle);
-			}
-
+			// REMOVED 2026-08-25: this also wrote the target's formID into
+			// the round's desiredTargetHandle (0x174) on every homing tick,
+			// hoping to trigger the engine's own missile lock-on homing.
+			// It was always a guess on two counts - that the field drives
+			// that behaviour at all, and that a raw formID is a valid
+			// TESPointerHandle (it is not, for a dynamically-spawned combat
+			// NPC). The old comment claimed a wrong value "degrades
+			// gracefully... not a crash", which was never actually tested.
+			// It buys nothing measurable - the redirect now demonstrably
+			// lands hits without it - while writing a wrong-typed value
+			// into a handle field the engine dereferences, which is
+			// precisely the shape of both crashes this project hit today.
+			// The two writes above are different in kind: plain float
+			// vectors, into fields verified in this exact object state.
+			// Restore from git history if native homing is ever pursued
+			// properly, with the handle type actually established first.
 			return true;
 		}
 	}
@@ -276,7 +309,7 @@ namespace VATS
 				continue;
 			}
 			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, it->second.missOffset);
-			if (HomeProjectile(it->first, aimPoint, a_hit, a_target, it->second)) {
+			if (HomeProjectile(it->first, aimPoint, it->second)) {
 				++it;
 			} else {
 				it = a_tracked.erase(it);
@@ -374,7 +407,7 @@ namespace VATS
 			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, missOffset);
 
 			const auto inserted = a_tracked.emplace(entry, TrackedState{ now, missOffset });
-			(void)HomeProjectile(entry, aimPoint, a_hit, a_target, inserted.first->second);  // first redirect, right now
+			(void)HomeProjectile(entry, aimPoint, inserted.first->second);  // first redirect, right now
 
 			// Distance from the round to its aim point at pickup, plus
 			// whether this was the (much more useful) pre-launch catch or
