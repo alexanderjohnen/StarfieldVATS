@@ -5,20 +5,23 @@ point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**Updated 2026-08-24 (four rounds today)**: ADS is no longer a stuck
+**Updated 2026-08-24 (five rounds today)**: ADS is no longer a stuck
 problem — see "ADS handling" below. The health bar's Scaleform-widget-probe
 attempt caused two severe failures in a row — a hard crash, then a
 whole-PC freeze — and has been **retired**, see "Health bar" below. Combat-
 HUD hiding's per-frame fix was disabled again the same session after a
 third crash report (unrelated mod on the stack, cause unconfirmed) raised
-a thread-safety concern — see "Native combat-HUD elements" below. **Net
-result of today's HUD work: ADS handling improved, health bar and hit-
-marker hiding are both back to not-working (same as before today), but no
-known-crashy code is left enabled.** Alexander is now exporting
-`hudmenu.gfx`'s decompiled ActionScript via JPEXS to `docs/
-hudmenu-decompiled/` as a safer alternative to live guessing — check there
-before starting fresh Scaleform investigation. Everything else in this file
-is otherwise unchanged from 2026-08-23.
+a thread-safety concern — see "Native combat-HUD elements" below. The
+health-bar question is now **closed with a definitive answer**, not just
+paused: Alexander exported `hudmenu.gfx`'s decompiled ActionScript via
+JPEXS to `docs/hudmenu-decompiled/`, and `EnemyHealthMeter.as` proves the
+health percentage was never reachable via any `GetVariable` path at all —
+it only ever arrives as a transient native→AS3 push-event parameter (see
+"Health bar" below for the full trail). **Net result of today's HUD work:
+ADS handling improved, health bar and hit-marker hiding are both back to
+not-working (same as before today), but no known-crashy code is left
+enabled, and the health-bar dead-end is now proven rather than suspected.**
+Everything else in this file is otherwise unchanged from 2026-08-23.
 
 **This supersedes the previous version of this file from 2026-08-23 evening.**
 That version covered the hitscan/real-projectile breakthrough (still true, see
@@ -175,11 +178,43 @@ write-up. **Do not re-enable Scaleform probing of unknown/guessed paths for
 anything beyond a known-primitive leaf like `_visible`** without a
 fundamentally different approach — e.g. an actual Scaleform/SWF decompile
 of `hudmenu.gfx` to know the real variable and its type ahead of time,
-instead of guessing live against the running movie. (2026-08-24, later the
-same session: Alexander has JPEXS installed and is exporting
-`hudmenu.gfx`'s decompiled ActionScript to `docs/hudmenu-decompiled/` for
-exactly this — check whether that folder exists and has content before
-starting any fresh probing from scratch.)
+instead of guessing live against the running movie.
+
+**CLOSED, definitively, 2026-08-24 (same session, via the JPEXS decompile):**
+Alexander exported `hudmenu.gfx`'s full decompiled ActionScript to `docs/
+hudmenu-decompiled/` (JPEXS, `Scripts` → `ActionScript`, ~210 `.as` files).
+`scripts/EnemyHealthMeter.as` is the real source — and it proves the
+GetVariable-probing approach could never have worked, guessed paths or not:
+there is no readable AS variable holding the health percentage at all. Data
+arrives via `Shared.AS3.Data.BSUIDataManager.Subscribe("HudEnemyData",
+this.UpdateEnemyHealthData)` — a native→AS3 **push event** system
+(`FromClientDataEvent`, backed by `UIDataShuttleConnector`/
+`BSUIEventDispatcherBackend`, all inside `Shared/AS3/Data/
+BSUIDataManager.as`). The payload is `param1.data.EnemiesA`, an Array of
+per-enemy objects (`uID`, `bOnScreen`, `fHealth` — a **0..1 fraction, not a
+percent**, `bIsLegendary`, `uLegendaryRank`, `fElectromagneticHealth`,
+`bIsStunned`, `sName`, `fScreenPositionX/Y`, `uEnemyDifficultyLevel`, ...),
+matched to a target actor via `EnemiesA[i].uID ==
+param1.data.uTargetUnderCrosshairID`. This is a transient callback
+parameter — nothing is cached anywhere at a stable, externally-readable
+path. So: not just risky, structurally impossible to read via
+`GetVariable("some.guessed.path")`, full stop. **Also separately confirms**
+the widget tracks whatever's under the crosshair right now
+(`uTargetUnderCrosshairID`), not necessarily whatever VATS has Locked once
+the camera moves away — the second open risk from earlier sessions, now
+resolved as "yes, it would have been a real limitation," moot since the
+approach is dead anyway.
+
+**Only remaining path to a real health bar**: hook the native C++ function
+that builds the `EnemiesA` array before it's pushed into AS3 (real new
+reverse engineering — no known address, would need its own from-scratch
+investigation with the same empirical rigor as everything else in this
+project) or copy whatever computation the game itself uses to derive
+`fHealth`. Meaningfully bigger scope than anything tried so far — not
+started, only worth pursuing if Alexander explicitly wants to invest in it.
+`docs/hudmenu-decompiled/` is a good reference for that if it happens
+(`com/beepcmyk/widget/*.as` is HONKCORE's own widget framework, useful
+context but not load-bearing for this specific lead).
 
 **Native combat-HUD elements (hit marker, kill marker, damage numbers, crit
 text/banner) — real fix attempted 2026-08-24, then DISABLED again the same
