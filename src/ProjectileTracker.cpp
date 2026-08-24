@@ -183,39 +183,36 @@ namespace VATS
 			dir.y /= dirLen;
 			dir.z /= dirLen;
 
+			// REVERTED 2026-08-25, same day it was added: this used to write
+			// movementDirection (and desiredTargetHandle) here, while the
+			// round was still pre-launch. It caused a hard crash after a
+			// few shots - EXCEPTION_ACCESS_VIOLATION on an engine "BSJobs"
+			// worker thread, with RCX/RDX holding 0x3F6DA2B77108DF48: two
+			// IEEE-754 floats packed into a register that was then used as
+			// a pointer, the textbook signature of float data sitting where
+			// a pointer belongs. Every offset this file uses
+			// (movementDirection@0x148, velocity@0x154,
+			// desiredTargetHandle@0x174) was derived by diffing an
+			// already-LAUNCHED projectile; a round at age=0.000 is created
+			// but not yet initialised by the engine, so those same bytes
+			// need not hold the same fields yet, and writing floats into
+			// them can land on top of a pointer the engine is about to
+			// use. Not worth re-attempting: the speed override
+			// (ProjectileTypeOverride.cpp) now buys ~6 frames of real
+			// flight time, so ordinary in-flight homing - on a fully
+			// constructed object, with offsets actually verified in that
+			// state - has a genuine window again and this is unnecessary.
+			//
+			// The round IS still tracked while pre-launch (caller adds it
+			// unconditionally), just never written to: harmless, and it
+			// means Pass 1 starts homing on the very first tick after
+			// launch instead of waiting to rediscover it.
+			if (speed < 1.0e-3f) {
+				return true;
+			}
+
 			a_state.lastWrittenDir = dir;
 			a_state.haveWritten = true;
-
-			// Pre-launch frame (2026-08-25): velocity still reads zero, i.e.
-			// the engine has created the round but not yet launched it. This
-			// used to bail out here and wait for the next tick - which was
-			// the core bug behind "the bullet just goes where I was
-			// looking". Measured from a real session's log: a round is only
-			// ever seen at age=0.000 (velocity 0) or age=0.011 (velocity
-			// already assigned, i.e. one full game frame later), and is gone
-			// from the scan entirely after that. At speed 500 that first
-			// frame is 5.5 METRES of travel in the weapon's original
-			// direction, with roughly one frame of life left afterward -
-			// so by the time the old code was willing to touch the round,
-			// its trajectory was effectively already decided. Polling
-			// faster can't fix that (the engine only updates the round once
-			// per frame; a 2ms poll just re-reads the same state five
-			// times) - the only usable window is THIS one, before launch.
-			// So: write the direction now, and let the engine launch the
-			// round already pointed at the target. Velocity is deliberately
-			// left alone here (writing a speed we'd have to invent could
-			// fight the engine's own launch computation); if the engine
-			// derives launch velocity from movementDirection this is exactly
-			// right, and if it ignores it we've lost nothing - the normal
-			// post-launch homing below still runs on later ticks.
-			if (speed < 1.0e-3f) {
-				(void)Write(reinterpret_cast<void*>(a_entry), kMovementDirection, dir);
-				if (a_hit) {
-					const std::uint32_t targetHandle = a_target->GetFormID();
-					(void)Write(reinterpret_cast<void*>(a_entry), kDesiredTargetHandle, targetHandle);
-				}
-				return true;  // keep tracking - post-launch homing continues next tick
-			}
 
 			const RE::NiPoint3 newVelocity{ dir.x * speed, dir.y * speed, dir.z * speed };
 
@@ -389,7 +386,7 @@ namespace VATS
 				(aimPoint.z - projPos.z) * (aimPoint.z - projPos.z));
 			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f} distToAim={:.1f} phase={}",
 				a_hit ? "HIT" : "MISS", entry, age, speed, toTarget,
-				speed < 1.0e-3f ? "PRE-LAUNCH" : "in-flight");
+				speed < 1.0e-3f ? "tracked-prelaunch (no write yet)" : "in-flight");
 		}
 	}
 }
