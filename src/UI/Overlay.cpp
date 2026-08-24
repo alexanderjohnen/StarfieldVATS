@@ -305,28 +305,17 @@ namespace VATS::UI
 				return;
 			}
 
-			// Distance-based chance (mirrors AimAssist.cpp's
-			// ComputeChancePercent — same small duplicate-instead-of-
-			// shared-header tradeoff as ResolveAimWorldPos above; see its
-			// comment for the 2026-08-22 redesign rationale — chance no
-			// longer depends on crosshair proximity, only distance/LOS).
-			// Shown live so Alexander can see exactly what the aim-assist
-			// would roll against right now, not just after firing.
+			// Chance display simplified 2026-08-25 to match AimAssist.cpp's
+			// removal of the distance-falloff/roll system - the real logic
+			// is now a fixed 100% (blocked only by an actual obstruction,
+			// handled by real projectile physics, not a LOS check), so the
+			// HUD always shows the same fixed number instead of a stale
+			// distance-scaled guess.
 			char          value[32] = "--";
 			bool          haveHealth = false;
 			HealthReading hp{};
 			if (dist >= 0.0f) {
-				float chancePercent = 0.0f;
-				if (auto* player = RE::PlayerCharacter::GetSingleton(); player && HasDetectionLOS(player, a_actor)) {
-					const auto& settings = Settings::Get();
-					const float full = settings.fullChanceRangeMeters;
-					const float maxR = settings.maxEffectiveRangeMeters;
-					const float t = maxR > full ?
-						std::clamp(1.0f - (dist - full) / (maxR - full), 0.0f, 1.0f) :
-						(dist <= full ? 1.0f : 0.0f);
-					chancePercent = t * static_cast<float>(settings.centerHitChancePercent);
-				}
-				std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
+				std::snprintf(value, sizeof(value), "%.0f m | 100%%", dist);
 
 				// Restored 2026-08-25 (see HealthReader.h) - avStorage-based
 				// read only, the native-widget probe (HealthWidgetReader)

@@ -15,7 +15,6 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
-#include <random>
 #include <thread>
 #include <unordered_map>
 
@@ -112,36 +111,6 @@ namespace VATS
 			return true;
 		}
 
-		// Distance-based chance (2026-08-22 redesign, replaces an earlier
-		// screen-space "must aim precisely at the crosshair" cone) —
-		// Alexander's reference: FO4/76 VATS shows a high chance number
-		// even while the reticle points nowhere near the target (see
-		// starfield-vats-mod-design memory); the whole point of VATS is
-		// not requiring aim precision, only a lock and being in range/LOS
-		// — doubly true here since the round gets redirected in-flight
-		// regardless of exact aim (ProjectileTracker), so tying the
-		// chance itself to crosshair proximity fought the mechanic rather
-		// than complementing it. centerHitChancePercent applies at/under
-		// Settings::fullChanceRangeMeters, falling linearly to 0% by
-		// Settings::maxEffectiveRangeMeters. ANDed with a real occlusion
-		// check (HasDetectionLOS, see Targeting.h) — being close doesn't
-		// matter if a wall is actually in the way.
-		[[nodiscard]] float ComputeChancePercent(RE::Actor* a_target, float a_distance)
-		{
-			auto* player = RE::PlayerCharacter::GetSingleton();
-			if (!player || !HasDetectionLOS(player, a_target)) {
-				return 0.0f;
-			}
-
-			const auto& settings = Settings::Get();
-			const float full = settings.fullChanceRangeMeters;
-			const float maxR = settings.maxEffectiveRangeMeters;
-			const float t = maxR > full ?
-				std::clamp(1.0f - (a_distance - full) / (maxR - full), 0.0f, 1.0f) :
-				(a_distance <= full ? 1.0f : 0.0f);
-			return t * static_cast<float>(settings.centerHitChancePercent);
-		}
-
 		// Runs for the whole duration the fire button stays physically
 		// held, not just once - a single button-down doesn't map to a
 		// single shot (automatic weapons fire repeatedly for as long as
@@ -210,7 +179,7 @@ namespace VATS
 			// simplification as before.
 			float initialDist = 0.0f;
 			if (!ResolveTargetScreen(state.actor.get(), initialDist)) {
-				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, chance is 0, no assist this hold");
+				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, no assist this hold");
 				// Still record a (guaranteed-miss) result - the real trigger
 				// was pulled and a real round left the gun, so the HUD
 				// should say something rather than nothing. Found
@@ -221,32 +190,20 @@ namespace VATS
 				ProjectileTypeOverride::Disengage(typeToken);
 				return;
 			}
-			const float chancePercent = ComputeChancePercent(state.actor.get(), initialDist);
 
-			// Zero chance (out of effective range or no LOS): don't
-			// redirect anything for the rest of this hold - real aim
-			// decides, full stop, same as the target being off-screen
-			// entirely.
-			if (chancePercent <= 0.0f) {
-				REX::INFO("[VATS] aim-assist: zero chance (out of range or no LOS), firing unassisted");
-				Controller::Get().RecordShotResult(false);
-				ProjectileTypeOverride::Disengage(typeToken);
-				return;
-			}
-
-			static thread_local std::mt19937     rng{ std::random_device{}() };
-			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-			const float                           roll = dist(rng);
-			const float                           chance = chancePercent / 100.0f;
-			const bool                             hit = roll < chance;
-			REX::INFO("[VATS] aim-assist: hold started, chance={:.0f}%, roll={:.2f} -> {}", chancePercent, roll, hit ? "HIT" : "MISS");
-			// Drives the HUD's red-flash-on-hit / "MISS"-text-on-miss
-			// feedback (Overlay.cpp) - recorded here, at roll time, not
-			// gated on ProjectileTracker actually finding a projectile to
-			// redirect, since the roll itself is the meaningful event from
-			// the player's perspective (see the "shots that missed but I
-			// don't understand why" case: the roll can say HIT even when no
-			// projectile is ever found to redirect, a known separate issue).
+			// Chance/roll removed 2026-08-25, Alexander's explicit call:
+			// always redirect toward the target once Locked and resolvable
+			// on screen - no distance falloff, no RNG. An actual wall in
+			// the way still blocks the shot on its own, no separate LOS/
+			// obstruction check needed for that - this redirects a real,
+			// physically simulated projectile now (ProjectileTypeOverride/
+			// ProjectileTracker), not a raycast, so real collision already
+			// does that job. HasDetectionLOS/fullChanceRangeMeters/
+			// maxEffectiveRangeMeters are unused by this function now but
+			// left in Settings/Targeting.h - Overlay.cpp's HUD readout and
+			// other callers still use HasDetectionLOS independently.
+			constexpr bool hit = true;
+			REX::INFO("[VATS] aim-assist: hold started, chance=100% (fixed) -> HIT");
 			Controller::Get().RecordShotResult(hit);
 
 			// Fast-poll right after the click, falling back to a slower
