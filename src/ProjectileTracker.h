@@ -65,6 +65,19 @@ namespace VATS
 		{
 			std::chrono::steady_clock::time_point firstSeen;
 			RE::NiPoint3                          missOffset{};  // fixed for this round's whole life; zero on a hit
+
+			// Write-verification state (2026-08-25). This project has never
+			// actually confirmed that writing movementDirection/velocity
+			// changes anything - "redirect: HIT" only ever meant "we
+			// performed the write", never "the engine kept it". These record
+			// what was last written so the NEXT tick can read the same
+			// fields back and log whether our value survived or the engine
+			// overwrote it. Logged at most once per round (readbackLogged)
+			// - a per-tick log here would reintroduce the log-spam problem
+			// this project already backed out of once.
+			RE::NiPoint3 lastWrittenDir{};
+			bool         haveWritten{ false };
+			bool         readbackLogged{ false };
 		};
 
 		static void RedirectFreshProjectiles(RE::Actor* a_target, bool a_hit, std::unordered_map<std::uint64_t, TrackedState>& a_tracked);

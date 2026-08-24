@@ -130,7 +130,7 @@ namespace VATS
 		// point); true otherwise, including the harmless "too early, its
 		// velocity isn't assigned yet" case (kept tracked, retried next
 		// tick).
-		[[nodiscard]] bool HomeProjectile(std::uint64_t a_entry, const RE::NiPoint3& a_aimPoint, bool a_hit, RE::Actor* a_target)
+		[[nodiscard]] bool HomeProjectile(std::uint64_t a_entry, const RE::NiPoint3& a_aimPoint, bool a_hit, RE::Actor* a_target, ProjectileTracker::TrackedState& a_state)
 		{
 			RE::NiPoint3 projPos{};
 			RE::NiPoint3 oldVelocity{};
@@ -139,10 +139,32 @@ namespace VATS
 				return false;  // despawned/unreadable - stop tracking
 			}
 
-			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
-			if (speed < 1.0e-3f) {
-				return true;  // too early this tick - keep tracking, retry next tick
+			// Write verification (2026-08-25), logged once per round. Reads
+			// back the direction we wrote on the PREVIOUS tick and reports
+			// whether it survived. This is the question the whole
+			// "redirect: HIT but the round flew straight anyway" problem
+			// hinges on and that no test has ever actually answered: a
+			// matching readback means the engine accepts our writes and the
+			// bug is geometry/timing; a reverted one means the engine (or
+			// Havok) owns these fields and the whole velocity-write
+			// approach can't work as-is.
+			if (a_state.haveWritten && !a_state.readbackLogged) {
+				a_state.readbackLogged = true;
+				RE::NiPoint3 curDir{};
+				float        curAge = -1.0f;
+				const bool   dirRead = Read(reinterpret_cast<const void*>(a_entry), kMovementDirection, curDir);
+				(void)Read(reinterpret_cast<const void*>(a_entry), kAge, curAge);
+				const RE::NiPoint3& w = a_state.lastWrittenDir;
+				const float         drift = dirRead ?
+					std::sqrt((curDir.x - w.x) * (curDir.x - w.x) + (curDir.y - w.y) * (curDir.y - w.y) + (curDir.z - w.z) * (curDir.z - w.z)) :
+					-1.0f;
+				REX::INFO("[VATS] redirect readback: entry=0x{:X} age={:.3f} wroteDir=({:.3f},{:.3f},{:.3f}) nowDir=({:.3f},{:.3f},{:.3f}) drift={:.3f} -> {} | vel=({:.1f},{:.1f},{:.1f})",
+					a_entry, curAge, w.x, w.y, w.z, curDir.x, curDir.y, curDir.z, drift,
+					drift >= 0.0f && drift < 0.01f ? "WRITE STUCK" : "OVERWRITTEN BY ENGINE",
+					oldVelocity.x, oldVelocity.y, oldVelocity.z);
 			}
+
+			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
 
 			RE::NiPoint3 dir{ a_aimPoint.x - projPos.x, a_aimPoint.y - projPos.y, a_aimPoint.z - projPos.z };
 			const float  dirLen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
@@ -152,6 +174,40 @@ namespace VATS
 			dir.x /= dirLen;
 			dir.y /= dirLen;
 			dir.z /= dirLen;
+
+			a_state.lastWrittenDir = dir;
+			a_state.haveWritten = true;
+
+			// Pre-launch frame (2026-08-25): velocity still reads zero, i.e.
+			// the engine has created the round but not yet launched it. This
+			// used to bail out here and wait for the next tick - which was
+			// the core bug behind "the bullet just goes where I was
+			// looking". Measured from a real session's log: a round is only
+			// ever seen at age=0.000 (velocity 0) or age=0.011 (velocity
+			// already assigned, i.e. one full game frame later), and is gone
+			// from the scan entirely after that. At speed 500 that first
+			// frame is 5.5 METRES of travel in the weapon's original
+			// direction, with roughly one frame of life left afterward -
+			// so by the time the old code was willing to touch the round,
+			// its trajectory was effectively already decided. Polling
+			// faster can't fix that (the engine only updates the round once
+			// per frame; a 2ms poll just re-reads the same state five
+			// times) - the only usable window is THIS one, before launch.
+			// So: write the direction now, and let the engine launch the
+			// round already pointed at the target. Velocity is deliberately
+			// left alone here (writing a speed we'd have to invent could
+			// fight the engine's own launch computation); if the engine
+			// derives launch velocity from movementDirection this is exactly
+			// right, and if it ignores it we've lost nothing - the normal
+			// post-launch homing below still runs on later ticks.
+			if (speed < 1.0e-3f) {
+				(void)Write(reinterpret_cast<void*>(a_entry), kMovementDirection, dir);
+				if (a_hit) {
+					const std::uint32_t targetHandle = a_target->GetFormID();
+					(void)Write(reinterpret_cast<void*>(a_entry), kDesiredTargetHandle, targetHandle);
+				}
+				return true;  // keep tracking - post-launch homing continues next tick
+			}
 
 			const RE::NiPoint3 newVelocity{ dir.x * speed, dir.y * speed, dir.z * speed };
 
@@ -215,7 +271,7 @@ namespace VATS
 				continue;
 			}
 			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, it->second.missOffset);
-			if (HomeProjectile(it->first, aimPoint, a_hit, a_target)) {
+			if (HomeProjectile(it->first, aimPoint, a_hit, a_target, it->second)) {
 				++it;
 			} else {
 				it = a_tracked.erase(it);
@@ -280,11 +336,13 @@ namespace VATS
 				continue;
 			}
 
-			// A fresh, not-yet-tracked, player-fired round. Don't track it
-			// until its velocity is confirmed assigned (age=0.000 reads
-			// all-zero velocity on the very first frame - see the header
-			// comment history) - a too-early read just retries next tick,
-			// naturally bounded by the age window above, same as before.
+			// A fresh, not-yet-tracked, player-fired round. Picked up
+			// IMMEDIATELY now, including in its pre-launch state
+			// (velocity still zero) - this used to skip such a round
+			// entirely and wait for a later tick, which meant we never
+			// touched it until the engine had already launched and moved
+			// it 5.5m. See HomeProjectile's pre-launch comment for the
+			// measurements behind that change; it handles both states.
 			RE::NiPoint3 projPos{};
 			RE::NiPoint3 oldVelocity{};
 			if (!Read(reinterpret_cast<const void*>(entry), GameOffsets::kLocation, projPos) ||
@@ -292,9 +350,6 @@ namespace VATS
 				continue;
 			}
 			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
-			if (speed < 1.0e-3f) {
-				continue;  // too early, velocity not assigned yet - retry next tick
-			}
 
 			RE::NiPoint3 missOffset{};
 			if (!a_hit) {
@@ -306,11 +361,20 @@ namespace VATS
 			}
 			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, missOffset);
 
-			a_tracked.emplace(entry, TrackedState{ now, missOffset });
-			(void)HomeProjectile(entry, aimPoint, a_hit, a_target);  // first redirect, right now
+			const auto inserted = a_tracked.emplace(entry, TrackedState{ now, missOffset });
+			(void)HomeProjectile(entry, aimPoint, a_hit, a_target, inserted.first->second);  // first redirect, right now
 
-			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f}",
-				a_hit ? "HIT" : "MISS", entry, age, speed);
+			// Distance from the round to its aim point at pickup, plus
+			// whether this was the (much more useful) pre-launch catch or
+			// the old already-flying one - together these say at a glance
+			// how much flight time was actually left to work with.
+			const float toTarget = std::sqrt(
+				(aimPoint.x - projPos.x) * (aimPoint.x - projPos.x) +
+				(aimPoint.y - projPos.y) * (aimPoint.y - projPos.y) +
+				(aimPoint.z - projPos.z) * (aimPoint.z - projPos.z));
+			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f} distToAim={:.1f} phase={}",
+				a_hit ? "HIT" : "MISS", entry, age, speed, toTarget,
+				speed < 1.0e-3f ? "PRE-LAUNCH" : "in-flight");
 		}
 	}
 }
