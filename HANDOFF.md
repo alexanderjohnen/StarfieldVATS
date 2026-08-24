@@ -218,16 +218,35 @@ context but not load-bearing for this specific lead).
 
 **Native combat-HUD elements (hit marker, kill marker, damage numbers, crit
 text/banner) — real fix attempted 2026-08-24, then DISABLED again the same
-day over a possible thread-safety concern.** Root cause of the original
-"nothing ever hides" bug was correctly diagnosed: a strings dump of
-`hudmenu.gfx` found `SpawnNewClip` right next to
-`onHitDamageIndicatorAnimationFinish`, meaning these clips
-(`DamageNumberText_mc`, `CritText_mc`, `CritBanner_mc`, `HitIndicator_mc`,
-`KillIndicator_mc`) are almost certainly created fresh on each hit and
-destroyed once their animation finishes — a one-shot `Hide()` call at Lock
-time ran before any hit had happened, so it always found nothing. Fixed by
-turning `CombatHudVisibility::Hide()` into `HideActive()`, meant to be
-called every frame while Locked instead of once.
+day over a possible thread-safety concern; the JPEXS decompile later
+confirmed damage numbers specifically can never be reached by a static
+path at all.** Root cause of the original "nothing ever hides" bug was
+correctly diagnosed: a strings dump of `hudmenu.gfx` found `SpawnNewClip`
+right next to `onHitDamageIndicatorAnimationFinish`, meaning these clips
+are created fresh on each hit and destroyed once their animation finishes
+— a one-shot `Hide()` call at Lock time ran before any hit had happened,
+so it always found nothing. Fixed by turning `CombatHudVisibility::Hide()`
+into `HideActive()`, meant to be called every frame while Locked instead
+of once.
+
+**Confirmed via the decompile (`docs/hudmenu-decompiled/`), same session:**
+`HitDamageIndicator.SpawnNewClip()` (`scripts/HitDamageIndicator.as`) does
+`new HitDamageIndicatorClip(); this.addChild(_loc2_);` — **no instance name
+is ever assigned**. AS3 auto-generates an internal name for an unnamed
+`addChild()`, different every single time. **`DamageNumberText_mc` (the
+actual number popup) is therefore permanently unreachable by any static
+`GetVariable` path, full stop** — not a wrong guess, structurally
+impossible, same class of dead-end as the health bar. `HitIndicator_mc`/
+`KillIndicator_mc`/`CritBanner_mc` are different: they're declared as fixed
+`public var` children of `HitKillIndicator` (`scripts/HitKillIndicator.as`)
+— genuinely named, timeline-authored MovieClips, not dynamically spawned —
+so a static path to them isn't structurally ruled out. But
+`HitKillIndicator`'s own instance name/position in HUDMenu's display tree
+doesn't appear anywhere in the decompiled *script* source (it's likely
+timeline-placed in the FLA, which the `Scripts` export doesn't show) — would
+need JPEXS's timeline/frame view specifically to find it, not attempted
+yet. Given the thread-safety concern below applies to this mechanism
+regardless of path-correctness, not an immediate priority.
 
 **That per-frame call site was commented out again the same session**
 (`Overlay.cpp`'s Locked branch — `HideActive()` itself is still
