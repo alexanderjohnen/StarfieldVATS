@@ -16,13 +16,30 @@ namespace VATS
 			"_root.EnemyHealthHolder_mc",
 			"_root.HUDMovieBaseInstance.EnemyHealthHolder_mc",
 		};
-		// Property suffixes tried on each resolved MC path. "" (the bare
-		// clip) first in case it's itself a Number rather than a container;
-		// then plausible AS3 widget-property names; then legacy AS2
-		// display-object properties as a last resort (a bar-fill effect
-		// via _xscale/_width is a known Bethesda HUD technique).
+		// Property suffixes tried on each resolved MC path. Deliberately
+		// does NOT include "" (the bare clip reference itself) - found
+		// 2026-08-24 to be a hard, silent, log-less crash: a bare clip
+		// resolves to a kDisplayObject-typed Value (a live, refcounted
+		// Scaleform object reference), and when that local Value goes out
+		// of scope its destructor calls
+		// Value::ObjectInterface::ObjectRelease - a REL::Relocation call
+		// (ID 169746) this project has never exercised before, and it
+		// crashed the instant it did, with none of the usual "Failed to
+		// find offset for Address Library ID" abort dialog/log line that
+		// TESHitEvent/PlayerIronSightsStartEvent produced (see
+		// commonlibsf-unmapped-ids memory) - a genuinely wild call, not a
+		// clean unmapped-ID abort. Every remaining suffix here names an
+		// actual property (AS3 widget-property guesses, then legacy AS2
+		// display-object properties as a last resort - a bar-fill effect
+		// via _xscale/_width is a known Bethesda HUD technique) and is
+		// expected to resolve to a primitive (Number/Int/UInt/Boolean/
+		// String) if it resolves at all - GetVariable simply returns false
+		// for a path that doesn't exist, which is safe. Do not add "" or
+		// any other suffix that could plausibly resolve to another
+		// clip/object back to this list without a different mechanism for
+		// handling managed Values safely.
 		constexpr const char* kPropertySuffixes[] = {
-			"", ".percent", ".currentPercent", ".healthPercent", ".value",
+			".percent", ".currentPercent", ".healthPercent", ".value",
 			".currentValue", ".currHealth", "._xscale", "._width"
 		};
 
