@@ -109,5 +109,9 @@ namespace VATS
 		// target box replaces it) via CrosshairVisibility.cpp. Best-effort -
 		// see that file for the unconfirmed setting-name search.
 		bool hideCrosshairWhileLocked{ true };
+
+		// Shows the Locked target's current/max health in the HUD box
+		// (HealthReader.cpp). Restored 2026-08-25, see HealthReader.h.
+		bool showTargetHealth{ true };
 	};
 }

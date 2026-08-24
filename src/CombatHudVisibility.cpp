@@ -62,6 +62,23 @@ namespace VATS
 					s_containerPaths.push_back(parent + "." + name);
 				}
 			}
+
+			// Added 2026-08-25: every candidate above uses dot-notation and
+			// still failed to resolve per HANDOFF.md ("none of the
+			// candidate paths resolved"), even the confirmed real name
+			// combined with the confirmed real root and the standard
+			// "_root" alias. Untried alternative: GFx/Scaleform also
+			// supports the older AS1/2 slash-notation target-path syntax
+			// ("/root1/Name" instead of "root1.Name") - a real, distinct
+			// addressing convention, not a blind guess. IsAvailable() is
+			// already proven safe to call on an unresolved path (see
+			// HideActive()'s comment) so widening the search costs
+			// nothing.
+			for (const auto& parent : parents) {
+				for (const char* name : kContainerNames) {
+					s_containerPaths.push_back("/" + parent + "/" + name);
+				}
+			}
 		}
 
 		// (path, wasVisible) pairs actually toggled this Lock, so Restore()

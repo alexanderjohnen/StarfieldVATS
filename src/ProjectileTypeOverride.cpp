@@ -46,11 +46,6 @@ namespace VATS
 		constexpr std::size_t kProjectileData = 0x130;
 		constexpr std::size_t kProjectileDataType = 0x84;
 
-		// The value seen on both confirmed-real-projectile weapons tested
-		// (rocket launcher, Shingen homing mod). Every tested hitscan
-		// weapon read 0x02 instead.
-		constexpr std::uint8_t kRealProjectileTypeValue = 0x00;
-
 		[[nodiscard]] std::uint64_t ResolveEquippedProjectile(RE::Actor* a_actor)
 		{
 			if (!a_actor) {
@@ -165,7 +160,8 @@ namespace VATS
 				return token;
 			}
 			it = s_refCounts.emplace(projectile, std::pair{ 0, currentType }).first;
-			REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}", projectile, currentType, kRealProjectileTypeValue);
+			token.newlyEngaged = true;
+			token.originalType = currentType;
 		}
 
 		++it->second.first;

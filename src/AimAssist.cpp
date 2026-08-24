@@ -163,10 +163,25 @@ namespace VATS
 		// they spawn. The real click is never touched; Starfield's own
 		// fire-rate timer and ballistics/damage/hit-reaction pipeline
 		// still do everything except the round's own trajectory.
-		void SteeringLoop(std::uint64_t a_myGeneration)
+		// a_typeToken is now Engage()'d synchronously in HookProc, before
+		// this thread is even spawned - see that function and
+		// ProjectileTypeOverride.h. Every exit path below that used to
+		// just `return` now must Disengage(a_typeToken) first, since the
+		// write already happened regardless of whether this function ends
+		// up doing anything with it.
+		void SteeringLoop(std::uint64_t a_myGeneration, ProjectileTypeOverride::Token a_typeToken)
 		{
+			if (a_typeToken.newlyEngaged) {
+				// Deferred from HookProc (REX::INFO is blocking file I/O,
+				// unsafe inside a low-level hook - see
+				// ProjectileTypeOverride.h and BackKeyInterceptor.cpp).
+				REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}",
+					a_typeToken.projectile, a_typeToken.originalType, ProjectileTypeOverride::kRealProjectileTypeValue);
+			}
+
 			const auto state = Controller::Get().GetOverlayState();
 			if (state.mode != VATSMode::kLocked || !state.actor) {
+				ProjectileTypeOverride::Disengage(a_typeToken);
 				return;
 			}
 
@@ -204,6 +219,7 @@ namespace VATS
 				// click was never even seen at all" from Alexander's
 				// perspective (see also the s_steering removal below).
 				Controller::Get().RecordShotResult(false);
+				ProjectileTypeOverride::Disengage(a_typeToken);
 				return;
 			}
 			const float chancePercent = ComputeChancePercent(state.actor.get(), initialDist);
@@ -215,6 +231,7 @@ namespace VATS
 			if (chancePercent <= 0.0f) {
 				REX::INFO("[VATS] aim-assist: zero chance (out of range or no LOS), firing unassisted");
 				Controller::Get().RecordShotResult(false);
+				ProjectileTypeOverride::Disengage(a_typeToken);
 				return;
 			}
 
@@ -265,15 +282,13 @@ namespace VATS
 			// stays engaged long enough to matter for it, too).
 			constexpr auto kPostReleaseGrace = std::chrono::milliseconds(250);
 
-			// First actual behavior-changing write in the hitscan
-			// investigation (2026-08-23) - see ProjectileTypeOverride.h.
-			// Engaged for the whole hold (covers every round in an
-			// automatic burst), disengaged the instant the hold ends -
-			// see that header for why the window is kept as tight as
-			// possible (the underlying BGSProjectile is shared, not per-
-			// actor).
-			const auto typeOverride = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
-
+			// a_typeToken was already Engage()'d synchronously in HookProc
+			// (see there and ProjectileTypeOverride.h) - covers the whole
+			// hold same as before, just started right at the real
+			// button-down instead of after this thread got scheduled and
+			// ran everything above. Disengaged the instant the hold ends,
+			// same tight-window rationale as always (the underlying
+			// BGSProjectile is shared, not per-actor).
 			std::unordered_map<std::uint64_t, ProjectileTracker::TrackedState> tracked;
 			const auto                        start = std::chrono::steady_clock::now();
 			std::optional<std::chrono::steady_clock::time_point> releasedAt;
@@ -305,7 +320,7 @@ namespace VATS
 
 				std::this_thread::sleep_for(elapsed < kFastPollWindow ? kFastPollInterval : kSlowPollInterval);
 			}
-			ProjectileTypeOverride::Disengage(typeOverride);
+			ProjectileTypeOverride::Disengage(a_typeToken);
 			REX::INFO("[VATS] aim-assist: hold ended");
 		}
 
@@ -335,8 +350,26 @@ namespace VATS
 							// the release - no roll, no HUD feedback, no
 							// redirect attempt at all for that click.
 							if (GameWindowHasFocus() && Controller::Get().GetMode() == VATSMode::kLocked) {
-								std::thread([myGeneration]() {
-									SteeringLoop(myGeneration);
+								// Engage the type-override HERE, synchronously,
+								// before spawning the thread - closes the race
+								// window a fast/semi-auto/scoped shot exposed
+								// (Alexander 2026-08-25: shots going "perfectly
+								// straight, as if never touched" while logged
+								// as HIT/redirected). Theory: Starfield's own
+								// native hitscan resolution can finish before a
+								// freshly-spawned std::thread even gets
+								// scheduled, so the type flip landed too late
+								// to affect that shot at all - see HANDOFF.md.
+								// Only SafeRead/SafeWrite + a short mutex lock
+								// happen here (no REX::INFO - see
+								// ProjectileTypeOverride.h/BackKeyInterceptor.cpp
+								// for why that's unsafe inside a low-level
+								// hook), same class of cheap, non-blocking work
+								// this hook already does via GameWindowHasFocus
+								// and Controller::Get().GetMode().
+								auto typeToken = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
+								std::thread([myGeneration, typeToken]() {
+									SteeringLoop(myGeneration, typeToken);
 								}).detach();
 							}
 						} else {
