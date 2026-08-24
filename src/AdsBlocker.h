@@ -2,44 +2,48 @@
 
 namespace VATS
 {
-	// Forces the player out of aim-down-sights while VATS is Locked -
-	// reacts to RE::PlayerControls::PlayerIronSightsStartEvent, Bethesda's
-	// own native "the player just started ADS" event (RE/E/Events.h),
-	// rather than polling camera state (RE::CameraState::kIronSights never
-	// actually triggered during a real ADS - confirmed empirically
-	// 2026-08-23, an earlier version of this file polled for it) or
-	// swallowing the button at the OS input level (confirmed not to stop
-	// the engine's own reaction either, same class of problem
-	// EngineInputLayer.h documents for the Tab-key interceptor). On the
-	// event, both forces the camera back to first-person AND sends a
-	// synthetic release of Settings::adsReleaseKeyVK (the same SendInput
-	// technique VATSController.cpp's scanner-close logic already uses
-	// successfully - a synthetic release goes through the normal OS input
-	// pipeline and is indistinguishable from a real one, unlike suppressing
-	// an event, which prior attempts found doesn't reliably stop
-	// Starfield's own reaction).
+	// Ends an active VATS lock the instant the player manually starts
+	// aiming down sights, instead of continuing to fight the engine over
+	// *blocking* ADS itself. Four separate blocking approaches were tried
+	// and abandoned (see git history / HANDOFF.md for the full trail):
+	// an OS-level input swallow (detected the press fine, had zero effect
+	// on the engine's own reaction), RE::PlayerCamera camera-state polling
+	// (kIronSights never actually triggered during a real ADS),
+	// RE::PlayerControls::PlayerIronSightsStartEvent registration (crashed
+	// outright - "REL/IDDB.cpp(417): Failed to find offset for Address
+	// Library ID! Invalid ID: 0", one of GetEventSource/RegisterSink isn't
+	// mapped for 1.16.244.0), and USER_EVENT_FLAG::Fighting (blocked ADS by
+	// holstering the weapon entirely - way too broad). Alexander's own
+	// suggestion 2026-08-24: stop trying to block ADS and just drop the
+	// lock instead - much simpler, and sidesteps every failure mode above.
 	//
-	// This is the first BSTEventSource<T>::RegisterSink call in this
-	// project since RE::TESHitEvent's crashed on an unmapped Address
-	// Library ID (see HitEventLogger.h, currently disabled for exactly that
-	// reason) - a real "the game might not even launch" risk, not the
-	// "safe on a miss" guarantee every other ADS experiment had. Tried
-	// anyway (Alexander's call, 2026-08-23): PlayerIronSightsStartEvent/
-	// EndEvent are far more commonly used by other aim-related mods than
-	// the more exotic hit-event system, so more likely to be mapped - but
-	// not guaranteed. If the game fails to launch or crashes immediately
-	// after this deploys, comment out the Start() call in main.cpp the same
-	// way HitEventLogger::Start() already is.
+	// Detection reuses the one piece of the old approach that WAS proven to
+	// work: a WH_MOUSE_LL low-level mouse hook reliably sees the real
+	// button-down (the OS-swallow attempt's log confirmed the hook fired
+	// correctly every time - the only failure was that swallowing the
+	// input had no effect on Starfield's own reaction to it). Reacting
+	// with Controller::ForceOff() instead of trying to swallow/redirect the
+	// input sidesteps that whole class of problem: ForceOff() only ever
+	// touches this mod's own atomics/mutex-guarded state (no engine calls
+	// beyond the same CrosshairVisibility/CombatHudVisibility restore every
+	// other unlock path already does), and is documented safe to call from
+	// any thread - BackKeyInterceptor.cpp already calls it the same way,
+	// from its own background hook thread.
 	//
-	// Known gap: only fires for actual iron-sights weapons. Alexander
-	// pointed out the Cutter uses a "focus mode" instead when its ADS
-	// button is held (different crosshair, stronger beam, no real
-	// zoom/iron-sights) - unclear whether this event fires for that case
-	// too or is specific to real ADS; needs in-game confirmation with a
-	// Cutter equipped.
+	// Only mouse buttons are recognized (Settings::adsButtonVK -
+	// VK_RBUTTON/VK_MBUTTON/VK_XBUTTON1/VK_XBUTTON2), same limitation the
+	// old adsReleaseKeyVK setting already had - must match Alexander's
+	// actual ADS keybind by hand, no way to read it from the game's own
+	// settings.
 	class AdsBlocker
 	{
 	public:
 		static void Start();
+		static void Stop();
+
+	private:
+		static void ThreadProc(const std::stop_token& a_stop);
+
+		static inline std::jthread m_thread;
 	};
 }

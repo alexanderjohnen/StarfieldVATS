@@ -91,16 +91,19 @@ namespace VATS
 
 		// --- HUD extras (added alongside the hitscan-redirect work) ---
 
-		// Blocks manual aim-down-sights while Locked (AdsBlocker.cpp), via
-		// RE::PlayerControls::PlayerIronSightsStartEvent - see that file.
-		bool blockAdsWhileLocked{ true };
+		// Ends an active VATS lock the instant the player manually presses
+		// the ADS button (AdsBlocker.cpp) - replaces an earlier attempt to
+		// block ADS outright (four approaches tried, all failed or were
+		// too broad, see AdsBlocker.h for the full trail). Alexander's own
+		// suggestion 2026-08-24.
+		bool endLockOnAds{ true };
 
-		// Which physical button to send a synthetic release for when ADS
-		// starts while Locked (AdsBlocker.cpp) - must match Alexander's
-		// actual ADS keybind by hand, same caveat as scannerToggleKeyVK
-		// above. Only VK_RBUTTON/VK_MBUTTON/VK_XBUTTON1/VK_XBUTTON2 are
-		// meaningful (mouse buttons only).
-		std::uint32_t adsReleaseKeyVK{ 0x02 };  // VK_RBUTTON
+		// Which physical button counts as "ADS" for the setting above
+		// (AdsBlocker.cpp) - must match Alexander's actual ADS keybind by
+		// hand, same caveat as scannerToggleKeyVK above. Only
+		// VK_RBUTTON/VK_MBUTTON/VK_XBUTTON1/VK_XBUTTON2 are meaningful
+		// (mouse buttons only).
+		std::uint32_t adsButtonVK{ 0x02 };  // VK_RBUTTON
 
 		// Hides Starfield's native crosshair while Locked (our own HUD
 		// target box replaces it) via CrosshairVisibility.cpp. Best-effort -

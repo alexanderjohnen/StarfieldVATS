@@ -3,6 +3,9 @@
 #include "Settings.h"
 #include "VATSController.h"
 
+#include <chrono>
+#include <thread>
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -12,80 +15,91 @@ namespace VATS
 {
 	namespace
 	{
-		// Real key-up simulation (SendInput) - same proven technique
-		// VATSController.cpp's scanner-close logic already uses
-		// successfully. Mouse buttons only, matching what
-		// Settings::adsReleaseKeyVK is documented to accept.
-		void SendButtonUp(std::uint32_t a_vk)
+		HHOOK s_hook = nullptr;
+
+		// Matches a WM_*BUTTONDOWN message against Settings::adsButtonVK.
+		// XBUTTON1/2 share one message (WM_XBUTTONDOWN) and are told apart
+		// via the high word of MSLLHOOKSTRUCT::mouseData, same as regular
+		// Win32 XBUTTON handling.
+		[[nodiscard]] bool MatchesConfiguredButton(WPARAM a_msg, const MSLLHOOKSTRUCT* a_info, std::uint32_t a_vk)
 		{
-			INPUT up{};
-			up.type = INPUT_MOUSE;
 			switch (a_vk) {
 			case VK_RBUTTON:
-				up.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
-				break;
+				return a_msg == WM_RBUTTONDOWN;
 			case VK_MBUTTON:
-				up.mi.dwFlags = MOUSEEVENTF_MIDDLEUP;
-				break;
+				return a_msg == WM_MBUTTONDOWN;
 			case VK_XBUTTON1:
-				up.mi.dwFlags = MOUSEEVENTF_XUP;
-				up.mi.mouseData = XBUTTON1;
-				break;
+				return a_msg == WM_XBUTTONDOWN && HIWORD(a_info->mouseData) == XBUTTON1;
 			case VK_XBUTTON2:
-				up.mi.dwFlags = MOUSEEVENTF_XUP;
-				up.mi.mouseData = XBUTTON2;
-				break;
+				return a_msg == WM_XBUTTONDOWN && HIWORD(a_info->mouseData) == XBUTTON2;
 			default:
-				return;
+				return false;
 			}
-			::SendInput(1, &up, sizeof(INPUT));
 		}
 
-		class StartSink : public RE::BSTEventSink<RE::PlayerControls::PlayerIronSightsStartEvent>
+		// Runs on AdsBlocker's own thread (the thread that installed the
+		// hook, per Windows' contract for low-level hooks) - never the game
+		// thread or render thread. Only ever reacts to a real (non-
+		// injected) press of the configured ADS button while a lock is
+		// active; every other message passes straight through via
+		// CallNextHookEx untouched, and the button itself is never
+		// swallowed - Starfield sees the real ADS press just like it always
+		// did, we just drop our own lock alongside it.
+		LRESULT CALLBACK HookProc(int a_code, WPARAM a_wParam, LPARAM a_lParam)
 		{
-		public:
-			RE::BSEventNotifyControl ProcessEvent(const RE::PlayerControls::PlayerIronSightsStartEvent&, RE::BSTEventSource<RE::PlayerControls::PlayerIronSightsStartEvent>*) override
-			{
-				if (!Settings::Get().blockAdsWhileLocked || Controller::Get().GetMode() != VATSMode::kLocked) {
-					return RE::BSEventNotifyControl::kContinue;
+			if (a_code == HC_ACTION) {
+				const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(a_lParam);
+				const bool  injected = (info->flags & LLMHF_INJECTED) != 0;
+				if (!injected && Settings::Get().endLockOnAds &&
+					Controller::Get().GetMode() == VATSMode::kLocked &&
+					MatchesConfiguredButton(a_wParam, info, Settings::Get().adsButtonVK)) {
+					REX::INFO("[VATS] ADS button pressed while Locked, ending lock");
+					Controller::Get().ForceOff();
 				}
-				REX::INFO("[VATS] ADS: PlayerIronSightsStartEvent while Locked, forcing camera back + synthetic release");
-				if (auto* camera = RE::PlayerCamera::GetSingleton()) {
-					camera->SetCameraState(RE::CameraState::kFirstPerson);
-				}
-				SendButtonUp(Settings::Get().adsReleaseKeyVK);
-				return RE::BSEventNotifyControl::kContinue;
 			}
-		};
+			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
+		}
+	}
 
-		class EndSink : public RE::BSTEventSink<RE::PlayerControls::PlayerIronSightsEndEvent>
-		{
-		public:
-			RE::BSEventNotifyControl ProcessEvent(const RE::PlayerControls::PlayerIronSightsEndEvent&, RE::BSTEventSource<RE::PlayerControls::PlayerIronSightsEndEvent>*) override
-			{
-				// Logged unconditionally (not gated on Locked) purely as
-				// confirmation the event pair fires at all and roughly when -
-				// useful ground truth for the Cutter-focus-mode question in
-				// AdsBlocker.h's header comment. Remove once that's settled.
-				REX::INFO("[VATS] ADS: PlayerIronSightsEndEvent");
-				return RE::BSEventNotifyControl::kContinue;
+	void AdsBlocker::ThreadProc(const std::stop_token& a_stop)
+	{
+		s_hook = ::SetWindowsHookExW(WH_MOUSE_LL, HookProc, nullptr, 0);
+		if (!s_hook) {
+			REX::ERROR("failed to install ADS-watch mouse hook, GetLastError={}", ::GetLastError());
+			return;
+		}
+		REX::INFO("[VATS] ADS watcher started (ends lock on button 0x{:X})", Settings::Get().adsButtonVK);
+
+		// A low-level hook only fires while its installing thread pumps
+		// messages. PeekMessage (not blocking GetMessage) so the loop can
+		// still check the stop token for clean shutdown, same polling-loop
+		// shape as BackKeyInterceptor/AimAssist.
+		while (!a_stop.stop_requested()) {
+			MSG msg;
+			while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+				::TranslateMessage(&msg);
+				::DispatchMessageW(&msg);
 			}
-		};
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
 
-		StartSink s_startSink;
-		EndSink   s_endSink;
+		::UnhookWindowsHookEx(s_hook);
+		s_hook = nullptr;
 	}
 
 	void AdsBlocker::Start()
 	{
-		auto* startSource = RE::PlayerControls::PlayerIronSightsStartEvent::GetEventSource();
-		auto* endSource = RE::PlayerControls::PlayerIronSightsEndEvent::GetEventSource();
-		if (!startSource || !endSource) {
-			REX::WARN("[VATS] ADS blocker: GetEventSource() returned null, not registered");
+		if (m_thread.joinable()) {
 			return;
 		}
-		startSource->RegisterSink(&s_startSink);
-		endSource->RegisterSink(&s_endSink);
-		REX::INFO("[VATS] ADS blocker registered (PlayerIronSightsStartEvent/EndEvent)");
+		m_thread = std::jthread(&AdsBlocker::ThreadProc);
+	}
+
+	void AdsBlocker::Stop()
+	{
+		if (m_thread.joinable()) {
+			m_thread.request_stop();
+			m_thread.join();
+		}
 	}
 }
