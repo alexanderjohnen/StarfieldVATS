@@ -5,7 +5,7 @@ point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**Updated 2026-08-24 (five rounds today)**: ADS is no longer a stuck
+**Updated 2026-08-24 (six rounds today)**: ADS is no longer a stuck
 problem — see "ADS handling" below. The health bar's Scaleform-widget-probe
 attempt caused two severe failures in a row — a hard crash, then a
 whole-PC freeze — and has been **retired**, see "Health bar" below. Combat-
@@ -17,11 +17,42 @@ paused: Alexander exported `hudmenu.gfx`'s decompiled ActionScript via
 JPEXS to `docs/hudmenu-decompiled/`, and `EnemyHealthMeter.as` proves the
 health percentage was never reachable via any `GetVariable` path at all —
 it only ever arrives as a transient native→AS3 push-event parameter (see
-"Health bar" below for the full trail). **Net result of today's HUD work:
-ADS handling improved, health bar and hit-marker hiding are both back to
-not-working (same as before today), but no known-crashy code is left
-enabled, and the health-bar dead-end is now proven rather than suspected.**
-Everything else in this file is otherwise unchanged from 2026-08-23.
+"Health bar" below for the full trail). **Damage numbers ARE now
+successfully hidden**, via a completely different, much safer idea from
+Alexander: Starfield has its own real Interface > "Show Damage Numbers"
+toggle — flipping that setting (like `CrosshairVisibility` already does
+for the crosshair) sidesteps the whole unreachable-Scaleform-clip problem
+entirely. See `src/DamageNumbersVisibility.h/cpp`. **Net result of today's
+HUD work: ADS handling improved, damage numbers now genuinely hidden,
+health bar and hit-*marker* hiding (not numbers) are still not-working
+(same as before today), no known-crashy code is left enabled, and the
+health-bar dead-end is now proven rather than suspected.** Everything else
+in this file is otherwise unchanged from 2026-08-23.
+
+**A promising new idea for the health bar, raised by Alexander, not yet
+implemented**: instead of reading health data ourselves, make Starfield's
+*own* native enemy health bar show up on the VATS-Locked target by writing
+to `RE::Actor::currentCombatTarget` (`Actor.h`, offset 0x298 - a plain
+`TESPointerHandle`, right after the already-offset-verified `avStorage`
+block, no REL::ID function call needed to just read/write the raw field).
+This is exactly the kind of low-risk plain-data-write this project prefers
+over engine calls. Two things need empirical confirmation before writing
+anything: (1) whether this field is actually what feeds
+`EnemyHealthMeter.as`'s `uTargetUnderCrosshairID` at all (unconfirmed -
+could easily be a different, AI-specific field that just happens to share
+a name pattern), and (2) how to resolve/compare a `TESPointerHandle`
+*without* going through `BSPointerHandleManagerInterface::GetSmartPointer`
+- already a **confirmed crash** in this exact project (see
+`commonlibsf-unmapped-ids` memory, item 2). Newer Bethesda engines
+(FO4/Starfield) are commonly understood to use the raw FormID as the
+handle value for persistent-form references, which if true here would let
+us skip `GetSmartPointer` entirely (plain formID comparison, no handle
+resolution call at all) - unconfirmed for 1.16.244, needs testing. **Next
+step, not started**: a read-only, SafeRead-guarded diagnostic probe
+logging `PlayerCharacter`'s `currentCombatTarget` on change, correlated
+against when the vanilla health bar visibly appears in a real ADS test -
+same "probe first, trust only after in-game confirmation" methodology as
+everything else in this project.
 
 **This supersedes the previous version of this file from 2026-08-23 evening.**
 That version covered the hitscan/real-projectile breakthrough (still true, see
