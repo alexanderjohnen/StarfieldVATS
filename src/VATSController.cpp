@@ -2,6 +2,7 @@
 
 #include "CombatHudVisibility.h"
 #include "CrosshairVisibility.h"
+#include "DamageNumbersVisibility.h"
 #include "EngineInputLayer.h"
 #include "Settings.h"
 #include "Targeting.h"
@@ -162,6 +163,7 @@ namespace VATS
 		EngineInputLayer::SetBlocked(false);
 		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
+		DamageNumbersVisibility::Restore();
 		CombatHudVisibility::Restore();
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
@@ -254,6 +256,12 @@ namespace VATS
 
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
+				// DamageNumbersVisibility (2026-08-24) - toggles Starfield's
+				// own Interface > "Show Damage Numbers" setting instead of
+				// fighting Scaleform for the individual popups (which are
+				// unreachable anyway, see CombatHudVisibility.h) - same
+				// safe one-shot mechanism as CrosshairVisibility above.
+				DamageNumbersVisibility::Hide();
 				// CombatHudVisibility::HideActive() is NOT called here
 				// (unlike CrosshairVisibility::Hide() above) - 2026-08-24,
 				// see CombatHudVisibility.h: hit marker/damage number clips
@@ -320,6 +328,7 @@ namespace VATS
 		EngineInputLayer::SetBlocked(false);
 		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
+		DamageNumbersVisibility::Restore();
 		CombatHudVisibility::Restore();
 		REX::INFO("[VATS] OFF");
 		if (console) {
