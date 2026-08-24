@@ -126,6 +126,21 @@ avStorage-based hypotheses were tried and disproven in the prior session
    still contains this known-broken read as the last-resort fallback (see
    below) — not the primary path anymore.
 
+**Crash fix, same day**: the first deployed version of this probe hard-
+crashed the game on the very first Lock, with no crash log at all. Root
+cause: the probe's `""` (bare clip) suffix returned a `kDisplayObject`-typed
+`Value` - a live, refcounted Scaleform object handle - and letting that
+local `Value` go out of scope invoked `Value::ObjectInterface::
+ObjectRelease` (`REL::ID` 169746), never exercised anywhere in this project
+before. Fixed by removing the `""` suffix entirely - every remaining
+candidate now names an actual property, expected to resolve to a primitive
+or fail cleanly. See `commonlibsf-unmapped-ids` memory for the write-up (a
+5th confirmed instance of the "relocated function call = risk" pattern,
+this time hidden inside a `Value`'s own destructor rather than an obviously-
+a-function-call site). Rebuilt/redeployed same session; **still needs a
+fresh in-game confirmation that Locking no longer crashes** before trusting
+anything else below.
+
 **2026-08-24 second attempt: `src/HealthWidgetReader.h/cpp`, wired into
 `Overlay.cpp` ahead of the old `HealthReader::GetActorHealth` fallback.**
 Reads HONKCORE's `EnemyHealthMeter_mc` widget (the lead from the previous
