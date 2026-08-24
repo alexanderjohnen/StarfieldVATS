@@ -145,11 +145,8 @@ namespace VATS
 		// this function ends up doing.
 		void SteeringLoop(std::uint64_t a_myGeneration)
 		{
-			const auto typeToken = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
-
 			const auto state = Controller::Get().GetOverlayState();
 			if (state.mode != VATSMode::kLocked || !state.actor) {
-				ProjectileTypeOverride::Disengage(typeToken);
 				return;
 			}
 
@@ -187,7 +184,6 @@ namespace VATS
 				// click was never even seen at all" from Alexander's
 				// perspective (see also the s_steering removal below).
 				Controller::Get().RecordShotResult(false);
-				ProjectileTypeOverride::Disengage(typeToken);
 				return;
 			}
 
@@ -238,12 +234,12 @@ namespace VATS
 			// stays engaged long enough to matter for it, too).
 			constexpr auto kPostReleaseGrace = std::chrono::milliseconds(250);
 
-			// typeToken was already Engage()'d at the top of this function
-			// (see the function's opening comment for why it's no longer
-			// done in HookProc). Covers the whole hold same as before,
-			// disengaged the instant it ends, same tight-window rationale
-			// as always (the underlying
-			// BGSProjectile is shared, not per-actor).
+			// The hitscan->real-projectile flip is NOT this function's job
+			// any more (2026-08-25): Controller engages it once when the
+			// lock starts and releases it when the lock ends, so it is
+			// already active long before the trigger is ever pulled. See
+			// VATSController.h for why - doing it per hold meant every
+			// single trigger pull raced the round leaving the barrel.
 			std::unordered_map<std::uint64_t, ProjectileTracker::TrackedState> tracked;
 			const auto                        start = std::chrono::steady_clock::now();
 			std::optional<std::chrono::steady_clock::time_point> releasedAt;
@@ -275,7 +271,6 @@ namespace VATS
 
 				std::this_thread::sleep_for(elapsed < kFastPollWindow ? kFastPollInterval : kSlowPollInterval);
 			}
-			ProjectileTypeOverride::Disengage(typeToken);
 			REX::INFO("[VATS] aim-assist: hold ended");
 		}
 

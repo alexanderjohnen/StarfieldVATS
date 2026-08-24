@@ -167,6 +167,11 @@ namespace VATS
 		DamageNumbersVisibility::Restore();
 		CombatTargetOverride::Disengage();
 		CombatHudVisibility::Restore();
+		{
+			const std::scoped_lock overrideLock(m_projectileOverrideLock);
+			ProjectileTypeOverride::Disengage(m_projectileOverride);
+			m_projectileOverride = {};
+		}
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
 		// been touched from the game thread so far in this project. File
@@ -263,6 +268,17 @@ namespace VATS
 			// actual purpose.
 			CombatTargetOverride::Engage(lockTarget.get());
 
+			// Flip the equipped weapon hitscan->real-projectile (and apply
+			// the reduced projectile speed) for the WHOLE lock, not per
+			// trigger-hold - see VATSController.h for why. Done here, at
+			// lock time, so it is finished long before the player can pull
+			// the trigger; SteeringLoop no longer engages anything itself.
+			{
+				const std::scoped_lock overrideLock(m_projectileOverrideLock);
+				ProjectileTypeOverride::Disengage(m_projectileOverride);  // no-op unless a stale one somehow survived
+				m_projectileOverride = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
+			}
+
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
 				// DamageNumbersVisibility (2026-08-24) - toggles Starfield's
@@ -343,6 +359,11 @@ namespace VATS
 		DamageNumbersVisibility::Restore();
 		CombatTargetOverride::Disengage();
 		CombatHudVisibility::Restore();
+		{
+			const std::scoped_lock overrideLock(m_projectileOverrideLock);
+			ProjectileTypeOverride::Disengage(m_projectileOverride);
+			m_projectileOverride = {};
+		}
 		REX::INFO("[VATS] OFF");
 		if (console) {
 			console->Log("[VATS] OFF");

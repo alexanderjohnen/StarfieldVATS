@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ProjectileTypeOverride.h"
+
 #include <chrono>
 #include <mutex>
 
@@ -78,5 +80,22 @@ namespace VATS
 
 		std::atomic<bool>        m_shotHit{ false };
 		std::atomic<std::int64_t> m_shotTimestamp{ 0 };  // steady_clock ticks; 0 = no shot recorded yet
+
+		// Hitscan->real-projectile (and speed) override, held for the whole
+		// duration of a lock (2026-08-25, Alexander's call). Previously
+		// engaged/disengaged per trigger-hold from AimAssist's SteeringLoop,
+		// which meant every single trigger pull raced the engine: the round
+		// could leave the barrel before the flip landed, staying a real
+		// hitscan with no projectile to redirect at all. That race is the
+		// best explanation the project has for why automatic weapons always
+		// behaved better than semi-auto ones - only the first round of a
+		// burst can lose that race, while for single shots EVERY round is a
+		// first round. Engaging once at lock time removes the race outright:
+		// by the time the player can fire, the flip is long since done.
+		// Guarded by m_projectileOverrideLock rather than m_targetLock -
+		// ForceOff() can run from the render thread while a SteeringLoop
+		// tick is mid-flight elsewhere.
+		std::mutex                      m_projectileOverrideLock;
+		ProjectileTypeOverride::Token   m_projectileOverride;
 	};
 }
