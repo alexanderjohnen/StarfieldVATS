@@ -36,6 +36,26 @@ namespace VATS::GameOffsets
 	// wiring into Targeting.cpp.
 	inline constexpr std::size_t kPlayerCommandTarget = 0x0F90;
 
+	// UNVERIFIED — candidate native field for "who Starfield's own combat/
+	// HUD systems currently consider the actor's target" (2026-08-24,
+	// Alexander's idea): if this drives EnemyHealthMeter.as's
+	// uTargetUnderCrosshairID (confirmed via the JPEXS decompile to be the
+	// key the native health-bar widget matches against — see
+	// docs/hudmenu-decompiled/scripts/EnemyHealthMeter.as), writing to it
+	// while VATS is Locked could make Starfield's own native enemy health
+	// bar show up on our target for free — no Scaleform involved at all. A
+	// proper named field in CommonLibSF's Actor.h (not a raw hex guess like
+	// kPlayerCommandTarget above), but the field existing doesn't mean the
+	// theory is right — read-only probe first (Overlay.cpp), confirm
+	// against a real ADS test before ever writing to it. Resolving the
+	// TESPointerHandle via BSPointerHandleManagerInterface::GetSmartPointer
+	// is a CONFIRMED CRASH in this exact project (commonlibsf-unmapped-ids
+	// memory) — do not call it. Compare the raw value directly against a
+	// known actor's GetFormID() instead (FO4/Starfield-era handles are
+	// commonly understood to just be the FormID for persistent-form
+	// references — unconfirmed for 1.16.244, that's what the probe is for).
+	inline constexpr auto kCurrentCombatTarget = offsetof(RE::Actor, currentCombatTarget);
+
 	// Single aim point, world units above an actor's ref-origin (feet) —
 	// roughly chest height. The Suit/Helmet/Pack body-part system (and the
 	// `data.angle`-based "behind the spine" pack offset it needed) was

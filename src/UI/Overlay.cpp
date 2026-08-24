@@ -559,6 +559,33 @@ namespace VATS::UI
 			}
 		}
 
+		// Diagnostic probe (2026-08-24, Alexander's health-bar idea) —
+		// read-only, SafeRead-guarded, logs only on change. Runs regardless
+		// of VATS mode so it can be tested in plain vanilla aiming, no lock
+		// needed. Correlate the raw value against when Starfield's own
+		// native enemy health bar visibly appears (real ADS on a hostile)
+		// to test whether GameOffsets::kCurrentCombatTarget is really the
+		// field EnemyHealthMeter.as's uTargetUnderCrosshairID comes from —
+		// see GameOffsets.h for the full theory. Deliberately does NOT call
+		// BSPointerHandleManagerInterface::GetSmartPointer to resolve the
+		// handle (confirmed crash in this project) - just logs the raw
+		// value next to known formIDs (crosshair pick, VATS-locked target)
+		// so a match can be eyeballed directly in the log.
+		{
+			static std::uint32_t s_lastLoggedCombatTarget = 0;
+			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+				std::uint32_t raw = 0;
+				if (SafeRead(reinterpret_cast<const std::byte*>(player) + GameOffsets::kCurrentCombatTarget, &raw, sizeof(raw)) &&
+					raw != s_lastLoggedCombatTarget) {
+					s_lastLoggedCombatTarget = raw;
+					const std::uint32_t crosshairFormID = s_cachedPick ? s_cachedPick->GetFormID() : 0;
+					const std::uint32_t lockedFormID = state.actor ? state.actor->GetFormID() : 0;
+					REX::INFO("[VATS] probe: currentCombatTarget=0x{:08X} (crosshairPick formID=0x{:08X}, VATS-locked formID=0x{:08X})",
+						raw, crosshairFormID, lockedFormID);
+				}
+			}
+		}
+
 		if (state.mode == VATSMode::kOff) {
 			LogIfChanged(DrawOutcome::kOff, 0, "off");
 			return;
