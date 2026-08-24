@@ -45,47 +45,16 @@ namespace VATS
 	class ProjectileTypeOverride
 	{
 	public:
-		// The value Engage() force-writes on a newly-engaged projectile -
-		// exposed so a caller logging Token::newlyEngaged elsewhere (e.g.
-		// AimAssist.cpp's SteeringLoop) doesn't need to hardcode it.
-		static constexpr std::uint8_t kRealProjectileTypeValue = 0x00;
-
 		struct Token
 		{
 			std::uint64_t projectile = 0;
 			bool          active = false;
-
-			// Set only when this Engage() call was the one that actually
-			// flipped the type byte (first Engage for this projectile) -
-			// not set for a call that only bumped an existing refcount, or
-			// one that found nothing to do (already-real projectile,
-			// resolve failure). Engage() itself does no logging (see
-			// below) so a caller running somewhere logging isn't safe -
-			// e.g. AimAssist.cpp's low-level mouse hook, see
-			// BackKeyInterceptor.cpp for why - can defer the "engaged"
-			// log line using these two fields once it's back on a normal
-			// thread.
-			bool          newlyEngaged = false;
-			std::uint8_t  originalType = 0;
 		};
 
 		// Call once at the start of a held trigger (before the burst's
 		// first shot). Returns an inactive Token if nothing needed
 		// changing (weapon already real, chain didn't resolve, etc.) -
 		// always safe to pass the result to Disengage regardless.
-		//
-		// Deliberately does no logging (restored 2026-08-25) - this is now
-		// called synchronously from AimAssist.cpp's WM_LBUTTONDOWN hook
-		// callback, before the SteeringLoop thread is even spawned, to
-		// close a race where a fast/semi-auto shot's native hitscan
-		// resolves before a freshly-spawned thread gets scheduled (see
-		// HANDOFF.md's timing theory). Only SafeRead/SafeWrite + a mutex
-		// lock happen here - cheap, non-blocking, same class of operation
-		// BackKeyInterceptor.cpp already treats as hook-safe. REX::INFO
-		// does blocking file I/O and must never run inside a low-level
-		// hook (BackKeyInterceptor.cpp hit this once already) - use
-		// Token::newlyEngaged/originalType to log from SteeringLoop's own
-		// thread instead.
 		static Token Engage(RE::Actor* a_actor);
 
 		// Call once when the hold ends, with the Token Engage returned.
