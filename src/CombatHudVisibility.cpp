@@ -7,15 +7,16 @@ namespace VATS
 {
 	namespace
 	{
-		// Candidate instance names for the HitKillIndicator container itself
-		// (scripts/HitKillIndicator.as in docs/hudmenu-decompiled/ - a
-		// persistent, timeline-placed object per the decompile, NOT
-		// dynamically spawned like the damage-number popups, so a one-shot
-		// find-and-hide should work if one of these guesses is right).
-		// Real instance name/nesting is unconfirmed - only the class name
-		// and its public children are known from the decompiled script,
-		// not where the FLA timeline actually places it.
+		// Instance name for the HitKillIndicator container (class
+		// HitKillIndicator, see scripts/HitKillIndicator.as in
+		// docs/hudmenu-decompiled/), CONFIRMED 2026-08-24 by Alexander
+		// directly in JPEXS's timeline view (hudmenu.gfx, frame 1's display
+		// list): `PlaceObject2 (chid: 275, dpt: 127, nm:
+		// "HitAndKillIndicator_mc")` - placed directly on the main
+		// timeline, no nesting. Old guesses kept as harmless fallbacks only
+		// (never resolved, but a miss costs nothing).
 		constexpr const char* kContainerNames[] = {
+			"HitAndKillIndicator_mc",  // confirmed real name
 			"HitKillIndicator_mc",
 			"HitKillIndicator",
 		};
