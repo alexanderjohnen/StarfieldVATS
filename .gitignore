@@ -12,3 +12,12 @@ vs*/
 # files
 *.zip
 compile_commands.json
+
+# Decompiled Starfield UI assets (JPEXS output from hudmenu.gfx). Kept
+# locally as a working reference, deliberately never committed: it is
+# Bethesda's copyrighted content, not ours to redistribute under this
+# repository's licence. Everything actually learned from it is written
+# up in docs/FINDINGS.md and in the relevant source comments, so nothing
+# here is needed to build or understand the mod. Regenerate it with
+# JPEXS from your own game files if you need to look something up.
+docs/hudmenu-decompiled/
