@@ -76,28 +76,155 @@ namespace VATS
 
 		constexpr std::uint32_t kShooterIsPlayer = 1;
 
-		// Only ever touch a projectile within this age window: old enough
-		// that its velocity is already the real post-launch value (not a
-		// same-frame default of zero), young enough that it's almost
-		// certainly the round just fired rather than an earlier one still
-		// in flight from a previous tick of this same held burst.
+		// Only ever *pick up* a projectile within this age window: old
+		// enough that its velocity is already the real post-launch value
+		// (not a same-frame default of zero), young enough that it's
+		// almost certainly the round just fired rather than an earlier one
+		// still in flight from a previous tick of this same held burst.
+		// Once picked up, a round is homed continuously regardless of age
+		// (see kMaxHomingDuration) - this window only gates which rounds
+		// get picked up as fresh in the first place.
 		constexpr float kMaxRedirectAgeSeconds = 0.15f;
 
+		// Safety net for continuous homing (2026-08-24) - stop re-aiming a
+		// tracked round after this long regardless of what it's doing, so a
+		// round whose reference somehow never fails to read (e.g. despawn
+		// detection missed it) doesn't get homed forever. Generous relative
+		// to every hold/redirect duration seen in testing so far (real
+		// flights resolve well under a second at speed 1000).
+		constexpr std::chrono::milliseconds kMaxHomingDuration{ 1500 };
+
 		// World-unit jitter applied to the redirect target on a rolled
-		// miss, so a shot that already had good real aim still visibly
-		// misses instead of hitting despite the roll — mirrors the old
+		// miss, chosen once per round (see TrackedState::missOffset) so a
+		// continuously-homed miss stays one consistent near-miss instead of
+		// jittering to a new random point every tick. Mirrors the old
 		// mouse-steering miss offset, applied to the redirect target
-		// instead of the crosshair. Eyeballed, same spirit/precision as
-		// the removed body-part offsets; tune in-game.
+		// instead of the crosshair. Eyeballed, same spirit/precision as the
+		// removed body-part offsets; tune in-game.
 		constexpr float kMissOffsetWorld = 0.7f;
+
+		// Target's chest-height aim point plus this round's own fixed
+		// miss-offset (zero on a hit) - recomputed from the target's
+		// CURRENT position every call, which is what lets continuous
+		// homing correct for target movement, not just our own earlier aim
+		// error.
+		[[nodiscard]] RE::NiPoint3 ResolveAimPoint(const RE::NiPoint3& a_targetPos, const RE::NiPoint3& a_missOffset)
+		{
+			RE::NiPoint3 out = a_targetPos;
+			out.z += GameOffsets::kAimPointChestZ;
+			out.x += a_missOffset.x;
+			out.y += a_missOffset.y;
+			out.z += a_missOffset.z;
+			return out;
+		}
+
+		// Re-aims one already-tracked (or brand new) projectile toward
+		// a_aimPoint. Deliberately does NOT log - called on every homing
+		// tick for every tracked round, so logging here would reintroduce
+		// the same per-frame log-spam problem this project hit and backed
+		// out of earlier tonight (see CombatTargetOverride.h). Callers log
+		// once at pickup instead.
+		//
+		// Returns false if this entry should be dropped from tracking
+		// (unreadable/despawned, or degenerate - already at the aim
+		// point); true otherwise, including the harmless "too early, its
+		// velocity isn't assigned yet" case (kept tracked, retried next
+		// tick).
+		[[nodiscard]] bool HomeProjectile(std::uint64_t a_entry, const RE::NiPoint3& a_aimPoint, bool a_hit, RE::Actor* a_target)
+		{
+			RE::NiPoint3 projPos{};
+			RE::NiPoint3 oldVelocity{};
+			if (!Read(reinterpret_cast<const void*>(a_entry), GameOffsets::kLocation, projPos) ||
+				!Read(reinterpret_cast<const void*>(a_entry), kVelocity, oldVelocity)) {
+				return false;  // despawned/unreadable - stop tracking
+			}
+
+			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
+			if (speed < 1.0e-3f) {
+				return true;  // too early this tick - keep tracking, retry next tick
+			}
+
+			RE::NiPoint3 dir{ a_aimPoint.x - projPos.x, a_aimPoint.y - projPos.y, a_aimPoint.z - projPos.z };
+			const float  dirLen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+			if (dirLen < 1.0e-3f) {
+				return false;  // effectively arrived / degenerate - stop tracking
+			}
+			dir.x /= dirLen;
+			dir.y /= dirLen;
+			dir.z /= dirLen;
+
+			const RE::NiPoint3 newVelocity{ dir.x * speed, dir.y * speed, dir.z * speed };
+
+			// Deliberately unsynchronized: no BSSpinLock acquired around
+			// this write (see this file's header comment / SafeMem.h).
+			// Both fields are plain floats (no pointers/handles), so a
+			// torn concurrent write from the game's own simulation thread
+			// degrades to one visually-off frame at worst, not a crash —
+			// judged lower overall risk than calling BSSpinLock::Lock/
+			// Unlock, a REL::ID-backed engine call never exercised by
+			// this project before, to guard a write that's cheap to make
+			// safe-by-construction instead.
+			(void)Write(reinterpret_cast<void*>(a_entry), kMovementDirection, dir);
+			(void)Write(reinterpret_cast<void*>(a_entry), kVelocity, newVelocity);
+
+			// On a hit, also point the round's own desiredTargetHandle at
+			// the target (2026-08-22, Alexander's observation: ship-combat
+			// missile lock-on already does real-time homing toward a
+			// locked target natively - this is presumably the field that
+			// drives it). Uses the target's formID directly as the handle
+			// value, same "persistent ref" assumption as elsewhere in this
+			// project - unlike the player, an arbitrary combat NPC is NOT
+			// guaranteed persistent (some are dynamically spawned, whose
+			// real handle differs from their formID). If wrong, this
+			// degrades gracefully: a handle that resolves to nothing or
+			// the wrong object just means no extra native homing this
+			// tick, not a crash. Re-written every homing tick, not just
+			// once, in case the engine itself clears it between ticks the
+			// same way currentCombatTarget turned out to (unconfirmed, but
+			// cheap to keep refreshing regardless).
+			if (a_hit) {
+				const std::uint32_t targetHandle = a_target->GetFormID();
+				(void)Write(reinterpret_cast<void*>(a_entry), kDesiredTargetHandle, targetHandle);
+			}
+
+			return true;
+		}
 	}
 
-	void ProjectileTracker::RedirectFreshProjectiles(RE::Actor* a_target, bool a_hit, std::unordered_set<std::uint64_t>& a_handled)
+	void ProjectileTracker::RedirectFreshProjectiles(RE::Actor* a_target, bool a_hit, std::unordered_map<std::uint64_t, TrackedState>& a_tracked)
 	{
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		if (!player || !a_target) {
 			return;
 		}
+
+		RE::NiPoint3 targetPos{};
+		if (!Read(a_target, GameOffsets::kLocation, targetPos)) {
+			return;
+		}
+
+		const auto now = std::chrono::steady_clock::now();
+
+		// Pass 1: continue homing everything already tracked, using the
+		// target's CURRENT position every call - see the header comment
+		// for why this replaced the old redirect-once behavior. Silent
+		// (no per-tick logging) - see HomeProjectile's comment.
+		for (auto it = a_tracked.begin(); it != a_tracked.end();) {
+			if (now - it->second.firstSeen > kMaxHomingDuration) {
+				it = a_tracked.erase(it);
+				continue;
+			}
+			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, it->second.missOffset);
+			if (HomeProjectile(it->first, aimPoint, a_hit, a_target)) {
+				++it;
+			} else {
+				it = a_tracked.erase(it);
+			}
+		}
+
+		// Pass 2: pick up newly-fired rounds not yet tracked. Unchanged
+		// fresh-pickup logic (cell scan, formType/shooterHandle/age
+		// filters) from the previous one-shot design.
 		auto* cell = player->parentCell;
 		if (!cell) {
 			return;
@@ -113,20 +240,6 @@ namespace VATS
 			return;
 		}
 
-		RE::NiPoint3 targetPos{};
-		if (!Read(a_target, GameOffsets::kLocation, targetPos)) {
-			return;
-		}
-		targetPos.z += GameOffsets::kAimPointChestZ;
-
-		if (!a_hit) {
-			static thread_local std::mt19937           rng{ std::random_device{}() };
-			std::uniform_real_distribution<float>       jitter(-1.0f, 1.0f);
-			targetPos.x += jitter(rng) * kMissOffsetWorld;
-			targetPos.y += jitter(rng) * kMissOffsetWorld;
-			targetPos.z += jitter(rng) * kMissOffsetWorld * 0.5f;
-		}
-
 		const std::uint32_t scanCount = std::min<std::uint32_t>(size, 32768);
 
 		for (std::uint32_t i = 0; i < scanCount; ++i) {
@@ -134,8 +247,8 @@ namespace VATS
 			if (!Read(reinterpret_cast<const void*>(data), 8ull * i, entry) || !entry) {
 				continue;
 			}
-			if (a_handled.contains(entry)) {
-				continue;
+			if (a_tracked.contains(entry)) {
+				continue;  // already being homed via Pass 1
 			}
 
 			std::uint8_t formType = 0;
@@ -160,41 +273,6 @@ namespace VATS
 			REX::INFO("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
 				entry, formType, shooterHandle, shooterHandleRead, age, ageRead);
 
-			// Diagnostic (2026-08-23): confirmed via a real test session that
-			// shooterHandle read 0 and age read 0.000 on literally every one
-			// of 618 candidate log lines above, across 8 distinct rocket
-			// entries and dozens of consecutive frames each - a constant
-			// value that never once changes is the signature of a wrong
-			// offset, not a legitimately-unset field (same class of bug as
-			// TESObjectCELL::references being off by 8 from its own
-			// offsetof() - see commonlibsf-unmapped-ids memory). The
-			// static_assert on RE::Projectile's total size (Projectile.h)
-			// only proves the class is the right SIZE, not that every field
-			// inside it sits at the offset the header claims. This dumps a
-			// wider raw range around both suspect fields, twice per entry
-			// (first sighting and ~40ms later, given the 2ms fast-poll
-			// interval), so the two dumps can be diffed by hand: whichever
-			// dword actually increases between dump #1 and #20 is the real
-			// age, and whichever dword equals 0x14 is the real
-			// shooterHandle. Remove once GameOffsets/kShooterHandle/kAge
-			// above are corrected and redirects are confirmed firing.
-			{
-				static std::unordered_map<std::uint64_t, int> s_dumpCount;
-				const int                                      n = ++s_dumpCount[entry];
-				if (n == 1 || n == 20) {
-					std::string hex;
-					char        word[24];
-					for (std::size_t off = 0x140; off < 0x240; off += 4) {
-						std::uint32_t v = 0;
-						if (Read(reinterpret_cast<const void*>(entry), off, v)) {
-							std::snprintf(word, sizeof(word), "%03zX:%08X ", off, v);
-							hex += word;
-						}
-					}
-					REX::INFO("[VATS] projectile raw dump #{} entry=0x{:X}: {}", n, entry, hex);
-				}
-			}
-
 			if (!shooterHandleRead || shooterHandle != kShooterIsPlayer) {
 				continue;
 			}
@@ -202,87 +280,37 @@ namespace VATS
 				continue;
 			}
 
-			// A fresh, not-yet-handled, player-fired round.
-			//
-			// Found 2026-08-23: do NOT mark it handled yet at this point.
-			// The corrected velocity offset (0x154, see above) reads all-
-			// zero at age=0.000 in every sample seen so far - the game
-			// hasn't assigned the round's real post-launch velocity on its
-			// very first frame yet, exactly what this file's
-			// kMaxRedirectAgeSeconds comment already predicted. Since
-			// shooterHandle now matches immediately (unlike before the
-			// offset fix, when a permanent mismatch accidentally caused
-			// endless retries), inserting into a_handled here burned every
-			// round's only attempt on that too-early first sighting -
-			// zero redirects ever fired despite the shooterHandle/age
-			// gates finally passing. Only give up immediately on a HARD
-			// failure (the entry itself is unreadable, e.g. despawned
-			// between being found and read); a merely-too-early read
-			// keeps retrying every ~2ms until the age window
-			// (kMaxRedirectAgeSeconds) naturally excludes it above.
+			// A fresh, not-yet-tracked, player-fired round. Don't track it
+			// until its velocity is confirmed assigned (age=0.000 reads
+			// all-zero velocity on the very first frame - see the header
+			// comment history) - a too-early read just retries next tick,
+			// naturally bounded by the age window above, same as before.
 			RE::NiPoint3 projPos{};
 			RE::NiPoint3 oldVelocity{};
 			if (!Read(reinterpret_cast<const void*>(entry), GameOffsets::kLocation, projPos) ||
 				!Read(reinterpret_cast<const void*>(entry), kVelocity, oldVelocity)) {
-				a_handled.insert(entry);  // stale/invalid pointer - not worth retrying
 				continue;
 			}
-
 			const float speed = std::sqrt(oldVelocity.x * oldVelocity.x + oldVelocity.y * oldVelocity.y + oldVelocity.z * oldVelocity.z);
 			if (speed < 1.0e-3f) {
-				continue;  // too early, velocity not assigned yet - retry next tick, don't mark handled
+				continue;  // too early, velocity not assigned yet - retry next tick
 			}
 
-			RE::NiPoint3 dir{ targetPos.x - projPos.x, targetPos.y - projPos.y, targetPos.z - projPos.z };
-			const float  dirLen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-			if (dirLen < 1.0e-3f) {
-				a_handled.insert(entry);  // degenerate (projectile already at target) - not worth retrying
-				continue;
+			RE::NiPoint3 missOffset{};
+			if (!a_hit) {
+				static thread_local std::mt19937     rng{ std::random_device{}() };
+				std::uniform_real_distribution<float> jitter(-1.0f, 1.0f);
+				missOffset.x = jitter(rng) * kMissOffsetWorld;
+				missOffset.y = jitter(rng) * kMissOffsetWorld;
+				missOffset.z = jitter(rng) * kMissOffsetWorld * 0.5f;
 			}
+			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, missOffset);
 
-			a_handled.insert(entry);  // about to actually write - only now is this round truly spoken for
-			dir.x /= dirLen;
-			dir.y /= dirLen;
-			dir.z /= dirLen;
+			a_tracked.emplace(entry, TrackedState{ now, missOffset });
+			(void)HomeProjectile(entry, aimPoint, a_hit, a_target);  // first redirect, right now
 
-			const RE::NiPoint3 newVelocity{ dir.x * speed, dir.y * speed, dir.z * speed };
-
-			// Deliberately unsynchronized: no BSSpinLock acquired around
-			// this write (see this file's header comment / SafeMem.h).
-			// Both fields are plain floats (no pointers/handles), so a
-			// torn concurrent write from the game's own simulation thread
-			// degrades to one visually-off frame at worst, not a crash —
-			// judged lower overall risk than calling BSSpinLock::Lock/
-			// Unlock, a REL::ID-backed engine call never exercised by
-			// this project before, to guard a write that's cheap to make
-			// safe-by-construction instead.
-			(void)Write(reinterpret_cast<void*>(entry), kMovementDirection, dir);
-			(void)Write(reinterpret_cast<void*>(entry), kVelocity, newVelocity);
-
-			// On a hit, also point the round's own desiredTargetHandle at
-			// the target (2026-08-22, Alexander's observation: ship-combat
-			// missile lock-on already does real-time homing toward a
-			// locked target natively - this is presumably the field that
-			// drives it). Uses the target's formID directly as the handle
-			// value, same "persistent ref" assumption as kPlayerRefHandle
-			// above - unlike the player, an arbitrary combat NPC is NOT
-			// guaranteed persistent (some are dynamically spawned, whose
-			// real handle differs from their formID). If wrong, this
-			// degrades gracefully: a handle that resolves to nothing or
-			// the wrong object just means no extra native homing this
-			// frame, not a crash - handle resolution failure is a normal,
-			// expected case this engine is built to tolerate, and our own
-			// direct velocity/movementDirection write above already
-			// guarantees this frame's redirect regardless of whether this
-			// extra hint does anything. Only on hit - a missed shot should
-			// not gain native homing assistance toward the target either.
-			if (a_hit) {
-				const std::uint32_t targetHandle = a_target->GetFormID();
-				(void)Write(reinterpret_cast<void*>(entry), kDesiredTargetHandle, targetHandle);
-			}
-
-			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f} dir=({:.2f},{:.2f},{:.2f})",
-				a_hit ? "HIT" : "MISS", entry, age, speed, dir.x, dir.y, dir.z);
+			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f}",
+				a_hit ? "HIT" : "MISS", entry, age, speed);
 		}
 	}
 }

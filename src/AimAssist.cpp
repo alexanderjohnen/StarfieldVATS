@@ -17,7 +17,7 @@
 #include <optional>
 #include <random>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -274,7 +274,7 @@ namespace VATS
 			// actor).
 			const auto typeOverride = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
 
-			std::unordered_set<std::uint64_t> handled;
+			std::unordered_map<std::uint64_t, ProjectileTracker::TrackedState> tracked;
 			const auto                        start = std::chrono::steady_clock::now();
 			std::optional<std::chrono::steady_clock::time_point> releasedAt;
 			while (Controller::Get().GetMode() == VATSMode::kLocked) {
@@ -301,7 +301,7 @@ namespace VATS
 					// hold.
 					break;
 				}
-				ProjectileTracker::RedirectFreshProjectiles(currentState.actor.get(), hit, handled);
+				ProjectileTracker::RedirectFreshProjectiles(currentState.actor.get(), hit, tracked);
 
 				std::this_thread::sleep_for(elapsed < kFastPollWindow ? kFastPollInterval : kSlowPollInterval);
 			}

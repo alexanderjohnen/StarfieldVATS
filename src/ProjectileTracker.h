@@ -1,6 +1,7 @@
 #pragma once
 
-#include <unordered_set>
+#include <chrono>
+#include <unordered_map>
 
 namespace VATS
 {
@@ -16,11 +17,27 @@ namespace VATS
 	//
 	// Call repeatedly (e.g. every AimAssist tick) for the duration of one
 	// held trigger — a burst fires multiple rounds over time, not all at
-	// once. a_handled is owned by the caller and should start as a fresh
-	// empty set at the beginning of each hold; passing the same set back
-	// in on every call lets each new round in the burst be found and
-	// redirected independently, while guaranteeing the same round is never
-	// redirected twice.
+	// once. a_tracked is owned by the caller and should start as a fresh
+	// empty map at the beginning of each hold; passing the same map back in
+	// on every call lets each new round in the burst be found and picked up
+	// independently.
+	//
+	// 2026-08-24: previously redirected each round exactly once (the
+	// instant it was found) and never touched it again — a single aim-point
+	// error or the target moving mid-flight meant the round then flew
+	// straight on that one, potentially-wrong heading for the rest of its
+	// life. That's the leading suspected cause of "HIT logged, no damage
+	// landed": the roll and the redirect both happened correctly, but a
+	// static feet+chest-height aim point isn't always inside the target's
+	// actual hitbox, and nothing corrected for it afterward. Now re-aims
+	// every already-tracked round toward the target's CURRENT position on
+	// every call (continuous homing, not one-shot), for up to
+	// kMaxHomingDuration — corrects for target movement and residual aim
+	// error over the round's whole flight instead of only the instant it
+	// was found. A missed shot keeps its own fixed random near-miss offset
+	// (chosen once at pickup, stored in TrackedState) rather than getting a
+	// fresh random jitter every tick, so it still reads as one consistent
+	// near-miss rather than an erratically dancing round.
 	//
 	// Matches player-fired projectiles via a field at Projectile+0x170
 	// reading exactly 1 — NOT the TESPointerHandle-style formID match
@@ -44,6 +61,12 @@ namespace VATS
 	class ProjectileTracker
 	{
 	public:
-		static void RedirectFreshProjectiles(RE::Actor* a_target, bool a_hit, std::unordered_set<std::uint64_t>& a_handled);
+		struct TrackedState
+		{
+			std::chrono::steady_clock::time_point firstSeen;
+			RE::NiPoint3                          missOffset{};  // fixed for this round's whole life; zero on a hit
+		};
+
+		static void RedirectFreshProjectiles(RE::Actor* a_target, bool a_hit, std::unordered_map<std::uint64_t, TrackedState>& a_tracked);
 	};
 }
