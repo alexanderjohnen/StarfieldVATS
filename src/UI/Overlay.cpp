@@ -1,8 +1,10 @@
 #include "Overlay.h"
 
 #include "CameraProject.h"
+#include "CombatHudVisibility.h"
 #include "GameOffsets.h"
 #include "HealthReader.h"
+#include "HealthWidgetReader.h"
 #include "SafeMem.h"
 #include "Settings.h"
 #include "Targeting.h"
@@ -328,11 +330,25 @@ namespace VATS::UI
 				}
 				std::snprintf(value, sizeof(value), "%.0f m | %.0f%%", dist, chancePercent);
 
-				// Best-effort — see HealthReader.h for the residual risk
-				// (Actor's avStorage offset, ActorValue::GetSingleton()).
-				// Bar is simply skipped if this fails, same "degrade
-				// quietly" pattern as everything else here.
-				haveHealth = Settings::Get().showTargetHealth && GetActorHealth(a_actor, hp);
+				// Best-effort, two layers (2026-08-24): try the native HUD
+				// widget reading first (HealthWidgetReader - reads whatever
+				// value the engine itself already computed and pushed to
+				// the HUD, unconfirmed which exact path is correct, see
+				// that header), falling back to the older avStorage-based
+				// GetActorHealth (HealthReader.h - known not to track live
+				// damage, kept only so the bar still shows *something*
+				// rather than nothing). Bar is simply skipped if both fail,
+				// same "degrade quietly" pattern as everything else here.
+				if (Settings::Get().showTargetHealth) {
+					float healthPercent = 0.0f;
+					if (HealthWidgetReader::GetLiveHealthPercent(healthPercent)) {
+						hp.current = healthPercent;
+						hp.max = 100.0f;
+						haveHealth = true;
+					} else {
+						haveHealth = GetActorHealth(a_actor, hp);
+					}
+				}
 			}
 
 			// Flash the box red on a hit, or show "MISS" above it, for a
@@ -549,6 +565,14 @@ namespace VATS::UI
 		}
 
 		// Locked
+
+		// Re-checked every frame, not once at lock time - see
+		// CombatHudVisibility.h for why (hit marker/damage number clips are
+		// spawned per-hit and don't exist yet right when the lock starts).
+		if (Settings::Get().hideCrosshairWhileLocked) {
+			CombatHudVisibility::HideActive();
+		}
+
 		if (!state.actor) {
 			LogIfChanged(DrawOutcome::kNoTarget, 0, "locked but no target (unexpected)");
 			return;

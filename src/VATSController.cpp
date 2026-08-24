@@ -254,7 +254,12 @@ namespace VATS
 
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
-				CombatHudVisibility::Hide();
+				// CombatHudVisibility::HideActive() is NOT called here
+				// (unlike CrosshairVisibility::Hide() above) - 2026-08-24,
+				// see CombatHudVisibility.h: hit marker/damage number clips
+				// don't exist yet at Lock time, so a one-shot call here
+				// would never find them. It's called every frame instead,
+				// from Overlay::Draw() while Locked.
 			}
 			// EngineInputLayer::SetAdsBlocked(true) disabled again
 			// 2026-08-23: confirmed via screenshot that USER_EVENT_FLAG::
