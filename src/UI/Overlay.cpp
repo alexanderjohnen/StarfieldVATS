@@ -1,7 +1,6 @@
 #include "Overlay.h"
 
 #include "CameraProject.h"
-#include "CombatTargetOverride.h"
 #include "GameOffsets.h"
 #include "SafeMem.h"
 #include "Settings.h"
@@ -532,20 +531,11 @@ namespace VATS::UI
 			}
 		}
 
-		// DISABLED 2026-08-24, same day it was added - see
-		// CombatTargetOverride.h. The per-frame refresh was meant to keep
-		// winning a race against the engine's own continuous overwrite of
-		// currentCombatTarget - it never did (confirmed via the now-removed
-		// probe: the field flip-flopped between our value and the engine's
-		// on essentially every frame, never stably holding ours), and the
-		// diagnostic logging that came with testing it is suspected of
-		// contributing to a real gameplay regression Alexander reported the
-		// same session (far fewer shots getting redirected than in earlier
-		// builds). Pulled back rather than pushed further - Engage()/
-		// Disengage() (VATSController.cpp) stay in place (harmless, a
-		// single write/restore per lock), only this per-frame fight is
-		// disabled.
-		// CombatTargetOverride::Refresh(state.actor.get());
+		// CombatTargetOverride's Engage()/Disengage() (VATSController.cpp's
+		// Lock/Unlock) now run their own dedicated background thread - see
+		// CombatTargetOverride.h for the two earlier per-render-frame
+		// attempts that didn't work and why. Nothing to call from here
+		// anymore.
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
 

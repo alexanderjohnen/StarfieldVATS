@@ -3,17 +3,32 @@
 #include "GameOffsets.h"
 #include "SafeMem.h"
 
+#include <chrono>
+#include <thread>
+
 namespace VATS
 {
 	namespace
 	{
 		std::uint32_t s_originalValue = 0;
-		bool          s_engaged = false;
+
+		constexpr auto kWriteInterval = std::chrono::milliseconds(5);
+	}
+
+	void CombatTargetOverride::ThreadProc(const std::stop_token& a_stop, std::uint32_t a_formID)
+	{
+		while (!a_stop.stop_requested()) {
+			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+				auto* addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
+				(void)SafeWrite(addr, &a_formID, sizeof(a_formID));
+			}
+			std::this_thread::sleep_for(kWriteInterval);
+		}
 	}
 
 	void CombatTargetOverride::Engage(RE::Actor* a_target)
 	{
-		if (!a_target) {
+		if (!a_target || m_thread.joinable()) {
 			return;
 		}
 		auto* player = RE::PlayerCharacter::GetSingleton();
@@ -21,49 +36,32 @@ namespace VATS
 			return;
 		}
 
-		auto* addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
+		auto*         addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
 		std::uint32_t original = 0;
 		if (!SafeRead(addr, &original, sizeof(original))) {
 			return;
 		}
-
-		const std::uint32_t formID = a_target->GetFormID();
-		if (!SafeWrite(addr, &formID, sizeof(formID))) {
-			return;
-		}
-
 		s_originalValue = original;
-		s_engaged = true;
-		REX::INFO("[VATS] combat-target override: engaged, wrote formID=0x{:08X} (was 0x{:08X})", formID, original);
-	}
 
-	void CombatTargetOverride::Refresh(RE::Actor* a_target)
-	{
-		if (!s_engaged || !a_target) {
-			return;
-		}
-		auto* player = RE::PlayerCharacter::GetSingleton();
-		if (!player) {
-			return;
-		}
-		auto*        addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
 		const std::uint32_t formID = a_target->GetFormID();
-		(void)SafeWrite(addr, &formID, sizeof(formID));
+		REX::INFO("[VATS] combat-target override: engaged, forcing formID=0x{:08X} every {}ms (was 0x{:08X})",
+			formID, kWriteInterval.count(), original);
+		m_thread = std::jthread(&CombatTargetOverride::ThreadProc, formID);
 	}
 
 	void CombatTargetOverride::Disengage()
 	{
-		if (!s_engaged) {
+		if (!m_thread.joinable()) {
 			return;
 		}
-		s_engaged = false;
+		m_thread.request_stop();
+		m_thread.join();
 
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		if (!player) {
 			return;
 		}
-
-		auto* addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
+		auto*      addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
 		const bool wrote = SafeWrite(addr, &s_originalValue, sizeof(s_originalValue));
 		REX::INFO("[VATS] combat-target override: disengaged, restored 0x{:08X} (ok={})", s_originalValue, wrote);
 	}
