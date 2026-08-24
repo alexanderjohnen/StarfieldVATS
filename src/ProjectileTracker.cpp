@@ -322,24 +322,31 @@ namespace VATS
 				continue;
 			}
 
-			// Diagnostic (2026-08-22): zero redirects fired in Alexander's
-			// first in-game test despite plenty of logged HIT rolls - this
-			// logs every candidate that reaches the projectile-formType
-			// range regardless of what filters it out next, so the next
-			// test session's log says exactly which check is rejecting
-			// everything (shooterHandle mismatch vs. age window vs.
-			// nothing ever reaching here at all). Remove once the real
-			// cause is confirmed.
 			std::uint32_t shooterHandle = 0;
 			const bool    shooterHandleRead = Read(reinterpret_cast<const void*>(entry), kShooterHandle, shooterHandle);
 			float         age = -1.0f;
 			const bool    ageRead = Read(reinterpret_cast<const void*>(entry), kAge, age);
-			REX::INFO("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
-				entry, formType, shooterHandle, shooterHandleRead, age, ageRead);
 
+			// Rejected silently as of 2026-08-25. This used to log EVERY
+			// candidate reaching the projectile-formType range, before any
+			// filter - a 2026-08-22 diagnostic for "which check is
+			// rejecting everything", whose job is long done (the filters
+			// demonstrably pass our own rounds now). The problem: a round
+			// that fails this check is never tracked, so it was re-logged
+			// on every single 2ms poll tick for its entire flight - i.e.
+			// every NPC-fired round in an active firefight. Harmless while
+			// rounds died within ~2 frames; distinctly less so now that the
+			// speed override makes rounds live ~6x longer. This project has
+			// already had one confirmed case of log I/O volume degrading
+			// the redirect itself (see CombatTargetOverride.h), so the
+			// candidate line now only fires for our own rounds, which are
+			// tracked after pickup and therefore logged exactly once.
 			if (!shooterHandleRead || shooterHandle != kShooterIsPlayer) {
 				continue;
 			}
+			REX::INFO("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
+				entry, formType, shooterHandle, shooterHandleRead, age, ageRead);
+
 			if (!ageRead || age < 0.0f || age > kMaxRedirectAgeSeconds) {
 				continue;
 			}
