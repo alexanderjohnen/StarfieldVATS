@@ -1,6 +1,7 @@
 #include "VATSController.h"
 
 #include "CombatHudVisibility.h"
+#include "CombatTargetOverride.h"
 #include "CrosshairVisibility.h"
 #include "DamageNumbersVisibility.h"
 #include "EngineInputLayer.h"
@@ -164,6 +165,7 @@ namespace VATS
 		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
 		DamageNumbersVisibility::Restore();
+		CombatTargetOverride::Disengage();
 		CombatHudVisibility::Restore();
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
@@ -254,6 +256,13 @@ namespace VATS
 				console->Log("[VATS] LOCKED | target formID=0x{:08X}", formID);
 			}
 
+			// EXPERIMENTAL (2026-08-24, Alexander's idea) - see
+			// CombatTargetOverride.h. Engaged unconditionally (no settings
+			// flag yet, first real in-game test) rather than behind
+			// hideCrosshairWhileLocked - this is unrelated to that flag's
+			// actual purpose.
+			CombatTargetOverride::Engage(lockTarget.get());
+
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
 				// DamageNumbersVisibility (2026-08-24) - toggles Starfield's
@@ -329,6 +338,7 @@ namespace VATS
 		EngineInputLayer::SetAdsBlocked(false);
 		CrosshairVisibility::Restore();
 		DamageNumbersVisibility::Restore();
+		CombatTargetOverride::Disengage();
 		CombatHudVisibility::Restore();
 		REX::INFO("[VATS] OFF");
 		if (console) {
