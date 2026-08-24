@@ -566,12 +566,26 @@ namespace VATS::UI
 
 		// Locked
 
-		// Re-checked every frame, not once at lock time - see
-		// CombatHudVisibility.h for why (hit marker/damage number clips are
-		// spawned per-hit and don't exist yet right when the lock starts).
-		if (Settings::Get().hideCrosshairWhileLocked) {
-			CombatHudVisibility::HideActive();
-		}
+		// DISABLED 2026-08-24, same day it was added - see
+		// CombatHudVisibility.h for the full story. Calling this every
+		// frame (instead of once at lock time) touches the live HUDMenu
+		// Scaleform VM roughly 60x/sec from the D3D Present thread, for as
+		// long as VATS stays Locked. A crash report from the same test
+		// session showed an unrelated background engine job thread
+		// ("BSJobs 10") faulting deep inside Scaleform's own AS3 VM, with a
+		// *different* installed mod's DLL on that thread's call stack, not
+		// ours - consistent with (though not proven to be) VM-internal
+		// state getting corrupted by concurrent, unsynchronized access from
+		// two threads, surfacing later on whichever thread happens to touch
+		// it next. Given two other confirmed Scaleform-related hard
+		// failures earlier the same session (see HealthWidgetReader.h),
+		// this is being pulled back rather than pushed further while
+		// unconfirmed. Hit marker/damage number hiding is back to not
+		// really working (same as before this session's attempt) until a
+		// safer mechanism exists - see CombatHudVisibility.h.
+		// if (Settings::Get().hideCrosshairWhileLocked) {
+		// 	CombatHudVisibility::HideActive();
+		// }
 
 		if (!state.actor) {
 			LogIfChanged(DrawOutcome::kNoTarget, 0, "locked but no target (unexpected)");

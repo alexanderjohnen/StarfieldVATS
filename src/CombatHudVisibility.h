@@ -31,20 +31,34 @@ namespace VATS
 	// to "onHitDamageIndicatorAnimationFinish", strongly suggesting these
 	// are created fresh on each hit and destroyed once their animation
 	// finishes - a one-shot check before any hit has happened will always
-	// find nothing. Fixed by calling HideActive() every frame while Locked
-	// (Overlay::Draw) instead of once - each (prefix, clip) candidate is
-	// re-checked every frame, so a clip that spawns mid-combat gets caught
-	// and hidden within a frame or two of appearing rather than never being
-	// found at all. Only logs/writes on an actual true->false transition,
-	// so steady-state cost while Locked is one GetVariable call per
-	// candidate per frame, no SetVariable/log spam once everything's
-	// already hidden.
+	// find nothing. "Fixed" by calling HideActive() every frame while
+	// Locked instead of once, each (prefix, clip) candidate re-checked
+	// every frame so a clip spawning mid-combat gets caught within a frame
+	// or two - mechanically sound, but see the DISABLED note below.
+	//
+	// DISABLED again, same day: the Overlay::Draw() call site that invoked
+	// HideActive() every frame was commented out after a crash report from
+	// the same test session showed an unrelated background engine job
+	// thread ("BSJobs 10") faulting deep inside Scaleform's own AS3 VM,
+	// with a *different* installed mod's DLL on that thread's call stack -
+	// not StarfieldVATS.dll anywhere in it. Not proven to be caused by
+	// this function, but going from one Scaleform touch per lock to ~60/sec
+	// for the whole Locked duration is the one thing this project changed
+	// this session that plausibly increases exposure to a genuine
+	// thread-safety violation (unsynchronized concurrent access to the
+	// live HUDMenu AS3 VM's internal state from the D3D Present thread,
+	// racing the engine's own background script evaluation) - and this
+	// project has already had two other confirmed hard failures from
+	// Scaleform meddling in the same session (see HealthWidgetReader.h).
+	// HideActive() itself is left implemented (harmless if never called)
+	// in case a safer invocation strategy is found later - do not re-wire
+	// it to run every frame from the render thread without first ruling
+	// out the thread-safety theory above.
 	class CombatHudVisibility
 	{
 	public:
-		// Call every frame while Locked (not once at lock time) - see above
-		// for why. Cheap and idempotent; a safe no-op for candidates that
-		// don't currently resolve to anything.
+		// Currently unused - see the DISABLED note above. Was meant to be
+		// called every frame while Locked, not once at lock time.
 		static void HideActive();
 		static void Restore();
 	};
