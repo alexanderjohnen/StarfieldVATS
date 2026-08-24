@@ -5,14 +5,20 @@ point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**Updated 2026-08-24 (three rounds today)**: ADS is no longer a stuck
-problem — see "ADS handling" below. Combat-HUD hiding (hit marker/damage
-numbers) now has a real fix, not just failed guesses — still needs an
-in-game confirmation. The health bar's second attempt (a Scaleform widget
-probe) caused two severe failures in a row — a hard crash, then a
-whole-PC freeze — and has been **retired**, see "Health bar" below before
-going anywhere near that mechanism again. Everything else in this file is
-otherwise unchanged from 2026-08-23.
+**Updated 2026-08-24 (four rounds today)**: ADS is no longer a stuck
+problem — see "ADS handling" below. The health bar's Scaleform-widget-probe
+attempt caused two severe failures in a row — a hard crash, then a
+whole-PC freeze — and has been **retired**, see "Health bar" below. Combat-
+HUD hiding's per-frame fix was disabled again the same session after a
+third crash report (unrelated mod on the stack, cause unconfirmed) raised
+a thread-safety concern — see "Native combat-HUD elements" below. **Net
+result of today's HUD work: ADS handling improved, health bar and hit-
+marker hiding are both back to not-working (same as before today), but no
+known-crashy code is left enabled.** Alexander is now exporting
+`hudmenu.gfx`'s decompiled ActionScript via JPEXS to `docs/
+hudmenu-decompiled/` as a safer alternative to live guessing — check there
+before starting fresh Scaleform investigation. Everything else in this file
+is otherwise unchanged from 2026-08-23.
 
 **This supersedes the previous version of this file from 2026-08-23 evening.**
 That version covered the hitscan/real-projectile breakthrough (still true, see
@@ -166,39 +172,53 @@ GetActorHealth` avStorage read — the health bar is back to "renders, static
 number" (its state before this session's health-bar work), not worse than
 before, just not fixed. See `commonlibsf-unmapped-ids` memory for the full
 write-up. **Do not re-enable Scaleform probing of unknown/guessed paths for
-anything beyond a known-primitive leaf like `_visible`** (which
-`CombatHudVisibility.cpp` uses safely, confirmed across both failing
-sessions) without a fundamentally different approach — e.g. an actual
-Scaleform/SWF decompile of `hudmenu.gfx` to know the real variable and its
-type ahead of time, instead of guessing live against the running movie.
+anything beyond a known-primitive leaf like `_visible`** without a
+fundamentally different approach — e.g. an actual Scaleform/SWF decompile
+of `hudmenu.gfx` to know the real variable and its type ahead of time,
+instead of guessing live against the running movie. (2026-08-24, later the
+same session: Alexander has JPEXS installed and is exporting
+`hudmenu.gfx`'s decompiled ActionScript to `docs/hudmenu-decompiled/` for
+exactly this — check whether that folder exists and has content before
+starting any fresh probing from scratch.)
 
 **Native combat-HUD elements (hit marker, kill marker, damage numbers, crit
-text/banner) — real fix attempted 2026-08-24, mechanism now sound, still
-UNCONFIRMED whether it fully works in practice.** Root cause found in the
-prior session: a strings dump of `hudmenu.gfx` found `SpawnNewClip` right
-next to `onHitDamageIndicatorAnimationFinish`, meaning these clips
+text/banner) — real fix attempted 2026-08-24, then DISABLED again the same
+day over a possible thread-safety concern.** Root cause of the original
+"nothing ever hides" bug was correctly diagnosed: a strings dump of
+`hudmenu.gfx` found `SpawnNewClip` right next to
+`onHitDamageIndicatorAnimationFinish`, meaning these clips
 (`DamageNumberText_mc`, `CritText_mc`, `CritBanner_mc`, `HitIndicator_mc`,
 `KillIndicator_mc`) are almost certainly created fresh on each hit and
 destroyed once their animation finishes — a one-shot `Hide()` call at Lock
-time (the original design) ran before any hit had happened, so it always
-found nothing, regardless of whether the guessed paths were even right.
-Fixed by turning `CombatHudVisibility::Hide()` into `HideActive()`, called
-every frame while Locked from `Overlay::Draw()` instead of once from
-`VATSController.cpp`'s lock transition — each candidate `(prefix, clip)`
-path is re-checked every frame, so a clip spawned mid-combat gets caught
-and hidden within a frame or two rather than never being found. Still
-open: whether the *paths themselves* are actually correct was never
-confirmed (the original per-hit-existence problem may have been masking a
-separate wrong-path problem) — same open question Alexander should look
-for in the log (`combat-hud: hid newly-visible '...'` lines) after a real
-combat test. If nothing logs at all despite a confirmed hit, the paths
-themselves are still wrong and need fresh guessing/probing, same approach
-as `HealthWidgetReader.cpp` above. A possible one-frame flash before the
-hide catches up is expected and acceptable per Alexander's original ask
-(hide is the primary goal, not zero-frame-perfect suppression); intercepting
-the native call before it reaches Scaleform at all (real new reverse
-engineering, no lead on the function) remains the fallback if per-frame
-hiding turns out insufficient.
+time ran before any hit had happened, so it always found nothing. Fixed by
+turning `CombatHudVisibility::Hide()` into `HideActive()`, meant to be
+called every frame while Locked instead of once.
+
+**That per-frame call site was commented out again the same session**
+(`Overlay.cpp`'s Locked branch — `HideActive()` itself is still
+implemented, just not invoked from anywhere). Reason: a crash report
+(`Crashlog_2026-08-24_18-44-03...txt`, Starfield Engine Fixes' detailed
+logger) landed during the same test session, showing an unrelated
+background engine job thread ("BSJobs 10") faulting with
+`EXCEPTION_ACCESS_VIOLATION` deep inside Scaleform's own AS3 VM
+(`Scaleform::GFx::AS3::ASVM`/`VMAbcFile`/etc. visible on the raw stack) —
+with **`Starmap Cruise.dll`** (a different installed mod, unrelated to
+VATS) directly in the captured backtrace, and `StarfieldVATS.dll` nowhere
+in it. **Not proven to be caused by this project** — Starmap Cruise has its
+own native hook and may simply have its own bug. But going from one
+Scaleform touch per Lock to ~60/sec for the whole Locked duration is the
+one thing this session changed that plausibly increases exposure to real
+concurrent/unsynchronized access to the live HUDMenu AS3 VM's internal
+state (D3D Present thread vs. the engine's own background script
+evaluation) — and this project had two other confirmed hard Scaleform
+failures in the same session already (see `HealthWidgetReader.h` above), so
+it was pulled back rather than pushed further while unconfirmed.
+**Diagnostic Alexander could run if he wants to isolate cause**: set
+`bHideCrosshairWhileLocked=0` in the ini (also disables
+`CrosshairVisibility`, the one still-active Scaleform touch) and see if the
+Starmap-Cruise-attributed crash still happens under otherwise-identical
+play — if it does, that's fairly strong evidence it's unrelated to VATS
+entirely. Not asked of him yet.
 
 **ADS handling — SOLVED 2026-08-24, via a completely different strategy.**
 Four approaches at *blocking* ADS while Locked were tried and failed (kept
