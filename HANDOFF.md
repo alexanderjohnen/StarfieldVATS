@@ -1,11 +1,14 @@
-# StarfieldVATS — Handoff / Project Snapshot (2026-08-23, late evening)
+# StarfieldVATS — Handoff / Project Snapshot (2026-08-24)
 
 Read this first in a new chat session to pick up where things left off. This is a
 point-in-time snapshot; the code and Alexander's own testing may have moved past
 some of this by the time you read it — verify against actual file contents and
 the SFSE log before trusting anything below as still true.
 
-**This supersedes the previous version of this file from earlier the same day.**
+**Updated 2026-08-24**: ADS is no longer a stuck problem — see "ADS handling"
+below. Everything else in this file is otherwise unchanged from 2026-08-23.
+
+**This supersedes the previous version of this file from 2026-08-23 evening.**
 That version covered the hitscan/real-projectile breakthrough (still true, see
 below, untouched this round) but predates an entire later session of HUD/QoL
 work (crosshair, health bar, hit/miss feedback, click-detection fix, native
@@ -166,8 +169,9 @@ show one brief flash), or (b) intercepting the native call that pushes
 Scaleform at all (real new reverse-engineering, no lead on the native
 function yet). Not attempted — next thing to try if picked back up.
 
-**ADS blocking — four approaches tried, all failed, no fifth attempted this
-session (don't re-try any of these without new information):**
+**ADS handling — SOLVED 2026-08-24, via a completely different strategy.**
+Four approaches at *blocking* ADS while Locked were tried and failed (kept
+below for the record, don't re-try any of these without new information):
 1. OS-level `WH_MOUSE_LL` swallow of the configured button (deleted code,
    see git history) — the hook correctly fired and swallowed the button
    (confirmed via log), but ADS still visibly engaged anyway. Same class of
@@ -185,38 +189,42 @@ session (don't re-try any of these without new information):**
    weapon mods like Shingen replace the ADS *animation* rather than
    touching a shared camera state).
 3. `RE::PlayerControls::PlayerIronSightsStartEvent`/`EndEvent` registration
-   (`src/AdsBlocker.h/cpp`, currently disabled in `main.cpp`) — **crashed
-   the game outright** on the main menu, before any save loaded: `REL/
-   IDDB.cpp(417): Failed to find offset for Address Library ID! Invalid ID:
-   0`, the same clean CommonLibSF abort `HitEventLogger` already hit. One of
-   `PlayerIronSightsStartEvent::GetEventSource`,
+   — **crashed the game outright** on the main menu, before any save
+   loaded: `REL/IDDB.cpp(417): Failed to find offset for Address Library
+   ID! Invalid ID: 0`, the same clean CommonLibSF abort `HitEventLogger`
+   already hit. One of `PlayerIronSightsStartEvent::GetEventSource`,
    `PlayerIronSightsEndEvent::GetEventSource`, or
    `BSTEventSource<T>::RegisterSink` itself isn't mapped for 1.16.244.0.
-   Confirmed via screenshot, fixed by commenting out the `Start()` call.
 4. `USER_EVENT_FLAG::Fighting` via `EngineInputLayer::SetAdsBlocked`
-   (implemented, currently unused/disabled in `VATSController.cpp`'s
+   (still implemented, unused/disabled in `VATSController.cpp`'s
    `Advance()`) — confirmed via screenshot to holster the weapon entirely
    on lock, not just block ADS. Same over-broad-flag pattern already known
-   for `TabMenuMaybe`/`POVSwitch`. `EngineInputLayer::SetAdsBlocked` itself
-   is kept implemented (harmless, unused) in case a narrower flag
-   combination is found later.
+   for `TabMenuMaybe`/`POVSwitch`. Kept implemented (harmless, unused) in
+   case a narrower flag combination is found later.
 
-   **Fifth idea, explicitly NOT attempted (Alexander's own suggestion,
-   genuinely promising but blocked by tooling, not risk)**: unbind/rebind
-   the ADS control at the `ControlMap` level instead of detecting/reacting
-   to input or state. A real `ControlMap` singleton (`BSTSingletonSDM<
-   ControlMap>`, same pattern `PlayerCamera` uses) and a
-   `nsControlMappingData::RemapHandler` function both exist and are named
-   in CommonLibSF's raw RTTI ID tables (`IDs_RTTI.h`), but **neither has a
-   curated `ID::ControlMap::*` singleton-pointer entry in `IDs.h`** the way
-   `PlayerCamera` does — meaning there is currently no known address to
-   even start from, not just an unverified one. Implementing this needs
-   either a real disassembler (IDA/Ghidra — not available in a chat
-   session) to find the singleton address independently, or finding another
-   published SFSE mod's source that's already solved runtime control
-   remapping (searched, found none — `StarZoom`'s source was checked and
-   uses `INIPrefSettingCollection`/FOV settings instead, not `ControlMap`
-   at all). Alexander is asking around; revisit if a lead turns up.
+   A fifth idea (unbind/rebind ADS at the `ControlMap` level) was
+   investigated but never attempted — no curated singleton address exists
+   for `ControlMap` in CommonLibSF's `IDs.h`, would need a real
+   disassembler to find one. Moot now that a much simpler fix exists below.
+
+**The actual fix (Alexander's own idea, 2026-08-24): stop trying to block
+ADS at all — end the VATS lock the instant ADS starts instead.**
+`src/AdsBlocker.h/cpp` (re-enabled in `main.cpp`) reuses the exact
+`WH_MOUSE_LL` detection technique from failed attempt #1 above — which was
+already proven to reliably *see* the button-down, the only thing that
+failed there was trying to *swallow* it. On a real (non-injected) press of
+`Settings::adsButtonVK` (renamed from `adsReleaseKeyVK`; INI `iAdsButton`,
+mouse buttons only, default VK_RBUTTON) while `Controller::GetMode() ==
+kLocked`, it calls `Controller::Get().ForceOff()` — the same thread-safe,
+engine-call-light unlock path `BackKeyInterceptor` already uses from its
+own background hook thread for the Tab key. The button itself is never
+swallowed; Starfield sees the real ADS press exactly like it always did,
+VATS just steps out of the way. New setting `Settings::endLockOnAds`
+(renamed from `blockAdsWhileLocked`; INI `bEndLockOnAds`, default true)
+gates it. Builds and deploys clean; **not yet confirmed in-game by
+Alexander** — next session should verify a real ADS press ends the lock
+and doesn't otherwise misfire (e.g. on other right-click activity, like
+scanner interactions).
 
 - **Pose-unaware aim point, no per-shot LOS gating, Tab not ending lock,
   the `type=0x02→0x00` correlation caveat, `lib/commonlibsf` submodule
@@ -238,11 +246,11 @@ session (don't re-try any of these without new information):**
   current health — see "Known-broken" above for the `EnemyHealthMeter_mc`
   lead to try next. Also reads `legendaryRank` for the HUD's segment-pip
   count (same caveat, unconfirmed against a real legendary enemy).
-- **`src/AdsBlocker.h/cpp`** — currently disabled (`main.cpp`'s
-  `Start()` call commented out) after the `PlayerIronSightsStartEvent`
-  crash. Kept in the tree with a full comment trail of what was tried and
-  why it failed, per this project's own established convention (see
-  `HitEventLogger.h`).
+- **`src/AdsBlocker.h/cpp`** — rewritten 2026-08-24: no longer tries to
+  block ADS (the `PlayerIronSightsStartEvent` version that crashed is
+  gone). Now a `WH_MOUSE_LL` hook that calls `Controller::Get().ForceOff()`
+  on a real press of `Settings::adsButtonVK` while Locked. Re-enabled in
+  `main.cpp`. See "ADS handling" above.
 - **`src/EngineInputLayer.h/cpp`** — added `SetAdsBlocked` (toggles
   `USER_EVENT_FLAG::Fighting`), implemented but unused (too broad, see
   above).
@@ -258,8 +266,9 @@ session (don't re-try any of these without new information):**
   legendary-segment pips) and the hit/miss red-flash/"MISS"-text logic in
   `DrawIfVisible`.
 - **`src/Settings.h/cpp`, `res/StarfieldVATS.ini`** — added
-  `bBlockAdsWhileLocked`, `iAdsReleaseKey`, `bHideCrosshairWhileLocked`,
-  `bShowTargetHealth`.
+  `bHideCrosshairWhileLocked`, `bShowTargetHealth`, and (2026-08-24)
+  `bEndLockOnAds`/`iAdsButton` (renamed from the original
+  `bBlockAdsWhileLocked`/`iAdsReleaseKey` when the ADS strategy changed).
 - Deleted this session (superseded/dead ends, not worth resurrecting
   without new information): `src/AdsProbe.h/cpp` (raw-memory-dump
   diagnostic, superseded once the real signal turned out not to be on the
