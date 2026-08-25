@@ -276,17 +276,30 @@ namespace VATS
 		}
 
 		if (!next && !settings.autoAdvanceRequireCrosshair) {
-			// Permissive fallback, off by default. requireAlive matters
-			// here specifically: the corpse just created is the thing
-			// nearest the crosshair, and the scan's own dead filter cannot
-			// see that it is dead (see Targeting.h). Excluding it by
-			// pointer is not enough either - any other body lying nearby
-			// would be picked instead.
+			// Cone scan, now restricted to actors actually fighting the
+			// player. Requiring the crosshair target alone turned out to be
+			// unusable in practice (Alexander, 2026-08-25: "den Target
+			// wechsel kriege ich echt gar nicht hin") - it only reaches
+			// interaction distance, which in a real firefight the next
+			// enemy rarely is.
+			//
+			// The engagement filter is the stand-in for the line-of-sight
+			// test this project does not have. Not real occlusion, but an
+			// actor shooting at the player is rarely behind a wall, and one
+			// in the next room who has not noticed them is excluded - which
+			// was the actual complaint about the unrestricted scan.
+			//
+			// requireAlive matters here specifically: the corpse just
+			// created is the thing nearest the crosshair, and the scan's
+			// own dead filter cannot see that it is dead (see Targeting.h).
+			// Excluding it by pointer is not enough either - any other body
+			// lying nearby would be picked instead.
 			if (auto pick = FindNearestActorToCrosshair(
 					settings.autoAdvanceRangeMeters,
-					static_cast<float>(settings.targetConeDeg),
+					static_cast<float>(settings.autoAdvanceConeDeg),
 					dying,
-					/*a_requireAlive*/ true)) {
+					/*a_requireAlive*/ true,
+					/*a_requireEngagedWithPlayer*/ settings.autoAdvanceRequireEngaged)) {
 				next = pick->actor;
 				reportedDistance = pick->worldDistance;
 				reportedAngle = pick->angleDeg;

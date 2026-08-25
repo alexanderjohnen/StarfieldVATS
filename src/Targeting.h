@@ -67,11 +67,21 @@ namespace VATS
 	// (HealthReader.h), and it is read only for a candidate that has
 	// already beaten every previous one on angle - a handful of actors per
 	// scan, not every reference in the cell.
+	// a_requireEngagedWithPlayer additionally demands that the actor's own
+	// currentCombatTarget is the player. Used only by auto-advance, as a
+	// stand-in for the line-of-sight test this project does not have: it is
+	// not real occlusion, but an actor actively shooting at the player is
+	// rarely behind a wall, and one in the next room who has not noticed
+	// them is excluded - which is the case that made the unrestricted scan
+	// unusable. Must never be applied to ordinary acquisition, or opening a
+	// fight from stealth becomes impossible. See the depth-buffer proposal
+	// in HANDOFF.md for the real fix.
 	[[nodiscard]] std::optional<TargetPick> FindNearestActorToCrosshair(
 		float       a_maxRange,
 		float       a_maxConeDeg,
 		RE::Actor*  a_exclude = nullptr,
-		bool        a_requireAlive = false);
+		bool        a_requireAlive = false,
+		bool        a_requireEngagedWithPlayer = false);
 
 	// Reads PlayerCharacter's crosshair-activation target directly (the
 	// same value that drives vanilla "TALK E"/loot prompts) instead of

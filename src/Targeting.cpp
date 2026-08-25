@@ -115,7 +115,7 @@ namespace VATS
 		}
 	}
 
-	std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg, RE::Actor* a_exclude, bool a_requireAlive)
+	std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg, RE::Actor* a_exclude, bool a_requireAlive, bool a_requireEngagedWithPlayer)
 	{
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		auto* playerCamera = RE::PlayerCamera::GetSingleton();
@@ -182,6 +182,7 @@ namespace VATS
 		std::uint32_t nOutsideCone = 0;
 		std::uint32_t nDeadSkipped = 0;
 		std::uint32_t nFriendlySkipped = 0;
+		std::uint32_t nNotEngagedSkipped = 0;
 		float         closestMissAngleDeg = -1.0f;  // smallest angle among actors that failed the cone check
 
 		for (std::uint32_t i = 0; i < scanCount; ++i) {
@@ -233,6 +234,15 @@ namespace VATS
 				continue;
 			}
 
+			if (a_requireEngagedWithPlayer) {
+				std::uint32_t combatTarget = 0;
+				if (!Read(candidate, GameOffsets::kCurrentCombatTarget, combatTarget) ||
+					combatTarget != GameOffsets::kPlayerHandle) {
+					++nNotEngagedSkipped;
+					continue;
+				}
+			}
+
 			bestCosAngle = cosAngle;
 			best = TargetPick{ RE::NiPointer<RE::Actor>(candidate), dist, angleDeg };
 		}
@@ -241,8 +251,8 @@ namespace VATS
 			REX::WARN("[targeting] cellRefs={} exceeds scan cap {} — {} entries were NOT scanned this call",
 				size, kScanCap, size - scanCount);
 		}
-		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
-			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, nFriendlySkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
+		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} notEngagedSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
+			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, nFriendlySkipped, nNotEngagedSkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
 
 		return best;
 	}

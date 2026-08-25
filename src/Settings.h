@@ -176,7 +176,31 @@ namespace VATS
 		//
 		// Turning this off falls back to the cone scan within
 		// fAutoAdvanceRangeMeters, walls included.
-		bool autoAdvanceRequireCrosshair{ true };
+		// Default flipped to false on 2026-08-25: requiring the crosshair
+		// target made auto-advance essentially never fire, since it only
+		// reaches interaction distance and the next enemy in a firefight
+		// rarely is that close. The cone scan is used instead, with
+		// bAutoAdvanceRequireEngaged below standing in for the missing
+		// line-of-sight test.
+		bool autoAdvanceRequireCrosshair{ false };
+
+		// Only advance to actors whose own combat target is the player.
+		// Applies to the advance ONLY, never to ordinary acquisition -
+		// there it would make it impossible to open a fight from stealth.
+		bool autoAdvanceRequireEngaged{ true };
+
+		// The advance gets its own, wider cone than ordinary acquisition
+		// (Alexander's question, 2026-08-25 - and a good one). Acquisition
+		// happens while the player is deliberately aiming at someone, so 35
+		// degrees is generous there. An advance happens the moment a target
+		// drops, when they are still pointed at the body that fell and the
+		// next enemy can be well off to one side. Reusing the narrow cone
+		// would reject candidates for a reason that does not apply.
+		//
+		// The scan's telemetry already logs outsideCone and
+		// closestMissAngle, so if this still turns out too narrow the log
+		// says by how much rather than needing another guess.
+		std::uint32_t autoAdvanceConeDeg{ 60 };
 
 		// How long the lock stays open after a kill, waiting for the player
 		// to put their crosshair on the next enemy. Without this the
@@ -220,7 +244,14 @@ namespace VATS
 		// non-humanoids as of 2026-08-25 - set this back to 1.0 in the INI
 		// to restore the exact previous behaviour without a rebuild if some
 		// creature reacts badly.
-		float aimPointHeightFactor{ 1.5f };
+		// Lowered from 1.5 to 1.25 on 2026-08-25 after testing: 1.5 read as
+		// chest height on paper but landed around head height on a standing
+		// target in practice, so the bounding sphere's centre must already
+		// sit higher than the hip-height estimate it was derived from. It
+		// looked right on a downed target, which is exactly what a
+		// proportional lift does when it is slightly too aggressive - the
+		// error scales down with the pose.
+		float aimPointHeightFactor{ 1.25f };
 
 		// Starfield's hit and kill markers are hidden while Locked. That
 		// hide holds for ordinary hits but not for critical ones, which
@@ -233,6 +264,18 @@ namespace VATS
 		// current position is logged instead (once per session), which is
 		// what the offsets below should be derived from. Picking one blind
 		// risks throwing the banner off-screen.
+		// How long the vanilla hit/kill/crit indicators stay suppressed
+		// after a lock ends. The restore happens as soon as the indicator
+		// animation parks itself; this is the ceiling for when it does not.
+		//
+		// 2500ms is a compromise and cannot be anything else: the game
+		// raises crit events several seconds after a kill, so suppressing
+		// until they stop would mean suppressing indefinitely. The costs
+		// are asymmetric - a stray crit flash after a fight is cosmetic,
+		// while a hit marker that never returns is a functional regression
+		// in the base game - which argues for cutting sooner.
+		std::uint32_t hudRestoreDelayMs{ 2500 };
+
 		bool  moveCritMarker{ false };
 		float critMarkerOffsetX{ 0.0f };
 		float critMarkerOffsetY{ -180.0f };

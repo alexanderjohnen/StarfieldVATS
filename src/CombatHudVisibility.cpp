@@ -142,8 +142,30 @@ namespace VATS
 		// nothing like the per-frame AS3 traffic that is suspected in an
 		// earlier crash here.
 		constexpr auto        kRestorePollInterval = std::chrono::milliseconds(250);
-		constexpr int         kMaxRestorePolls = 24;  // ~6s ceiling, then restore anyway
 		constexpr const char* kIdleLabel = "End";
+
+		// Hard ceiling on how long the vanilla indicators stay suppressed
+		// after a lock ends.
+		//
+		// This is a deliberate compromise, not a solution, and it cannot be
+		// anything else. Alexander sees crit indicators arriving several
+		// seconds after a kill - so the game is genuinely raising these
+		// events late, not merely animating slowly, and no amount of
+		// waiting for the animation to park itself helps: it parks, then a
+		// fresh event fires later. Suppressing until it stops would mean
+		// suppressing indefinitely, which would leave the player's normal
+		// HUD broken well into ordinary play.
+		//
+		// So the choice is where to cut, and the cost is asymmetric: a
+		// stray crit flash after a fight is a cosmetic annoyance, while a
+		// hit marker that never comes back is a functional regression in
+		// the base game. That argues for cutting sooner rather than later.
+		// Tunable via iHudRestoreDelayMs for anyone who weighs it
+		// differently.
+		std::chrono::milliseconds RestoreCeiling()
+		{
+			return std::chrono::milliseconds(Settings::Get().hudRestoreDelayMs);
+		}
 
 		// Path whose currentLabel is polled to decide when the animation has
 		// finished, captured by HideActive() from whichever container
@@ -422,8 +444,10 @@ namespace VATS
 		std::vector<Touched>  work;
 		work.swap(s_touched);
 
-		std::thread([generation, idlePath, work = std::move(work)]() {
-			for (int poll = 0; poll < kMaxRestorePolls; ++poll) {
+		const int maxPolls = std::max<int>(1, static_cast<int>(RestoreCeiling() / kRestorePollInterval));
+
+		std::thread([generation, idlePath, maxPolls, work = std::move(work)]() {
+			for (int poll = 0; poll < maxPolls; ++poll) {
 				std::this_thread::sleep_for(kRestorePollInterval);
 
 				auto* tasks = SFSE::GetTaskInterface();
@@ -435,7 +459,7 @@ namespace VATS
 				// this thread only sleeps and waits for the verdict.
 				auto done = std::make_shared<std::promise<bool>>();
 				auto future = done->get_future();
-				tasks->AddTask([generation, idlePath, work, done, poll]() {
+				tasks->AddTask([generation, idlePath, work, done, poll, maxPolls]() {
 					// A new lock since this was scheduled means its own
 					// HideActive() is now in force; restoring here would
 					// un-hide it.
@@ -450,13 +474,13 @@ namespace VATS
 					}
 
 					const bool idle = IsIndicatorIdle(root, idlePath);
-					const bool lastChance = poll + 1 >= kMaxRestorePolls;
+					const bool lastChance = poll + 1 >= maxPolls;
 					if (!idle && !lastChance) {
 						done->set_value(false);  // still animating, keep waiting
 						return;
 					}
 					if (!idle) {
-						REX::WARN("[VATS] combat-hud: indicator never returned to '{}', restoring anyway after {} polls", kIdleLabel, kMaxRestorePolls);
+						REX::INFO("[VATS] combat-hud: indicator still animating at the ceiling, restoring anyway (iHudRestoreDelayMs)");
 					}
 					RestoreNow(root, work);
 					done->set_value(true);
