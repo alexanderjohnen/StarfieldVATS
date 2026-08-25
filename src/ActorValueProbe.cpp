@@ -26,46 +26,44 @@ namespace VATS
 			std::uint32_t self;              // 14 - image-relative, points back at this locator
 		};
 
+		// Describes the whole inheritance graph of the complete class. Its
+		// base class array is what actually names each base and, crucially,
+		// gives that base's offset within the complete object.
+		struct RTTIClassHierarchyDescriptor
+		{
+			std::uint32_t signature;       // 00
+			std::uint32_t attributes;      // 04
+			std::uint32_t numBaseClasses;  // 08
+			std::uint32_t baseClassArray;  // 0C - image-relative, array of image-relative BCD pointers
+		};
+
+		struct RTTIBaseClassDescriptor
+		{
+			std::uint32_t typeDescriptor;     // 00 - image-relative
+			std::uint32_t numContainedBases;  // 04
+			std::int32_t  mdisp;              // 08 - THIS base's offset within the complete object
+			std::int32_t  pdisp;              // 0C
+			std::int32_t  vdisp;              // 10
+			std::uint32_t attributes;         // 14
+			std::uint32_t classDescriptor;    // 18
+		};
+
 		// TypeDescriptor: { void* vftable; void* spare; char name[]; }
 		constexpr std::size_t kTypeDescriptorNameOffset = 0x10;
 
-		// How far into an Actor to look for base-class vtable pointers.
-		// Actor's declared base list already runs to 0x1D8, and the whole
-		// object is far larger; 0x400 covers every base comfortably while
-		// keeping the one-time scan trivial.
-		constexpr std::size_t kVTableScanBytes = 0x400;
+		// Sanity bound on the declared base count, so a bad read can't turn
+		// the walk below into a runaway loop.
+		constexpr std::uint32_t kMaxBaseClasses = 256;
 
-		// Reads the RTTI class name for a candidate vtable pointer. Every
-		// step is SafeRead-guarded, so feeding this a value that merely
-		// looks like a pointer (or does not point at a vtable at all)
-		// fails cleanly instead of faulting.
-		[[nodiscard]] bool ReadRttiName(const void* a_vtable, char* a_out, std::size_t a_outLen)
+		// Reads a type descriptor's decorated class name, given its
+		// image-relative address. Guarded throughout, so garbage fails
+		// cleanly instead of faulting.
+		[[nodiscard]] bool ReadTypeName(std::uintptr_t a_moduleBase, std::uint32_t a_typeDescriptorRva, char* a_out, std::size_t a_outLen)
 		{
-			if (!a_vtable) {
+			if (!a_moduleBase || a_typeDescriptorRva == 0) {
 				return false;
 			}
-
-			const void* locatorPtr = nullptr;
-			if (!SafeRead(reinterpret_cast<const std::byte*>(a_vtable) - sizeof(void*), &locatorPtr, sizeof(locatorPtr)) || !locatorPtr) {
-				return false;
-			}
-
-			RTTICompleteObjectLocator locator{};
-			if (!SafeRead(locatorPtr, &locator, sizeof(locator))) {
-				return false;
-			}
-			// signature==1 identifies the x64 form and rejects most garbage
-			// that happened to be readable.
-			if (locator.signature != 1 || locator.typeDescriptor == 0) {
-				return false;
-			}
-
-			const auto moduleBase = REX::FModule::GetExecutingModule().GetBaseAddress();
-			if (!moduleBase) {
-				return false;
-			}
-
-			const auto* descriptor = reinterpret_cast<const std::byte*>(moduleBase + locator.typeDescriptor);
+			const auto* descriptor = reinterpret_cast<const std::byte*>(a_moduleBase + a_typeDescriptorRva);
 			std::memset(a_out, 0, a_outLen);
 			if (!SafeRead(descriptor + kTypeDescriptorNameOffset, a_out, a_outLen - 1)) {
 				return false;
@@ -74,45 +72,102 @@ namespace VATS
 			return true;
 		}
 
-		// Walks the Actor object for a sub-object whose vtable's RTTI name
-		// is ActorValueOwner, and returns its offset. Logs the full map of
-		// every base class it finds on the way the first time it runs -
-		// that map is exactly the information CommonLibSF's Actor.h is
-		// missing, so it is worth having in the log regardless of whether
-		// the target name turns up.
+		// Resolves the complete object locator for an object's primary
+		// vtable.
+		[[nodiscard]] bool ReadLocator(const void* a_object, RTTICompleteObjectLocator& a_out)
+		{
+			const void* vtable = nullptr;
+			if (!SafeRead(a_object, &vtable, sizeof(vtable)) || !vtable) {
+				return false;
+			}
+			const void* locatorPtr = nullptr;
+			if (!SafeRead(reinterpret_cast<const std::byte*>(vtable) - sizeof(void*), &locatorPtr, sizeof(locatorPtr)) || !locatorPtr) {
+				return false;
+			}
+			if (!SafeRead(locatorPtr, &a_out, sizeof(a_out))) {
+				return false;
+			}
+			// signature==1 identifies the x64 form and rejects most garbage
+			// that happened to be readable.
+			return a_out.signature == 1 && a_out.classDescriptor != 0;
+		}
+
+		// Finds the ActorValueOwner base's offset within Actor by walking
+		// Actor's RTTI class hierarchy.
+		//
+		// An earlier version scanned the object for base-class vtable
+		// pointers and read each one's RTTI name - that found all 25
+		// vtables but every single one reported ".?AVActor@@", because a
+		// complete object locator names the COMPLETE class, not the base
+		// whose sub-object that particular vtable serves. The base names
+		// (and, more usefully, each base's offset) live one level further
+		// in, in the class hierarchy descriptor's base class array, where
+		// every entry carries both a type descriptor and an mdisp. So this
+		// reads the answer directly instead of inferring it from where a
+		// pointer happened to sit.
+		//
+		// Logs the entire base list with offsets the first time it runs -
+		// that is precisely the layout information CommonLibSF's Actor.h is
+		// missing, and it is worth having in the log even if the lookup
+		// below fails.
 		[[nodiscard]] bool FindActorValueOwnerOffset(RE::Actor* a_actor, std::size_t& a_out)
 		{
 			static bool s_loggedMap = false;
 			const bool  logMap = !s_loggedMap;
 			s_loggedMap = true;
 
+			const auto moduleBase = REX::FModule::GetExecutingModule().GetBaseAddress();
+			if (!moduleBase) {
+				return false;
+			}
+
+			RTTICompleteObjectLocator locator{};
+			if (!ReadLocator(a_actor, locator)) {
+				REX::WARN("[VATS] actor rtti: could not resolve the complete object locator");
+				return false;
+			}
+
+			RTTIClassHierarchyDescriptor hierarchy{};
+			if (!SafeRead(reinterpret_cast<const void*>(moduleBase + locator.classDescriptor), &hierarchy, sizeof(hierarchy)) ||
+				hierarchy.numBaseClasses == 0 || hierarchy.numBaseClasses > kMaxBaseClasses || hierarchy.baseClassArray == 0) {
+				REX::WARN("[VATS] actor rtti: class hierarchy descriptor unreadable or implausible (numBases={})", hierarchy.numBaseClasses);
+				return false;
+			}
+
 			bool        found = false;
 			std::size_t foundAt = 0;
 
-			for (std::size_t off = 0; off < kVTableScanBytes; off += sizeof(void*)) {
-				const void* vtable = nullptr;
-				if (!SafeRead(reinterpret_cast<const std::byte*>(a_actor) + off, &vtable, sizeof(vtable)) || !vtable) {
+			const auto* array = reinterpret_cast<const std::byte*>(moduleBase + hierarchy.baseClassArray);
+			for (std::uint32_t i = 0; i < hierarchy.numBaseClasses; ++i) {
+				std::uint32_t descriptorRva = 0;
+				if (!SafeRead(array + static_cast<std::size_t>(i) * sizeof(std::uint32_t), &descriptorRva, sizeof(descriptorRva)) || descriptorRva == 0) {
 					continue;
 				}
 
-				char name[128]{};
-				if (!ReadRttiName(vtable, name, sizeof(name))) {
+				RTTIBaseClassDescriptor descriptor{};
+				if (!SafeRead(reinterpret_cast<const void*>(moduleBase + descriptorRva), &descriptor, sizeof(descriptor))) {
+					continue;
+				}
+
+				char name[160]{};
+				if (!ReadTypeName(moduleBase, descriptor.typeDescriptor, name, sizeof(name))) {
 					continue;
 				}
 
 				if (logMap) {
-					REX::INFO("[VATS] actor rtti map: +0x{:03X} -> {}", off, name);
+					REX::INFO("[VATS] actor base[{:02}] +0x{:03X} -> {}", i, descriptor.mdisp, name);
 				}
 
-				// MSVC decorates the name as ".?AVActorValueOwner@RE@@" (or
-				// "@@" with no namespace), so match on the substring rather
-				// than the whole decorated string.
-				if (!found && std::strstr(name, "ActorValueOwner") != nullptr) {
+				// The game's classes sit in the global namespace, so the
+				// decorated form is ".?AVActorValueOwner@@" - but match on
+				// the substring so a namespaced build would work too. Only
+				// a base reachable by plain member displacement is usable;
+				// a virtual base (pdisp >= 0) would need a different, much
+				// more involved resolution path and is not handled.
+				if (!found && descriptor.pdisp < 0 && descriptor.mdisp >= 0 &&
+					std::strstr(name, "ActorValueOwner") != nullptr) {
 					found = true;
-					foundAt = off;
-					if (!logMap) {
-						break;
-					}
+					foundAt = static_cast<std::size_t>(descriptor.mdisp);
 				}
 			}
 
@@ -157,13 +212,16 @@ namespace VATS
 		// to a per-frame overlay, and it means a stale/garbage object can
 		// never reach the virtual call - the call only ever happens on a
 		// sub-object that identifies itself as ActorValueOwner right now.
-		auto*       ownerBytes = reinterpret_cast<std::byte*>(a_actor) + s_ownerOffset;
-		const void* vtable = nullptr;
-		if (!SafeRead(ownerBytes, &vtable, sizeof(vtable)) || !vtable) {
-			return false;
-		}
-		char name[128]{};
-		if (!ReadRttiName(vtable, name, sizeof(name)) || std::strstr(name, "ActorValueOwner") == nullptr) {
+		auto* ownerBytes = reinterpret_cast<std::byte*>(a_actor) + s_ownerOffset;
+
+		// The sub-object's own complete object locator records which offset
+		// within the complete object that vtable serves. Requiring it to
+		// match the offset RTTI told us ActorValueOwner lives at confirms,
+		// on every single call, that we are about to dispatch through the
+		// right sub-object of a genuinely polymorphic object - a freed or
+		// recycled allocation will not satisfy it.
+		RTTICompleteObjectLocator locator{};
+		if (!ReadLocator(ownerBytes, locator) || locator.offset != s_ownerOffset) {
 			return false;
 		}
 
