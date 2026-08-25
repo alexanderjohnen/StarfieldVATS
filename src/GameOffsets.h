@@ -56,6 +56,36 @@ namespace VATS::GameOffsets
 	// references — unconfirmed for 1.16.244, that's what the probe is for).
 	inline constexpr auto kCurrentCombatTarget = offsetof(RE::Actor, currentCombatTarget);
 
+	// UNVERIFIED — candidate offset chain for a pose- and creature-type-
+	// agnostic aim point (2026-08-25, Alexander's requirement: must find an
+	// actor's real center regardless of whether it's standing, kneeling,
+	// prone, or not even humanoid - robots, alien creatures). Every field
+	// below is `offsetof` on a plain, public struct member (not a hex
+	// guess), but that only proves it compiles against CommonLibSF's
+	// claimed layout, not that the layout is right for 1.16.244 - this
+	// project has been burned by a "compiles fine, wrong at runtime" header
+	// offset before (avStorage's stride bug). Read-only probe first
+	// (WorldBoundProbe.h), same discipline as every other offset here.
+	//
+	// The idea: RE::NiAVObject::worldBound is a generic engine feature (a
+	// culling bounding sphere, present on every renderable 3D object since
+	// Oblivion-era Gamebryo/NetImmerse) recomputed every frame from the
+	// object's ACTUAL current geometry - not a fixed offset, not a named
+	// bone, so it should track crouching/prone poses for free and apply
+	// identically to any skeleton (human, robot, alien) since it carries no
+	// creature-specific assumption at all.
+	//
+	// Chain: Actor + kActorLoadedData -> LOADED_REF_DATA* (the raw pointer
+	// value of a BSGuarded<LOADED_REF_DATA*, BSReadWriteLock>, assumed at
+	// its own offset 0 - CommonLibSF marks BSGuarded's own member offsets
+	// "??", i.e. also unconfirmed) -> + kLoadedRefData3D -> NiAVObject*
+	// (the raw pointer of a NiPointer<NiAVObject>, same offset-0
+	// assumption, standard for this style of intrusive smart pointer) ->
+	// + kNiAVObjectWorldBound -> NiBound {NiPoint3 center; float radius}.
+	inline constexpr auto kActorLoadedData = offsetof(RE::TESObjectREFR, loadedData);
+	inline constexpr auto kLoadedRefData3D = offsetof(RE::LOADED_REF_DATA, data3D);
+	inline constexpr auto kNiAVObjectWorldBound = offsetof(RE::NiAVObject, worldBound);
+
 	// Single aim point, world units above an actor's ref-origin (feet) —
 	// roughly chest height. The Suit/Helmet/Pack body-part system (and the
 	// `data.angle`-based "behind the spine" pack offset it needed) was

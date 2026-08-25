@@ -4,6 +4,7 @@
 #include "GameOffsets.h"
 #include "HealthReader.h"
 #include "SafeMem.h"
+#include "WorldBoundProbe.h"
 #include "Settings.h"
 #include "Targeting.h"
 #include "VATSController.h"
@@ -586,6 +587,12 @@ namespace VATS::UI
 		// anymore.
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
+
+		// Read-only probe (2026-08-25), draws nothing, changes nothing -
+		// see WorldBoundProbe.h. Logs on pose change so the log can be
+		// compared against what Alexander does in-game (stand/crouch/
+		// prone) before this is ever wired into the actual aim point.
+		WorldBoundProbe::LogIfChanged(state.actor.get());
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a
 		// possible live "can the player currently see this target" signal
