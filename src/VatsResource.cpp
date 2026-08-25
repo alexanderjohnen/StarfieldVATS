@@ -83,7 +83,7 @@ namespace VATS
 			if (m_haveLastTargetHealth && formID == m_lastTargetFormID) {
 				const float damage = m_lastTargetHealth - hp.current;
 				if (damage > 0.0f) {
-					m_current = std::max(0.0f, m_current - damage);
+					m_current = std::max(0.0f, m_current - damage * Settings::Get().vatsCostPerDamage);
 				}
 			}
 			m_lastTargetHealth = hp.current;

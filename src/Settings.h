@@ -140,5 +140,14 @@ namespace VATS
 		// max oxygen regains 135 points/second, refilling that same 1820
 		// bar in about 13 seconds out of VATS.
 		float vatsRefillPerOxygen{ 0.5f };
+
+		// Multiplier on what a point of damage costs. Raised to 2.0 on
+		// 2026-08-25 after Alexander's first real test: the bar was
+		// draining too slowly relative to how much of it there is. Kept as
+		// its own knob rather than folded into capacity, so "how big is the
+		// bar" and "how fast does using it cost" stay independently
+		// tunable - halving capacity would also have halved what a fresh
+		// lock starts with, which is a different change.
+		float vatsCostPerDamage{ 2.0f };
 	};
 }

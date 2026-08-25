@@ -309,17 +309,17 @@ namespace VATS::UI
 				return;
 			}
 
-			// Chance display simplified 2026-08-25 to match AimAssist.cpp's
-			// removal of the distance-falloff/roll system - the real logic
-			// is now a fixed 100% (blocked only by an actual obstruction,
-			// handled by real projectile physics, not a LOS check), so the
-			// HUD always shows the same fixed number instead of a stale
-			// distance-scaled guess.
+			// Hit-chance readout removed entirely 2026-08-25 (Alexander's
+			// call). The roll system it reported on was removed earlier the
+			// same day, leaving it hardcoded to "100%" - a number that
+			// looked like a live calculation while conveying nothing. Not
+			// worth keeping a placeholder on screen for a mechanic that may
+			// or may not come back; distance alone is the useful readout.
 			char          value[32] = "--";
 			bool          haveHealth = false;
 			HealthReading hp{};
 			if (dist >= 0.0f) {
-				std::snprintf(value, sizeof(value), "%.0f m | 100%%", dist);
+				std::snprintf(value, sizeof(value), "%.0f m", dist);
 
 				// Restored 2026-08-25 (see HealthReader.h) - avStorage-based
 				// read only, the native-widget probe (HealthWidgetReader)
@@ -440,30 +440,13 @@ namespace VATS::UI
 
 		const auto state = Controller::Get().GetOverlayState();
 
-		// Unconditional, always-drawn ground-truth readout: independent of
-		// target acquisition, dead checks, projection, off-screen culling —
-		// anything that could be blamed for a mismatch. Added 2026-08-22
-		// after an extended "box shows on OFF" investigation that turned out
-		// to be Starfield's own dev console lagging behind by a line, not
-		// our code — this text is what settled it, keep it around as the
-		// standing ground truth rather than trusting the console's timing.
-		{
-			auto*       dl = ImGui::GetForegroundDrawList();
-			const char* modeLabel = "OFF";
-			ImU32       statusColor = IM_COL32(255, 100, 100, 255);
-			switch (state.mode) {
-			case VATSMode::kLocked:
-				modeLabel = "LOCKED";
-				statusColor = IM_COL32(120, 255, 140, 255);
-				break;
-			default:
-				break;
-			}
-			char statusLine[64];
-			std::snprintf(statusLine, sizeof(statusLine), "VATS: %s", modeLabel);
-			dl->AddText(ImVec2{ 20.0f, 20.0f }, IM_COL32(0, 0, 0, 220), statusLine);  // outline
-			dl->AddText(ImVec2{ 21.0f, 21.0f }, statusColor, statusLine);
-		}
+		// The unconditional "VATS: OFF/LOCKED" corner readout was removed
+		// 2026-08-25. It was added as a diagnostic on 2026-08-22 to settle
+		// an investigation where the game's own dev console lagged a line
+		// behind and was being read as ground truth - it did that job, and
+		// the target box plus the resource bar now make the mode obvious
+		// without a debug label sitting over the HUD. The log still records
+		// every transition if it is ever needed again.
 
 		// Re-evaluate "what's under the crosshair" at kAimScanInterval rather
 		// than every frame — see the comment on that constant. Only needed
@@ -574,7 +557,16 @@ namespace VATS::UI
 			// The bar refills only while VATS is off - Alexander's design,
 			// so hopping straight into a new lock never comes free.
 			VatsResource::Get().TickIdle();
-			LogIfChanged(DrawOutcome::kOff, 0, "off");
+
+			// No "off" log line here. LogIfChanged dedupes on
+			// (outcome, formID), and this one fired every frame with
+			// formID=0 while the pre-lock crosshair scan was logging its
+			// own outcome for a real formID in the same frame - each call
+			// reset the other's "last logged" state, so both looked like a
+			// change every time. That produced hundreds of identical lines
+			// per second and buried everything else in the log. The line
+			// carried no information anyway: Controller already logs every
+			// LOCKED and OFF transition.
 			return;
 		}
 
