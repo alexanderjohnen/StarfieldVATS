@@ -93,49 +93,84 @@ Also this session:
   own real-world testing showing worldBound is good enough most of the
   time — revisit only if the bad pose recurs as an actual practical problem.
 
-## Open, diagnostics deployed but NOT YET TESTED — pick these up first
+## 2026-08-25 (later session): live health, and what it unblocked
 
-- **Health bar**: both prior theories for live current health are now
-  *disproven with hard evidence* (not just "didn't find it yet"). This
-  session's log showed `avStorage.baseValues`' health entry read once at
-  full HP and then genuinely never changed across a real fight with
-  confirmed hits — almost certainly MAX health, not current (the two are
-  equal at full HP, which is exactly when the original cross-check
-  happened, so it never actually distinguished the two). `avStorage.
-  modifiers` was raw-dumped and parses cleanly at the already-used 24-byte
-  stride (20 real entries, all plausible) but genuinely has no health
-  entry — not a parsing bug. Live health must live elsewhere entirely.
-  `HealthReader::ScanForLiveHealthCandidates` (new this session) blind-
-  scans a 0x2000-byte window of the Actor object itself for any float that
-  *decreases* while staying within ~2%-105% of the actor's own known max
-  HP — same raw-memory-diffing technique that originally found
-  ProjectileTracker's real offsets. Deployed, **next in-game test needed**:
-  lock a target, deal damage over several hits (not one-shot), check the
-  log for `[VATS] health scan:` lines with a real HP-sized candidate.
-- **Hit marker**: still doesn't hide (`CombatHudVisibility.cpp`) despite
-  the JPEXS-confirmed real container name+root and both dot- and slash-
-  notation paths, all failing `IsAvailable()`. Added a baseline sanity
-  probe this session: `GetVariable(root, realRootPath)` with **no child
-  appended**, mirroring an engine-internal call CommonLibSF's own
-  `GameMenuBase.h` uses. If this baseline also fails, the fault is
-  upstream of any path guess (wrong root/movie pointer, wrong timing), not
-  the path strings; if it succeeds, the root chain is proven good and the
-  fault is specifically in reaching a named child. **Next test needed**:
-  check the log for `combat-hud: baseline GetVariable(...)` after a lock.
-- **"Lock ends when target dies"**: code has existed since 2026-08-22
-  (dead-bit check → `ForceOff()` in `Overlay.cpp`'s Locked branch), but
-  Alexander reports it does NOT work in practice. Investigated this
-  session: the log genuinely could never have distinguished this working
-  from not, since `ForceOff()` logs one generic line shared by every
-  trigger (dead target, any blocking menu). Added a distinct log line for
-  the dead-triggered case, plus continuous log-on-change of the target's
-  raw `boolBits` (not just when the dead bit specifically flips) - if a
-  visibly-dead target never shows bit `0x800` set, `GameOffsets::
-  kActorDeadBit` itself is the suspect (e.g. Starfield's crawling/downed
-  state might not be "dead" yet by this bit, and true death - the bit
-  actually flipping - might come later or not fire the way assumed).
-  **Next test needed**: lock a target, kill it, check whether `[VATS]
-  target dead bit set...` ever appears and whether the lock actually ends.
+**Live current health finally works, and the memory search was never
+going to find it.** `ActorValueOwner::GetActorValue` - the same engine
+accessor behind the console's `getav` and Papyrus' `Actor.GetValue` - is
+the source. `ActorValueProbe.cpp` locates the `ActorValueOwner`
+sub-object inside `Actor` by walking the MSVC RTTI class hierarchy
+(`Actor+0x070`, read from the base class descriptor's `mdisp`, not
+guessed) and dispatches through it, re-verifying the sub-object's own
+locator offset on every call. Confirmed in-game tracking a real kill:
+345.00 → 218.84 → … → 1.12 → **-13.93** (negative on overkill).
+
+Two things worth carrying forward:
+- **The rule "relocated data reads are safe, relocated function calls
+  are the crash category" was over-applied.** It was formed against
+  `REL::ID` calls, which crashed this project twice. `GetActorValue` is a
+  plain virtual call through the object's own vtable - no Address Library
+  lookup, so none of the failure mode the rule exists to prevent. Virtual
+  dispatch is a *different* category. (Caveat: a vtable slot index deep in
+  a large class is itself reverse-engineered, so this is not a blanket
+  licence - `ActorValueOwner` is a small interface where slot 01 is
+  unambiguous.)
+- **Alexander demonstrated the answer on 2026-08-24** by running `getav
+  health` before and after a shot (480.00 → 461.90). It was filed as a
+  cross-check for the memory search instead of being recognised as the
+  solution, and the search ran two more days past it. When a rule rules
+  out an approach the user has already shown working, re-examine the rule.
+
+What that unblocked, all confirmed in-game:
+- **Health bar** works.
+- **Lock ends on target death** - `health <= 0`, replacing a dead-bit
+  check that had never once fired. `Actor::boolBits & BOOL_BITS::kDead`
+  reads *identically* on a living actor and one lying dead on the floor;
+  a raw dump showed the struct layout is fine, so it is the enum values
+  that do not match this game (`kSetOnDeath`, 1<<23, is set on living
+  actors too). **Do not trust BOOL_BITS values without measuring.**
+- **Corpses are no longer targetable** - same root cause, same fix.
+- **VATS resource bar** (`VatsResource.cpp`), Alexander's design: full
+  player health sets capacity, full player oxygen sets refill rate, and
+  the budget is spent per point of damage *dealt* (measured as the
+  target's health dropping, so armour is accounted for free). Keyed to
+  maximums, not current values, to avoid a death spiral. Entirely
+  self-contained; never writes to the player's real stats.
+- **Auto-advance to the next enemy on a kill**, paid for out of that
+  budget.
+
+**Friendly actors** are filtered by measurement, not by faction. A
+companion and an enemy read `boolBits` 0x162021A2 and 0x122021A2 -
+differing in exactly one bit, 0x04000000, which the header names
+`kPlayerTeammate`. `currentCombatTarget` reads 1 for an engaged enemy
+against a player form ID of 0x14, so it holds a *handle* and 1 is the
+player's (matching `shooterHandle=1` in this project's projectile logs).
+A real faction/relationship check is out of reach: `IsHostileToActor` has
+Address Library ID **0**, and reconstructing it means walking the actor's
+faction list, the player's, and the faction-reaction records. Neutral
+civilians therefore remain targetable.
+
+**Hit/kill/crit markers** hide correctly (`visible`, the AS3 spelling -
+every earlier attempt used `_visible`, which is AS2, and that alone was
+the whole bug). They were never appearing *during* a lock: what was
+visible was the **restore**, firing the instant a kill ended the lock and
+un-hiding an animation mid-play. Alexander diagnosed that from the audio
+- hearing the crit sound with nothing on screen. Restore is now deferred
+until the indicator parks on its "End" frame, with a tunable ceiling
+(`iHudRestoreDelayMs`, 2500ms) because the game raises some crit events
+several seconds late and suppressing until they stop would mean
+suppressing indefinitely.
+
+**Still open / not confirmed:**
+- Auto-advance tuning (engagement-filtered cone scan, 60° cone) - newly
+  deployed, unverified in play.
+- `fAimPointHeightFactor` 1.25 - 1.5 sat too high on standing targets;
+  1.25 unverified.
+- **Untested against non-humanoid creatures entirely.** The aim point is
+  a proportional lift specifically so it scales with any body shape, but
+  no alien has been fought with this on. `fAimPointHeightFactor=1.0`
+  restores the old behaviour without a rebuild.
+- Neutral civilians targetable (see above).
 
 ## Backlog: real occlusion via the depth buffer (2026-08-25)
 
