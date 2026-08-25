@@ -38,15 +38,6 @@ namespace VATS::UI
 		// background needs a shadow, not just more line thickness.
 		constexpr ImU32 kOutline = IM_COL32(10, 14, 16, 200);
 
-		// Single aim point (chest height) — the Suit/Helmet/Pack body-part
-		// system was removed 2026-08-22, see GameOffsets::kAimPointChestZ.
-		RE::NiPoint3 ResolveAimWorldPos(const RE::NiPoint3& a_pos)
-		{
-			RE::NiPoint3 out = a_pos;
-			out.z += GameOffsets::kAimPointChestZ;
-			return out;
-		}
-
 		// How often the pre-lock scan re-evaluates "what's under the
 		// crosshair right now" (drives the "TARGETING (N)" hint while Off).
 		// A full cell scan (Targeting.cpp) every single Present call
@@ -258,7 +249,7 @@ namespace VATS::UI
 				LogIfChanged(DrawOutcome::kLocationReadFailed, formID, "skipped: location read failed");
 				return false;
 			}
-			pos = ResolveAimWorldPos(pos);
+			pos = WorldBoundProbe::GetAimPoint(a_actor, pos);
 
 			float sx = 0.0f;
 			float sy = 0.0f;

@@ -16,11 +16,55 @@ namespace VATS
 			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
 		}
 
+		// Shared by LogIfChanged and GetAimPoint - the offset-chain walk
+		// itself, no interpretation/clamping. See GameOffsets.h for the
+		// chain and its unconfirmed-offset caveats.
+		[[nodiscard]] bool TryReadWorldBound(RE::Actor* a_actor, RE::NiBound& a_out)
+		{
+			if (!a_actor) {
+				return false;
+			}
+			std::uint64_t loadedData = 0;
+			if (!Read(a_actor, GameOffsets::kActorLoadedData, loadedData) || !loadedData) {
+				return false;
+			}
+			std::uint64_t data3D = 0;
+			if (!Read(reinterpret_cast<const void*>(loadedData), GameOffsets::kLoadedRefData3D, data3D) || !data3D) {
+				return false;
+			}
+			if (!Read(reinterpret_cast<const void*>(data3D), GameOffsets::kNiAVObjectWorldBound, a_out)) {
+				return false;
+			}
+			// Plausibility check (2026-08-25): the chain can resolve to
+			// non-null pointers that don't actually point at a live,
+			// properly-initialised NiAVObject (e.g. a brief window during
+			// spawn/despawn - the same class of "reads succeed, data is
+			// garbage" risk this project hit with recycled projectile
+			// pointers earlier today). A real worldBound radius has
+			// consistently measured ~0.9-1.2 in testing; reject anything
+			// wildly outside a generous band rather than trust a read that
+			// merely didn't fault.
+			if (!(a_out.radius > 0.05f && a_out.radius < 10.0f)) {
+				return false;
+			}
+			return true;
+		}
+
 		// Logged again once the center has moved at least this far since
 		// the last log line for this actor - filters per-frame animation
 		// jitter (breathing, weapon sway) while still catching a real pose
 		// change (standing<->crouching is typically tens of centimetres).
 		constexpr float kLogMoveThreshold = 0.05f;
+
+		// GetAimPoint's safety floor (2026-08-25): testing showed a
+		// transient ragdoll-collapse frame where the raw center read
+		// slightly BELOW the actor's own feet - physically plausible for a
+		// falling body for one frame, but not something to ever aim a
+		// redirected round at (risks aiming into/under the floor). Clamps
+		// z only, never x/y, so the real horizontal body-center position
+		// (which can differ meaningfully from the feet position during a
+		// fall - also observed in testing) is preserved.
+		constexpr float kMinAimPointAboveFeet = 0.1f;
 
 		[[nodiscard]] float Distance(const RE::NiPoint3& a_a, const RE::NiPoint3& a_b)
 		{
@@ -31,22 +75,32 @@ namespace VATS
 		}
 	}
 
+	RE::NiPoint3 WorldBoundProbe::GetAimPoint(RE::Actor* a_actor, const RE::NiPoint3& a_feet)
+	{
+		RE::NiPoint3 fallback = a_feet;
+		fallback.z += GameOffsets::kAimPointChestZ;
+
+		RE::NiBound bound{};
+		if (!TryReadWorldBound(a_actor, bound)) {
+			return fallback;
+		}
+
+		RE::NiPoint3 out = bound.center;
+		const float  minZ = a_feet.z + kMinAimPointAboveFeet;
+		if (out.z < minZ) {
+			out.z = minZ;
+		}
+		return out;
+	}
+
 	void WorldBoundProbe::LogIfChanged(RE::Actor* a_actor)
 	{
 		if (!a_actor) {
 			return;
 		}
 
-		std::uint64_t loadedData = 0;
-		if (!Read(a_actor, GameOffsets::kActorLoadedData, loadedData) || !loadedData) {
-			return;
-		}
-		std::uint64_t data3D = 0;
-		if (!Read(reinterpret_cast<const void*>(loadedData), GameOffsets::kLoadedRefData3D, data3D) || !data3D) {
-			return;
-		}
 		RE::NiBound bound{};
-		if (!Read(reinterpret_cast<const void*>(data3D), GameOffsets::kNiAVObjectWorldBound, bound)) {
+		if (!TryReadWorldBound(a_actor, bound)) {
 			return;
 		}
 

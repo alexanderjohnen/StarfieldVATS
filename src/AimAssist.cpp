@@ -10,6 +10,7 @@
 #include "Targeting.h"
 #include "UI/CameraProject.h"
 #include "VATSController.h"
+#include "WorldBoundProbe.h"
 
 #include <algorithm>
 #include <chrono>
@@ -59,15 +60,6 @@ namespace VATS
 			return pid == ::GetCurrentProcessId();
 		}
 
-		// Single aim point (chest height) — the Suit/Helmet/Pack body-part
-		// system was removed 2026-08-22, see GameOffsets::kAimPointChestZ.
-		[[nodiscard]] RE::NiPoint3 ResolveAimWorldPos(const RE::NiPoint3& a_pos)
-		{
-			RE::NiPoint3 out = a_pos;
-			out.z += GameOffsets::kAimPointChestZ;
-			return out;
-		}
-
 		// Minimal standalone version of Overlay.cpp's ResolveOnScreen —
 		// dead check + position read + projection + world distance to the
 		// player, no telemetry/throttling (that's a UI concern; this runs
@@ -89,7 +81,7 @@ namespace VATS
 			if (!SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &pos, sizeof(pos))) {
 				return false;
 			}
-			const RE::NiPoint3 aimPos = ResolveAimWorldPos(pos);
+			const RE::NiPoint3 aimPos = WorldBoundProbe::GetAimPoint(a_actor, pos);
 
 			float sx = 0.0f, sy = 0.0f;
 			if (!UI::WorldToScreen(aimPos, sx, sy)) {

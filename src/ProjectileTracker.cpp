@@ -2,6 +2,7 @@
 
 #include "GameOffsets.h"
 #include "SafeMem.h"
+#include "WorldBoundProbe.h"
 
 #include <algorithm>
 #include <cmath>
@@ -103,15 +104,16 @@ namespace VATS
 		// removed body-part offsets; tune in-game.
 		constexpr float kMissOffsetWorld = 0.7f;
 
-		// Target's chest-height aim point plus this round's own fixed
-		// miss-offset (zero on a hit) - recomputed from the target's
-		// CURRENT position every call, which is what lets continuous
-		// homing correct for target movement, not just our own earlier aim
-		// error.
-		[[nodiscard]] RE::NiPoint3 ResolveAimPoint(const RE::NiPoint3& a_targetPos, const RE::NiPoint3& a_missOffset)
+		// Target's real body-center aim point (WorldBoundProbe::GetAimPoint
+		// - pose- and creature-agnostic, falls back to the old fixed
+		// chest-height offset if the worldBound chain doesn't resolve)
+		// plus this round's own fixed miss-offset (zero on a hit) -
+		// recomputed from the target's CURRENT position every call, which
+		// is what lets continuous homing correct for target movement, not
+		// just our own earlier aim error.
+		[[nodiscard]] RE::NiPoint3 ResolveAimPoint(RE::Actor* a_target, const RE::NiPoint3& a_targetPos, const RE::NiPoint3& a_missOffset)
 		{
-			RE::NiPoint3 out = a_targetPos;
-			out.z += GameOffsets::kAimPointChestZ;
+			RE::NiPoint3 out = WorldBoundProbe::GetAimPoint(a_target, a_targetPos);
 			out.x += a_missOffset.x;
 			out.y += a_missOffset.y;
 			out.z += a_missOffset.z;
@@ -308,7 +310,7 @@ namespace VATS
 				it = a_tracked.erase(it);
 				continue;
 			}
-			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, it->second.missOffset);
+			const RE::NiPoint3 aimPoint = ResolveAimPoint(a_target, targetPos, it->second.missOffset);
 			if (HomeProjectile(it->first, aimPoint, it->second)) {
 				++it;
 			} else {
@@ -404,7 +406,7 @@ namespace VATS
 				missOffset.y = jitter(rng) * kMissOffsetWorld;
 				missOffset.z = jitter(rng) * kMissOffsetWorld * 0.5f;
 			}
-			const RE::NiPoint3 aimPoint = ResolveAimPoint(targetPos, missOffset);
+			const RE::NiPoint3 aimPoint = ResolveAimPoint(a_target, targetPos, missOffset);
 
 			const auto inserted = a_tracked.emplace(entry, TrackedState{ now, missOffset });
 			(void)HomeProjectile(entry, aimPoint, inserted.first->second);  // first redirect, right now
