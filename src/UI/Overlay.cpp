@@ -385,14 +385,21 @@ namespace VATS::UI
 		// menu name — unconfirmed in-game, degrades to a no-op if wrong. A
 		// cell-transition loading screen is covered by "LoadingMenu" (RTTI-
 		// confirmed; also the file named in starfield-vats-mod-design
-		// memory, loadingmenu.swf).
+		// memory, loadingmenu.swf). "FavoritesMenu" added 2026-08-25,
+		// Alexander's request - same best-effort status as "StarMap": no
+		// direct RTTI class under that exact name, inferred from the real,
+		// mapped `FavoritesMenu_AssignQuickkey`/`FavoritesMenu_UseQuickkey`
+		// event names (Events.h) following this project's other menus'
+		// naming convention - unconfirmed in-game, degrades to a no-op if
+		// wrong.
 		if (auto* ui = RE::UI::GetSingleton()) {
 			const bool blockingMenuOpen = ui->menusVisible ||
 			                               ui->IsMenuOpen("DataMenu") ||
 			                               ui->IsMenuOpen("StarMap") ||
 			                               ui->IsMenuOpen("DialogueMenu") ||
 			                               ui->IsMenuOpen("LoadingMenu") ||
-			                               ui->IsMenuOpen("PauseMenu");
+			                               ui->IsMenuOpen("PauseMenu") ||
+			                               ui->IsMenuOpen("FavoritesMenu");
 			if (blockingMenuOpen) {
 				Controller::Get().ForceOff();
 				return;
@@ -579,6 +586,14 @@ namespace VATS::UI
 		// anymore.
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
+
+		// Re-check the equipped weapon every frame while Locked
+		// (2026-08-25) - see Controller::SyncProjectileOverride's comment.
+		// A weapon switch mid-lock used to leave the NEW weapon un-flipped
+		// (still hitscan) until the player toggled VATS off and back on;
+		// confirmed from a real session's log. No-op unless the equipped
+		// weapon actually changed since the last check.
+		Controller::Get().SyncProjectileOverride();
 
 		// Read-only probes (2026-08-25), draw nothing, change nothing.
 		// worldBound alone turned out insufficient - screenshot-confirmed

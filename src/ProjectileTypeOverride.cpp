@@ -57,73 +57,77 @@ namespace VATS
 		// weapon read 0x02 instead.
 		constexpr std::uint8_t kRealProjectileTypeValue = 0x00;
 
-		[[nodiscard]] std::uint64_t ResolveEquippedProjectile(RE::Actor* a_actor)
-		{
-			if (!a_actor) {
-				return 0;
-			}
+	}
 
-			std::uint64_t invList = 0;
-			if (!Read(a_actor, kInventoryList, invList) || !invList) {
-				return 0;
-			}
-
-			std::uint32_t arraySize = 0;
-			std::uint32_t arrayCapacity = 0;
-			std::uint64_t arrayData = 0;
-			if (!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArraySize, arraySize) ||
-				!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayCapacity, arrayCapacity) ||
-				!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayData, arrayData) ||
-				arraySize == 0 || arrayCapacity < arraySize || !arrayData) {
-				return 0;
-			}
-
-			std::uint64_t instanceData = 0;
-			for (std::uint32_t i = 0; i < arraySize; ++i) {
-				const std::uint64_t itemBase = arrayData + static_cast<std::uint64_t>(i) * kItemStride;
-
-				std::uint64_t object = 0;
-				if (!Read(reinterpret_cast<const void*>(itemBase), kItemObject, object) || !object) {
-					continue;
-				}
-				std::uint8_t formType = 0;
-				if (!Read(reinterpret_cast<const void*>(object), GameOffsets::kFormType, formType) || formType != kFormTypeWEAP) {
-					continue;
-				}
-				std::uint32_t flags = 0;
-				if (!Read(reinterpret_cast<const void*>(itemBase), kItemFlags, flags) || (flags & kSlotMask) == 0) {
-					continue;  // not equipped
-				}
-				std::uint64_t itemInstanceData = 0;
-				if (!Read(reinterpret_cast<const void*>(itemBase), kItemInstanceData, itemInstanceData) || !itemInstanceData) {
-					continue;
-				}
-				instanceData = itemInstanceData;
-				break;
-			}
-
-			if (!instanceData) {
-				return 0;
-			}
-
-			std::uint64_t weaponAmmoData = 0;
-			if (!Read(reinterpret_cast<const void*>(instanceData), kInstanceDataWeaponAmmoData, weaponAmmoData) || !weaponAmmoData) {
-				return 0;
-			}
-
-			std::uint64_t projectile = 0;
-			if (!Read(reinterpret_cast<const void*>(weaponAmmoData), kWeaponAmmoDataProjectile, projectile) || !projectile) {
-				return 0;
-			}
-
-			std::uint8_t formType = 0;
-			if (!Read(reinterpret_cast<const void*>(projectile), GameOffsets::kFormType, formType) || formType != kFormTypePROJ) {
-				return 0;
-			}
-
-			return projectile;
+	std::uint64_t ProjectileTypeOverride::ResolveEquippedProjectile(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return 0;
 		}
 
+		std::uint64_t invList = 0;
+		if (!Read(a_actor, kInventoryList, invList) || !invList) {
+			return 0;
+		}
+
+		std::uint32_t arraySize = 0;
+		std::uint32_t arrayCapacity = 0;
+		std::uint64_t arrayData = 0;
+		if (!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArraySize, arraySize) ||
+			!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayCapacity, arrayCapacity) ||
+			!Read(reinterpret_cast<const void*>(invList), kInventoryListData + kArrayData, arrayData) ||
+			arraySize == 0 || arrayCapacity < arraySize || !arrayData) {
+			return 0;
+		}
+
+		std::uint64_t instanceData = 0;
+		for (std::uint32_t i = 0; i < arraySize; ++i) {
+			const std::uint64_t itemBase = arrayData + static_cast<std::uint64_t>(i) * kItemStride;
+
+			std::uint64_t object = 0;
+			if (!Read(reinterpret_cast<const void*>(itemBase), kItemObject, object) || !object) {
+				continue;
+			}
+			std::uint8_t formType = 0;
+			if (!Read(reinterpret_cast<const void*>(object), GameOffsets::kFormType, formType) || formType != kFormTypeWEAP) {
+				continue;
+			}
+			std::uint32_t flags = 0;
+			if (!Read(reinterpret_cast<const void*>(itemBase), kItemFlags, flags) || (flags & kSlotMask) == 0) {
+				continue;  // not equipped
+			}
+			std::uint64_t itemInstanceData = 0;
+			if (!Read(reinterpret_cast<const void*>(itemBase), kItemInstanceData, itemInstanceData) || !itemInstanceData) {
+				continue;
+			}
+			instanceData = itemInstanceData;
+			break;
+		}
+
+		if (!instanceData) {
+			return 0;
+		}
+
+		std::uint64_t weaponAmmoData = 0;
+		if (!Read(reinterpret_cast<const void*>(instanceData), kInstanceDataWeaponAmmoData, weaponAmmoData) || !weaponAmmoData) {
+			return 0;
+		}
+
+		std::uint64_t projectile = 0;
+		if (!Read(reinterpret_cast<const void*>(weaponAmmoData), kWeaponAmmoDataProjectile, projectile) || !projectile) {
+			return 0;
+		}
+
+		std::uint8_t formType = 0;
+		if (!Read(reinterpret_cast<const void*>(projectile), GameOffsets::kFormType, formType) || formType != kFormTypePROJ) {
+			return 0;
+		}
+
+		return projectile;
+	}
+
+	namespace
+	{
 		// Reference-counted per projectile (2026-08-23) - AimAssist.cpp's
 		// SteeringLoop now releases its "one steering thread at a time"
 		// gate (s_steering) as soon as the button is released rather than

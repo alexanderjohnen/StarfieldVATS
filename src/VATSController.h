@@ -71,6 +71,21 @@ namespace VATS
 		};
 		[[nodiscard]] ShotResult GetLastShotResult();
 
+		// Re-checks the player's currently equipped weapon against
+		// whichever weapon's projectile the override currently applies to
+		// (2026-08-25) - a no-op if unchanged. Fixes a real gap the
+		// lock-scoped design above introduced: engaging once at Lock time
+		// only covers whatever was equipped AT THAT MOMENT, so switching
+		// weapons mid-lock left the new weapon un-flipped (still hitscan,
+		// no projectile ever spawns for ProjectileTracker to find) until
+		// Alexander toggled VATS off and back on - confirmed 2026-08-25
+		// from a real session's log (weapon-switch mid-hold, engaged
+		// projectile pointer stayed on the old weapon, zero "projectile
+		// redirect" lines for the rest of that hold). No-op safe to call
+		// every frame; only actually does anything (Disengage+Engage) on
+		// an actual change. Call from Overlay::Draw() while Locked.
+		void SyncProjectileOverride();
+
 	private:
 		void Advance();  // game thread only
 
@@ -97,5 +112,13 @@ namespace VATS
 		// tick is mid-flight elsewhere.
 		std::mutex                      m_projectileOverrideLock;
 		ProjectileTypeOverride::Token   m_projectileOverride;
+		// Raw projectile pointer m_projectileOverride currently corresponds
+		// to, tracked separately from the Token itself (2026-08-25) - a
+		// Token for an ALREADY-real weapon (rocket/grenade) is deliberately
+		// left at projectile=0/active=false by Engage() (see
+		// ProjectileTypeOverride.cpp), which would make SyncProjectileOverride
+		// re-trigger every single check if it compared against
+		// m_projectileOverride.projectile instead. 0 = nothing engaged yet.
+		std::uint64_t                   m_projectileOverrideTarget{ 0 };
 	};
 }

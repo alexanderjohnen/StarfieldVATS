@@ -171,6 +171,7 @@ namespace VATS
 			const std::scoped_lock overrideLock(m_projectileOverrideLock);
 			ProjectileTypeOverride::Disengage(m_projectileOverride);
 			m_projectileOverride = {};
+			m_projectileOverrideTarget = 0;
 		}
 		// No console->Log() here (unlike Advance()) - this runs from the
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
@@ -183,6 +184,23 @@ namespace VATS
 	{
 		m_shotHit.store(a_hit, std::memory_order_relaxed);
 		m_shotTimestamp.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
+	}
+
+	void Controller::SyncProjectileOverride()
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+		const std::uint64_t current = ProjectileTypeOverride::ResolveEquippedProjectile(player);
+
+		const std::scoped_lock overrideLock(m_projectileOverrideLock);
+		if (current == m_projectileOverrideTarget) {
+			return;  // still the same weapon (or still nothing equipped) - nothing to do
+		}
+		ProjectileTypeOverride::Disengage(m_projectileOverride);
+		m_projectileOverride = ProjectileTypeOverride::Engage(player);
+		m_projectileOverrideTarget = current;
 	}
 
 	Controller::ShotResult Controller::GetLastShotResult()
@@ -273,11 +291,12 @@ namespace VATS
 			// trigger-hold - see VATSController.h for why. Done here, at
 			// lock time, so it is finished long before the player can pull
 			// the trigger; SteeringLoop no longer engages anything itself.
-			{
-				const std::scoped_lock overrideLock(m_projectileOverrideLock);
-				ProjectileTypeOverride::Disengage(m_projectileOverride);  // no-op unless a stale one somehow survived
-				m_projectileOverride = ProjectileTypeOverride::Engage(RE::PlayerCharacter::GetSingleton());
-			}
+			// SyncProjectileOverride() (not a direct Engage() call) so this
+			// shares the exact same "only Disengage+Engage on an actual
+			// weapon change" logic as the per-frame re-check below - a
+			// weapon switched WHILE already Locked needs the identical
+			// handling, see that function's comment.
+			SyncProjectileOverride();
 
 			if (Settings::Get().hideCrosshairWhileLocked) {
 				CrosshairVisibility::Hide();
@@ -363,6 +382,7 @@ namespace VATS
 			const std::scoped_lock overrideLock(m_projectileOverrideLock);
 			ProjectileTypeOverride::Disengage(m_projectileOverride);
 			m_projectileOverride = {};
+			m_projectileOverrideTarget = 0;
 		}
 		REX::INFO("[VATS] OFF");
 		if (console) {

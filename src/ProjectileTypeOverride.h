@@ -60,5 +60,14 @@ namespace VATS
 		// Call once when the hold ends, with the Token Engage returned.
 		// No-op if the token isn't active.
 		static void Disengage(const Token& a_token);
+
+		// Read-only resolve of a_actor's currently equipped weapon's live
+		// projectile pointer - no writes, no refcounting. Added 2026-08-25
+		// so a caller can cheaply detect a weapon SWITCH (compare this
+		// against whatever pointer an already-held Token corresponds to)
+		// without paying for a full Disengage+Engage cycle every check.
+		// Returns 0 if nothing resolves (no weapon equipped, chain
+		// failure, etc.) - same as Engage()'s internal resolution.
+		[[nodiscard]] static std::uint64_t ResolveEquippedProjectile(RE::Actor* a_actor);
 	};
 }
