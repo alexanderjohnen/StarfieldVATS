@@ -1,5 +1,6 @@
 #include "HealthReader.h"
 
+#include "ActorValueProbe.h"
 #include "SafeMem.h"
 
 #include <algorithm>
@@ -152,11 +153,34 @@ namespace VATS
 			return false;
 		}
 
+		const std::uint32_t formID = a_actor->GetFormID();
+
+		// baseValues' health entry is MAX health - established 2026-08-25
+		// by watching it stay pinned at its full-HP value across an entire
+		// real fight with confirmed hits landing. The running-highest guard
+		// stays anyway, so a temporary buff can only ever grow the scale.
 		static std::unordered_map<std::uint32_t, float> s_maxSeen;
-		const std::uint32_t                              formID = a_actor->GetFormID();
-		float&                                            maxSeen = s_maxSeen[formID];
+		float&                                          maxSeen = s_maxSeen[formID];
 		if (current > maxSeen) {
 			maxSeen = current;
+		}
+
+		// Live current health, via the engine's own accessor rather than
+		// any data field - see ActorValueProbe.h for the full reasoning
+		// (short version: Techrunner displays live health and ships no
+		// SFSE plugin at all, so Papyrus' Actor.GetValue, and therefore
+		// ActorValueOwner::GetActorValue, is where the real number lives;
+		// there was never a hidden field to find). Falls back to the
+		// baseValues number - i.e. max - if the ActorValueOwner sub-object
+		// can't be identified, so the bar degrades to "always full"
+		// instead of vanishing.
+		float      liveCurrent = 0.0f;
+		const bool haveLive = TryGetLiveHealth(a_actor, liveCurrent);
+		if (haveLive) {
+			current = liveCurrent;
+			if (current > maxSeen) {
+				maxSeen = current;
+			}
 		}
 
 		// Re-checking modifiers live (2026-08-25) - see kModifierStride's
@@ -203,7 +227,7 @@ namespace VATS
 		static std::unordered_map<std::uint32_t, float> s_lastLoggedCurrent;
 		const auto                                        it = s_lastLoggedCurrent.find(formID);
 		if (it == s_lastLoggedCurrent.end() || it->second != current) {
-			REX::INFO("[VATS] health: formID=0x{:08X} current={:.1f} max={:.1f}", formID, current, maxSeen);
+			REX::INFO("[VATS] health: formID=0x{:08X} current={:.2f} max={:.1f} (live={})", formID, current, maxSeen, haveLive);
 			s_lastLoggedCurrent[formID] = current;
 		}
 
@@ -329,7 +353,11 @@ namespace VATS
 				// impossible to observe (zero is below any such floor, and
 				// the old check additionally required BOTH samples in
 				// range, so a 30 -> 0 transition was discarded twice over).
-				if (prev >= kZeroedFrom && current <= kZeroedTo) {
+				// Both ends must also be inside the plausible band, or the
+				// branch fires on junk: without the upper bound the first
+				// test produced "ZEROED 3.4e38 -> -65.9" (FLT_MAX next to a
+				// negative), which is obviously not health.
+				if (prev >= kZeroedFrom && prev <= kMaxPlausibleHP && current <= kZeroedTo && current >= 0.0f) {
 					REX::INFO("[VATS] health scan: formID=0x{:08X} {}+0x{:04X} ZEROED {:.1f} -> {:.1f} (knownMax={:.1f}) <<< DEATH CANDIDATE",
 						formID, a_label, off, prev, current, haveMax ? baseValuesReading.max : -1.0f);
 				} else if (bothInRange && (prev - current) >= kMinStepDrop) {
