@@ -2,6 +2,7 @@
 
 #include "GameOffsets.h"
 #include "SafeMem.h"
+#include "Settings.h"
 
 #include <cmath>
 #include <unordered_map>
@@ -86,7 +87,35 @@ namespace VATS
 		}
 
 		RE::NiPoint3 out = bound.center;
-		const float  minZ = a_feet.z + kMinAimPointAboveFeet;
+
+		// Bias upward from the bounding sphere's centre toward the chest.
+		// The centre is the GEOMETRIC middle of the whole body, which for a
+		// standing humanoid is hip height, not chest - visible in-game as a
+		// target box sitting over the target's thighs (screenshot,
+		// 2026-08-25), and as redirected rounds converging lower than the
+		// player aimed.
+		//
+		// Scaled by how high the centre already sits above the actor's own
+		// feet, rather than by a fixed distance or by the sphere's radius.
+		// That keeps it pose-aware for free: a standing figure with its
+		// centre ~0.9m up aims at ~1.35m (chest), while a crouching or
+		// prone one has a much lower centre and so gets a proportionally
+		// smaller lift instead of being aimed at above its own body. A
+		// fixed offset would have broken exactly the prone case this was
+		// partly meant to help.
+		const float centreAboveFeet = out.z - a_feet.z;
+		if (centreAboveFeet > 0.0f) {
+			out.z = a_feet.z + centreAboveFeet * Settings::Get().aimPointHeightFactor;
+			// Never aim above the top of the actor's own bounding sphere -
+			// a bad factor should degrade to "aims high on the body", never
+			// to "aims over its head".
+			const float maxZ = bound.center.z + bound.radius;
+			if (out.z > maxZ) {
+				out.z = maxZ;
+			}
+		}
+
+		const float minZ = a_feet.z + kMinAimPointAboveFeet;
 		if (out.z < minZ) {
 			out.z = minZ;
 		}

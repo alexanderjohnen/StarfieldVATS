@@ -151,7 +151,7 @@ namespace VATS::UI
 			}
 		}
 
-		// The VATS resource bar, drawn under the target's health bar.
+		// The VATS resource bar, drawn above the target's health bar.
 		// Deliberately narrower and thinner than the health bar, and in the
 		// HUD's own off-white rather than a second saturated colour, so the
 		// two read as "the target's" and "mine" at a glance instead of
@@ -355,20 +355,36 @@ namespace VATS::UI
 				DrawCenteredText(dl, px, py - 36.0f - 20.0f, "MISS", kHitColor);
 			}
 
-			float tetherStartY = py + 36.0f;
+			// Both bars sit ABOVE the box, stacked upward, rather than below
+			// it (moved 2026-08-25 at Alexander's request). The box marks
+			// the actual aim point, which is partway up the target's body,
+			// so anything hung underneath it ended up over the target's
+			// legs or on the floor - visibly wrong, and it read as clutter
+			// rather than as a nameplate. Above the box the pair reads the
+			// way every enemy nameplate in the genre does.
+			//
+			// Order, bottom to top: the target's health closest to the
+			// target, then the player's own VATS budget above it - so
+			// "theirs" and "mine" stay spatially distinct.
+			constexpr float kBoxHalfH = 36.0f;
+			constexpr float kBarGap = 6.0f;
+			float           stackY = py - kBoxHalfH - kBarGap;
+
 			if (haveHealth) {
-				const float barY = py + 40.0f;
-				DrawHealthBar(dl, px, barY, hp.current, hp.max);
-				tetherStartY = barY + 7.0f + 6.0f;
+				stackY -= 7.0f;  // health bar height
+				DrawHealthBar(dl, px, stackY, hp.current, hp.max);
+				stackY -= kBarGap;
 			}
 
 			// Only meaningful while actually Locked - it's the budget being
 			// spent on this lock, not a property of the target.
 			if (const auto resource = VatsResource::Get().GetState();
 				resource.valid && Controller::Get().GetMode() == VATSMode::kLocked) {
-				DrawResourceBar(dl, px, tetherStartY, resource.current, resource.capacity);
-				tetherStartY += 4.0f + 6.0f;
+				stackY -= 4.0f;  // resource bar height
+				DrawResourceBar(dl, px, stackY, resource.current, resource.capacity);
 			}
+
+			const float tetherStartY = py + kBoxHalfH;
 
 			// Small tether line from box toward screen bottom, echoing the
 			// FO4 VATS look; subtle, mostly for readability against clutter.

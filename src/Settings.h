@@ -163,5 +163,22 @@ namespace VATS
 		// still has to be roughly facing the next target since the normal
 		// view cone (iConeDegrees) applies unchanged.
 		float autoAdvanceRangeMeters{ 30.0f };
+
+		// Where on a target the box sits and rounds are steered, as a
+		// multiple of how high the target's bounding-sphere centre already
+		// is above its own feet. 1.0 aims at that raw centre - which is the
+		// geometric middle of the whole body, i.e. hip height on a standing
+		// humanoid, and visibly too low. 1.5 lands around chest height.
+		//
+		// Deliberately proportional rather than a fixed distance, because
+		// Starfield's non-humanoid creatures come in wildly different
+		// shapes: a factor scales with whatever body it is applied to,
+		// while a fixed "chest offset" assumes human proportions and would
+		// aim over a low, sprawling creature entirely. Also clamped to the
+		// top of the target's own bounding sphere. UNTESTED against
+		// non-humanoids as of 2026-08-25 - set this back to 1.0 in the INI
+		// to restore the exact previous behaviour without a rebuild if some
+		// creature reacts badly.
+		float aimPointHeightFactor{ 1.5f };
 	};
 }
