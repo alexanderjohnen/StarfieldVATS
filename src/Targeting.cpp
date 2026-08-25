@@ -4,6 +4,7 @@
 #include "HealthReader.h"
 #include "SafeMem.h"
 #include "Settings.h"
+#include "UI/CameraProject.h"
 
 namespace VATS
 {
@@ -115,7 +116,7 @@ namespace VATS
 		}
 	}
 
-	std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg, RE::Actor* a_exclude, bool a_requireAlive, bool a_requireEngagedWithPlayer)
+	std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg, RE::Actor* a_exclude, bool a_requireAlive, bool a_requireEngagedWithPlayer, bool a_requireOnScreen)
 	{
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		auto* playerCamera = RE::PlayerCamera::GetSingleton();
@@ -183,6 +184,7 @@ namespace VATS
 		std::uint32_t nDeadSkipped = 0;
 		std::uint32_t nFriendlySkipped = 0;
 		std::uint32_t nNotEngagedSkipped = 0;
+		std::uint32_t nOffScreenSkipped = 0;
 		float         closestMissAngleDeg = -1.0f;  // smallest angle among actors that failed the cone check
 
 		for (std::uint32_t i = 0; i < scanCount; ++i) {
@@ -243,6 +245,31 @@ namespace VATS
 				}
 			}
 
+			// Must actually be on screen, not merely inside the cone.
+			//
+			// The cone alone is not a visibility test and cannot be made
+			// into one by choosing a number: at Starfield's default 90
+			// degree horizontal FOV the screen edge sits at 45 degrees, so
+			// the 60 degree advance cone was letting through targets the
+			// player cannot see. That is exactly what Alexander hit -
+			// auto-advance jumped to an enemy "behind" him, logged at 52.4
+			// degrees off axis, i.e. genuinely off-screen rather than
+			// genuinely behind.
+			//
+			// Projecting is the honest test, and it costs nothing extra:
+			// the same projection already runs every frame to place the
+			// target box, and it accounts for aspect ratio, which no single
+			// angle can.
+			if (a_requireOnScreen) {
+				float sx = 0.0f;
+				float sy = 0.0f;
+				if (!UI::WorldToScreen(pos, sx, sy) ||
+					sx < 0.0f || sx > 1.0f || sy < 0.0f || sy > 1.0f) {
+					++nOffScreenSkipped;
+					continue;
+				}
+			}
+
 			bestCosAngle = cosAngle;
 			best = TargetPick{ RE::NiPointer<RE::Actor>(candidate), dist, angleDeg };
 		}
@@ -251,8 +278,8 @@ namespace VATS
 			REX::WARN("[targeting] cellRefs={} exceeds scan cap {} — {} entries were NOT scanned this call",
 				size, kScanCap, size - scanCount);
 		}
-		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} notEngagedSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
-			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, nFriendlySkipped, nNotEngagedSkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
+		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} notEngagedSkipped={} offScreenSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
+			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, nFriendlySkipped, nNotEngagedSkipped, nOffScreenSkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
 
 		return best;
 	}

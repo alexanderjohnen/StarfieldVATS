@@ -162,8 +162,20 @@ several seconds late and suppressing until they stop would mean
 suppressing indefinitely.
 
 **Still open / not confirmed:**
-- Auto-advance tuning (engagement-filtered cone scan, 60° cone) - newly
-  deployed, unverified in play.
+- **Auto-advance is PARKED** (`bAutoAdvanceOnKill=0`, Alexander's call).
+  The mechanism works; picking a sensible target does not, because this
+  project has no line-of-sight test. Three filters were tried and none is
+  one: the crosshair activation target is occlusion-correct but only
+  reaches interaction range, so it essentially never fired; "engaged with
+  the player" still picks through walls, since an enemy shooting at you
+  from the next room is still shooting at you; the on-screen projection
+  check catches targets outside the view but not ones plainly visible
+  through a doorway on another floor. Testing showed enemies behind walls
+  and on other floors. Everything around it (resource cost, liveness,
+  friendly filtering, wider 60° cone, on-screen check) is in place and
+  correct - **re-enabling is one INI line once the depth-buffer occlusion
+  below exists.** That is now the blocking dependency for this feature,
+  not a nice-to-have.
 - `fAimPointHeightFactor` 1.25 - 1.5 sat too high on standing targets;
   1.25 unverified.
 - **Untested against non-humanoid creatures entirely.** The aim point is

@@ -142,6 +142,16 @@ namespace VATS
 		return out;
 	}
 
+	bool WorldBoundProbe::GetBoundRadius(RE::Actor* a_actor, float& a_out)
+	{
+		RE::NiBound bound{};
+		if (!TryReadWorldBound(a_actor, bound) || !(bound.radius > 0.0f)) {
+			return false;
+		}
+		a_out = bound.radius;
+		return true;
+	}
+
 	void WorldBoundProbe::LogIfChanged(RE::Actor* a_actor)
 	{
 		if (!a_actor) {

@@ -25,6 +25,15 @@ namespace VATS
 		// since every call site already has it.
 		[[nodiscard]] static RE::NiPoint3 GetAimPoint(RE::Actor* a_actor, const RE::NiPoint3& a_feet);
 
+		// The bounding sphere's radius, i.e. roughly how big this actor is
+		// in world units. Used to size the HUD target box so it frames the
+		// target instead of staying a fixed number of pixels: the box used
+		// to keep its size at any distance, which made it look like it grew
+		// as the target shrank away (Alexander, 2026-08-25). Returns false
+		// if the chain doesn't resolve, in which case the caller keeps its
+		// fixed fallback size.
+		[[nodiscard]] static bool GetBoundRadius(RE::Actor* a_actor, float& a_out);
+
 		// Logs the locked target's worldBound.center/radius next to its
 		// ref-origin (feet) position and the fixed-offset fallback,
 		// throttled to "log on meaningful change" (a few cm) rather than

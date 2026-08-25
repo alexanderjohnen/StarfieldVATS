@@ -299,7 +299,8 @@ namespace VATS
 					static_cast<float>(settings.autoAdvanceConeDeg),
 					dying,
 					/*a_requireAlive*/ true,
-					/*a_requireEngagedWithPlayer*/ settings.autoAdvanceRequireEngaged)) {
+					/*a_requireEngagedWithPlayer*/ settings.autoAdvanceRequireEngaged,
+					/*a_requireOnScreen*/ true)) {
 				next = pick->actor;
 				reportedDistance = pick->worldDistance;
 				reportedAngle = pick->angleDeg;

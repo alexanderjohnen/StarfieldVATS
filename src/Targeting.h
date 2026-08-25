@@ -81,7 +81,8 @@ namespace VATS
 		float       a_maxConeDeg,
 		RE::Actor*  a_exclude = nullptr,
 		bool        a_requireAlive = false,
-		bool        a_requireEngagedWithPlayer = false);
+		bool        a_requireEngagedWithPlayer = false,
+		bool        a_requireOnScreen = false);
 
 	// Reads PlayerCharacter's crosshair-activation target directly (the
 	// same value that drives vanilla "TALK E"/loot prompts) instead of

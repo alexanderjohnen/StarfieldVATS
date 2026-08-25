@@ -150,12 +150,28 @@ namespace VATS
 		// lock starts with, which is a different change.
 		float vatsCostPerDamage{ 2.0f };
 
-		// When a locked target dies with budget left, hop straight to the
-		// next living enemy instead of dropping out of VATS. Deliberately
-		// gated behind the resource system existing (Alexander deferred it
-		// until then, 2026-08-25) - without a cost, chaining targets would
-		// be free and VATS would never end on its own.
-		bool autoAdvanceOnKill{ true };
+		// PARKED 2026-08-25, Alexander's call, and the right one.
+		//
+		// When a locked target dies with budget left, hop to the next enemy
+		// instead of dropping out of VATS. The feature works; what does not
+		// work is choosing a sensible target, because this project has no
+		// line-of-sight test. Three successive filters were tried and none
+		// of them is one: the crosshair activation target is
+		// occlusion-correct but only reaches interaction range, so it
+		// essentially never fired; restricting to actors engaged with the
+		// player still picks them through walls, since an enemy shooting at
+		// you from another room is still shooting at you; and the on-screen
+		// projection check catches targets outside the view but not ones
+		// plainly visible on the far side of a wall.
+		//
+		// Alexander's testing: enemies behind walls, and on other floors.
+		// Rather than keep stacking approximations, this stays off until
+		// real occlusion exists - see the depth-buffer proposal in
+		// HANDOFF.md. All the surrounding work (resource cost, liveness,
+		// friendly filtering, wider cone, on-screen check) stays in place
+		// and correct, so re-enabling is a one-line change once occlusion
+		// lands.
+		bool autoAdvanceOnKill{ false };
 
 		// How far the auto-advance will look, in metres. Much shorter than
 		// the ordinary acquisition range: hopping to something across the

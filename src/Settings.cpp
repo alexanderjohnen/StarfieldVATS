@@ -51,7 +51,7 @@ namespace VATS
 		vatsCapacityPerHealth = GetPrivateProfileFloatA("Resource", "fCapacityPerHealth", 1.0f, INI_PATH);
 		vatsRefillPerOxygen = GetPrivateProfileFloatA("Resource", "fRefillPerOxygen", 0.5f, INI_PATH);
 		vatsCostPerDamage = GetPrivateProfileFloatA("Resource", "fCostPerDamage", 2.0f, INI_PATH);
-		autoAdvanceOnKill = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceOnKill", 1, INI_PATH) != 0;
+		autoAdvanceOnKill = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceOnKill", 0, INI_PATH) != 0;
 		autoAdvanceRangeMeters = GetPrivateProfileFloatA("Resource", "fAutoAdvanceRangeMeters", 30.0f, INI_PATH);
 		autoAdvanceRequireCrosshair = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceRequireCrosshair", 0, INI_PATH) != 0;
 		autoAdvanceRequireEngaged = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceRequireEngaged", 1, INI_PATH) != 0;

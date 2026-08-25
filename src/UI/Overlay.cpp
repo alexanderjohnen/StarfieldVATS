@@ -105,16 +105,19 @@ namespace VATS::UI
 		// a_value may be null — used for the Aiming highlight, which no
 		// longer shows a distance readout (Starfield's own scan reticle
 		// already has one, see Draw() below), just the label.
-		void DrawTargetBox(float a_px, float a_py, const char* a_label, const char* a_value, ImU32 a_color)
+		// Default half-extents, used when the target's real size can't be
+		// determined.
+		constexpr float kDefaultHalfW = 58.0f;
+		constexpr float kDefaultHalfH = 36.0f;
+
+		void DrawTargetBox(float a_px, float a_py, const char* a_label, const char* a_value, ImU32 a_color, float a_halfW, float a_halfH)
 		{
 			auto* dl = ImGui::GetForegroundDrawList();
 
-			constexpr float kHalfW = 58.0f;
-			constexpr float kHalfH = 36.0f;
-			const float     x0 = a_px - kHalfW;
-			const float     y0 = a_py - kHalfH;
-			const float     x1 = a_px + kHalfW;
-			const float     y1 = a_py + kHalfH;
+			const float     x0 = a_px - a_halfW;
+			const float     y0 = a_py - a_halfH;
+			const float     x1 = a_px + a_halfW;
+			const float     y1 = a_py + a_halfH;
 
 			// No filled background — Starfield's HUD elements sit directly
 			// over the scene rather than on a tinted panel.
@@ -347,7 +350,42 @@ namespace VATS::UI
 			const auto& io = ImGui::GetIO();
 			const float px = sx * io.DisplaySize.x;
 			const float py = sy * io.DisplaySize.y;
-			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color);
+
+			// Size the box to the target rather than keeping a fixed pixel
+			// size at every distance. The old fixed box framed a target's
+			// torso at 5m and was larger than the whole actor at 15m, which
+			// reads as the box growing as the target shrinks away
+			// (Alexander, 2026-08-25 - it never actually changed size).
+			//
+			// Derived by projecting a second point one bounding-sphere
+			// radius above the aim point and measuring the pixel gap, rather
+			// than computing it from FOV and aspect: the projection is
+			// already proven, and this way the box inherits whatever it does
+			// about aspect ratio for free.
+			float halfW = kDefaultHalfW;
+			float halfH = kDefaultHalfH;
+			float radius = 0.0f;
+			if (WorldBoundProbe::GetBoundRadius(a_actor, radius)) {
+				RE::NiPoint3 aimPoint{};
+				if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &aimPoint, sizeof(aimPoint))) {
+					aimPoint = WorldBoundProbe::GetAimPoint(a_actor, aimPoint);
+					RE::NiPoint3 above = aimPoint;
+					above.z += radius;
+
+					float ax = 0.0f;
+					float ay = 0.0f;
+					if (WorldToScreen(above, ax, ay)) {
+						// Clamped so a bad radius or a near-degenerate
+						// projection can never produce a box that fills the
+						// screen or collapses to nothing.
+						const float projected = std::abs(ay - sy) * io.DisplaySize.y;
+						halfH = std::clamp(projected, 14.0f, 260.0f);
+						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
+					}
+				}
+			}
+
+			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color, halfW, halfH);
 
 			auto* dl = ImGui::GetForegroundDrawList();
 
@@ -366,9 +404,8 @@ namespace VATS::UI
 			// Order, bottom to top: the target's health closest to the
 			// target, then the player's own VATS budget above it - so
 			// "theirs" and "mine" stay spatially distinct.
-			constexpr float kBoxHalfH = 36.0f;
 			constexpr float kBarGap = 6.0f;
-			float           stackY = py - kBoxHalfH - kBarGap;
+			float           stackY = py - halfH - kBarGap;
 
 			if (haveHealth) {
 				stackY -= 7.0f;  // health bar height
@@ -384,7 +421,7 @@ namespace VATS::UI
 				DrawResourceBar(dl, px, stackY, resource.current, resource.capacity);
 			}
 
-			const float tetherStartY = py + kBoxHalfH;
+			const float tetherStartY = py + halfH;
 
 			// Small tether line from box toward screen bottom, echoing the
 			// FO4 VATS look; subtle, mostly for readability against clutter.
