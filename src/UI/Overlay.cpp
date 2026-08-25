@@ -601,6 +601,7 @@ namespace VATS::UI
 		// bone candidate is now probed alongside it for comparison.
 		WorldBoundProbe::LogIfChanged(state.actor.get());
 		BoneProbe::LogIfChanged(state.actor.get());
+		ScanForLiveHealthCandidates(state.actor.get());
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a
 		// possible live "can the player currently see this target" signal

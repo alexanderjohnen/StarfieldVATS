@@ -4,11 +4,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace VATS
 {
@@ -226,5 +228,59 @@ namespace VATS
 			return 0;
 		}
 		return rank > 0.0f ? static_cast<std::uint32_t>(rank + 0.5f) : 0;
+	}
+
+	void ScanForLiveHealthCandidates(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return;
+		}
+
+		// Throttled to ~5Hz per actor - frequent enough to catch a
+		// decrease shortly after it happens (this only needs to notice
+		// SOME frame where old>new, not every one), cheap enough that a
+		// ~440-float SafeRead-guarded scan every 200ms is a non-issue -
+		// same order of magnitude as the per-frame probes already running
+		// (worldBound/bone), just gated slower since this one holds a
+		// snapshot per actor rather than being stateless.
+		static std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> s_lastScan;
+		const std::uint32_t                                                             formID = a_actor->GetFormID();
+		const auto                                                                      now = std::chrono::steady_clock::now();
+		if (const auto it = s_lastScan.find(formID); it != s_lastScan.end() && now - it->second < std::chrono::milliseconds(200)) {
+			return;
+		}
+		s_lastScan[formID] = now;
+
+		// Window chosen to comfortably cover avStorage (confirmed at
+		// 0x260, Actor.h) and extend well past it into whatever follows -
+		// deliberately blind/broad rather than a targeted guess, since
+		// the whole point is not knowing where else health could be
+		// cached. 0x1000 bytes = 1024 candidate float slots, one
+		// SafeRead-guarded 4-byte read each.
+		constexpr std::size_t kScanBytes = 0x1000;
+		constexpr float       kMinPlausibleHP = 1.0f;
+		constexpr float       kMaxPlausibleHP = 5000.0f;
+
+		static std::unordered_map<std::uint32_t, std::vector<float>> s_snapshots;
+		std::vector<float>&                                          snapshot = s_snapshots[formID];
+		const bool                                                   firstScan = snapshot.empty();
+		if (firstScan) {
+			snapshot.assign(kScanBytes / sizeof(float), 0.0f);
+		}
+
+		const auto* base = reinterpret_cast<const std::byte*>(a_actor);
+		for (std::size_t off = 0; off < kScanBytes; off += sizeof(float)) {
+			float current = 0.0f;
+			if (!SafeRead(base + off, &current, sizeof(current))) {
+				continue;
+			}
+			float& prev = snapshot[off / sizeof(float)];
+			if (!firstScan && current < prev && current >= kMinPlausibleHP && current <= kMaxPlausibleHP &&
+				prev >= kMinPlausibleHP && prev <= kMaxPlausibleHP) {
+				REX::INFO("[VATS] health scan: formID=0x{:08X} offset=0x{:03X} DECREASED {:.1f} -> {:.1f} (candidate)",
+					formID, off, prev, current);
+			}
+			prev = current;
+		}
 	}
 }

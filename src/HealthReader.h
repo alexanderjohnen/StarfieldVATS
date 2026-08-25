@@ -59,4 +59,22 @@ namespace VATS
 	// correct behavior for the vast majority of non-legendary enemies
 	// regardless of whether the guess is right.
 	[[nodiscard]] std::uint32_t GetActorExtraHealthSegments(RE::Actor* a_actor);
+
+	// Diagnostic (2026-08-25) - does NOT feed the HUD. Both prior
+	// theories for live current health are now disproven with hard
+	// evidence: avStorage.baseValues reads once at full health and then
+	// genuinely never changes across a real fight (likely MAX health, not
+	// current - both happen to be equal at full HP, which is why the
+	// original getav cross-check looked like confirmation), and
+	// avStorage.modifiers has no health entry at all (confirmed via a raw
+	// byte dump - the 24-byte-stride parse is clean and self-consistent
+	// across 20 real entries, healthInfo just never appears as a key).
+	// Live current health must live somewhere else entirely, outside the
+	// AV system. Scans a byte window of the Actor object itself
+	// (avStorage sits at a confirmed 0x260, this covers well past it) for
+	// any 4-byte float that DECREASES between two calls while staying in
+	// a plausible HP range - the same raw-memory-diffing technique that
+	// originally found ProjectileTracker's real offsets. Throttled
+	// internally; safe/cheap to call every frame for the Locked target.
+	void ScanForLiveHealthCandidates(RE::Actor* a_actor);
 }
