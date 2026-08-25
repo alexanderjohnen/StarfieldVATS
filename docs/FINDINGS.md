@@ -54,6 +54,39 @@ All relative offsets inside the struct (`flags` @ `data+0x48`, `gravity` @ `+0x4
 
 **Confirmed via:** at the corrected base, `flags`/`gravity`/`speed`/`range` for a real mod weapon ("Shingen", a homing-bullet Nexus mod) matched its xEdit-authored values exactly: flags `0x2208`, gravity `0.0`, speed `12.0`, range `1000.0`.
 
+## Confirmed wrong enum values
+
+Distinct from wrong offsets, and easier to miss: the field is at the right address and reads a real value, but the *names* CommonLibSF gives the bits do not match this game. Nothing crashes; the check simply never fires.
+
+### `RE::Actor::BOOL_BITS::kDead` (`Actor.h`)
+
+Declared `1 << 11`. **Inert.** A locked target reads the same `boolBits` value whether it is alive or lying dead on the floor — verified by logging the raw field continuously across real kills, on several actors. A raw dump of the surrounding memory shows the struct layout itself is fine (`currentProcess` at `+0x228` reads as a well-formed heap pointer, `avStorage` at `+0x260` parses as a sane `{size, capacity, data}` array), so this is the enum, not the offset. `kSetOnDeath` (`1 << 23`) is no better — it is set on *living* actors.
+
+Consequence for anyone relying on it: `IsDead()` and any hand-rolled `boolBits & kDead` check silently pass for corpses. In StarfieldVATS this meant dead actors stayed targetable and a "lock ends when the target dies" check never once fired in three days of use. **Use a health reading instead** (see below); current health goes to zero, and negative on overkill.
+
+### `RE::Actor::BOOL_BITS::kPlayerTeammate` — this one holds
+
+`1 << 26`, confirmed by measurement rather than by trusting the header: a companion and a hostile probed back to back read `0x162021A2` and `0x122021A2`, differing in exactly this bit. Recorded here because it shows the enum is not uniformly wrong — individual values need checking individually.
+
+## Live actor values are reachable, and not through memory
+
+`avStorage.baseValues` holds **maximum** health, not current. It reads correctly at full health and then never changes again for the rest of a fight, which makes it look like a working "current" read precisely when it is cross-checked — the two are equal at full HP. `avStorage.modifiers` has no health entry at all. Blind raw-memory diff scanning over the whole `Actor` object (twice, with different heuristics) turned up only countdown timers.
+
+Live current health comes from **`ActorValueOwner::GetActorValue`** — the same accessor behind the console's `getav` and Papyrus' `Actor.GetValue`. There is no hidden data field to find.
+
+The obstacle is that CommonLibSF's `Actor.h` does not list `ActorValueOwner` among `Actor`'s base classes, so nothing in the headers says where that sub-object sits. It can be read rather than guessed, entirely through data:
+
+1. Take the vtable at the object's start, then the complete object locator at `vtable[-1]`.
+2. Follow its `classDescriptor` (image-relative) to the class hierarchy descriptor.
+3. Walk the base class array. Each entry carries a type descriptor **and** an `mdisp` — the base's offset within the complete object.
+4. Match the descriptor name against `ActorValueOwner` and take its `mdisp`.
+
+For 1.16.244.0 that yields **`Actor + 0x070`**. Dispatching through it (slot 01) returns live health, confirmed across a real kill: 345.00 → 218.84 → … → 1.12 → −13.93.
+
+A note on why this is worth stating explicitly: a **virtual call through an object's own vtable performs no Address Library lookup**, so it does not carry the risk that unmapped or wrong `REL::ID` calls do (see the section below). Conflating the two is easy and, in this project, cost several days of searching for a memory field that does not exist.
+
+One thing that does *not* work, recorded so nobody repeats it: scanning the object for base-class vtable pointers and reading each one's RTTI name. All 25 of `Actor`'s vtables report `.?AVActor@@`, because a complete object locator names the *complete* class, not the base its vtable serves. The base names live one level in, in the hierarchy descriptor.
+
 ## Crash-causing gaps
 
 Not offset errors — these compile cleanly against the header but fail at runtime because the underlying Address Library ID or calling convention was never independently verified against this specific game build.
@@ -79,6 +112,12 @@ Fields and single-flag writes that looked like the right lever but demonstrably 
 Despite the name, this is **not** the actor's currently-equipped weapon.
 
 **Confirmed via:** read as null on every single shot across a full test session, despite `currentProcess`/`middleHigh` both resolving to valid, non-null pointers.
+
+### `_visible` on Starfield's HUD (`hudmenu.gfx`)
+
+Not a CommonLibSF issue, but the same shape of problem and it cost as much time. Starfield's HUD is **ActionScript 3** — the decompiled classes open with `package` and extend `flash.display.MovieClip` — so the visibility property is `visible`. `_visible` is the AS2 spelling and silently resolves to nothing.
+
+The failure mode is what made it expensive: `IsAvailable()` on the *container* succeeded while every leaf path under it failed, which reads as a path problem and sent the search after progressively more exotic path guesses (slash notation, alternative roots, alternative container names). The container had been reachable the whole time. If a Scaleform path resolves at one level but not the next, check the property name before the path.
 
 ### `RE::AimAssistData::aimAssistEnabled`
 

@@ -1,6 +1,6 @@
 # StarfieldVATS
 
-A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-time targeting — no time-slow, no menu pause. A hotkey locks onto a target while the game keeps running, shows a live hit-chance readout, and steers the fired shot to land (or deliberately miss) according to that rolled chance, without ever visibly snapping the camera or weapon onto the target.
+A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-time targeting — no time-slow, no menu pause. A hotkey locks onto a target while the game keeps running, and the fired shot is steered toward it in flight, without ever visibly snapping the camera or weapon onto the target.
 
 > **Work in progress — not ready for regular play.** This is an active reverse-engineering/development project, not a finished mod. Expect rough edges, unfinished features, and behavior that changes between builds; see [Status](#status) below for specifics before installing it to actually play with.
 
@@ -8,19 +8,23 @@ A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-ti
 
 ## What it does
 
-- A single hotkey locks onto whatever's under the crosshair while the in-game hand scanner is open, and tracks that actor's position afterward regardless of camera direction.
-- Hit chance is shown live, based on distance and line-of-sight to the target — the same "high chance despite an imprecise reticle" feel as Fallout 4/76 VATS, not a screen-space aiming check.
-- A shot's actual trajectory is bent in flight to land per the rolled chance — for weapons with real, simulated projectiles this redirects the live projectile object; for ordinarily-hitscan weapons this flips a data flag that makes Starfield spawn a real, in-flight projectile in the first place (see [`docs/FINDINGS.md`](docs/FINDINGS.md) for how that was found), which the same redirect logic then steers.
+- A single hotkey locks onto whatever's under the crosshair while the in-game hand scanner is open, and tracks that actor's position afterward regardless of camera direction. Corpses and your own companions are skipped; the lock ends by itself when the target dies.
+- A shot's trajectory is bent in flight toward the target. For weapons with real, simulated projectiles this redirects the live projectile object; for ordinarily-hitscan weapons it flips a data flag that makes Starfield spawn a real, in-flight projectile in the first place (see [`docs/FINDINGS.md`](docs/FINDINGS.md) for how that was found), which the same logic then steers. The projectile is also slowed for the duration of a lock — at stock speed a round crosses a typical engagement in a single frame, leaving no frame in which to steer it.
 - The weapon and camera never visibly snap onto the target — only the round's own flight path changes.
+- A HUD overlay marks the locked target with its current health, sized to the target's distance, and hides Starfield's own hit/kill/crit markers while a lock is active.
+- Using VATS costs a resource that scales with your character: maximum health sets how much damage you can deal through it before it runs dry, and maximum oxygen sets how quickly it refills once VATS is off.
+
+There is **no hit-chance roll**. An earlier version rolled dice against a displayed percentage; that was removed in favour of every shot being redirected, with real geometry the only thing that stops one.
 
 ## Status
 
-**Work in progress.** Core targeting and the hitscan-to-real-projectile redirect are working for the weapons tested so far, but this is not a polished, install-and-forget mod yet. Known gaps as of this writing:
+**Work in progress.** Core targeting, the hitscan-to-real-projectile redirect, live target health and the resource system work for what has been tested so far, but this is not a polished, install-and-forget mod. Known gaps as of this writing:
 
-- The aim point is a fixed height above an actor's feet — it does not account for pose, so a prone or crouching target is aimed at as if they were standing.
-- Hit chance does not yet factor in line-of-sight/occlusion at the moment of firing (only at the moment of locking on) — walls don't currently lower the odds the way they eventually should.
-- There's no in-game confirmation yet that a redirected shot actually deals damage where intended, only that the round's trajectory was rewritten — see [`docs/FINDINGS.md`](docs/FINDINGS.md) for the attempt at wiring up real hit confirmation, currently blocked on an unmapped engine ID.
-- The back/cancel key doesn't reliably end a lock yet.
+- **Never tested against non-humanoid creatures.** The aim point is deliberately proportional so it should scale to any body shape, but no alien has been fought with it. `fAimPointRadiusFactor` in the INI is the escape hatch if something looks wrong.
+- **No line-of-sight test exists.** Nothing here can tell whether a wall is between you and a target. This is why automatic advancing to the next enemy after a kill is shipped disabled — it could not reliably avoid picking targets behind walls or on other floors. The intended fix is a depth-buffer visibility check; see `HANDOFF.md`.
+- Only your companions are excluded from targeting, not neutral civilians. Starfield's own faction/relationship answer sits behind an unmapped engine ID.
+- Starfield's crit indicator can still flash briefly a few seconds after a kill. The game raises those events late, and suppressing them indefinitely would break the base game's HUD.
+- There's no in-game confirmation that a redirected shot deals damage exactly where intended, only that its trajectory was rewritten and that targets die — see [`docs/FINDINGS.md`](docs/FINDINGS.md) for the attempt at real hit confirmation, blocked on an unmapped engine ID.
 - Offsets in [`docs/FINDINGS.md`](docs/FINDINGS.md) are tied to Starfield v1.16.244.0 and can drift with future game patches.
 
 See [`docs/FINDINGS.md`](docs/FINDINGS.md) for the technical detail behind what's confirmed working.

@@ -36,9 +36,35 @@ Why this was missed is worth recording, because it is a failure of judgment rath
 
 The same day, the fix immediately settled a second problem that had also been open since 2026-08-22 and had resisted its own investigation: the lock not ending when a target dies. The dead-bit check written for it never once fired — a locked target's `boolBits` reads identically whether it is alive or lying dead on the floor. With live health working, death is simply `current <= 0`, confirmed against a real kill logging 1.12 and then -13.93 on overkill.
 
+### Diagnosing the crit marker from the sound
+
+A small observation that resolved a problem two rounds of reasoning had got wrong. Starfield's hit, kill and crit indicators were supposed to be hidden while a target is locked, and crit markers kept appearing anyway. Two explanations were produced and both were wrong — that the crit visual must be a different display object, then that Flash keyframes were resetting the visibility flag — and both rested on the same unexamined assumption: that the markers were appearing *during* the lock.
+
+Alexander noticed he kept **hearing** the crit sound with nothing on screen, and only saw the marker at the moment the enemy died and the mode ended. That places the event exactly: the hiding worked all along, and what was visible was the *restore*, which fired the instant a kill ended the lock and un-hid an animation mid-play. The fix followed immediately — defer the restore until the indicator parks itself. The general lesson is worth keeping: establish *when* something happens before explaining *why*, and an audio cue can pin down a timing question that a screenshot cannot.
+
+He also set the policy once it became clear the game raises some crit events seconds after a kill: suppress outright and rely on the sound rather than relocating the visual, since suppressing until those events stop would mean suppressing indefinitely.
+
+### Reading the design questions off the measurements
+
+Two cases where he was right about something the code was actively obscuring.
+
+He asked repeatedly whether the target box sat differently on different characters, and specifically whether male and female NPCs behaved differently. The aim point was being lifted by a multiplier on how high the bounding sphere's centre sat above the actor's feet — and measurement showed that quantity varying 20% between two standing humanoids (0.895 against 0.748), which a multiplier *amplifies* rather than absorbs. Switching the lift to a fraction of the sphere's radius cut the spread by roughly a third, because an actor whose centre sits lower generally has the larger sphere. He had also, earlier in the same conversation, flagged the case that a radius-based lift would break — a body on the ground keeps a large radius while its centre drops — which is why the final version caps the lift by pose. Both halves of that design came from him.
+
+He then spotted that the target box appeared to grow with distance, asking whether it was really doing that or just looked that way. It was the latter: a fixed pixel size against a shrinking target. The first attempt to fix it overshot badly — the bounding sphere encloses the whole body, so using its radius directly produced a box several times too large — and he rejected it immediately and precisely, saying he wanted it to look the way it did up close in the previous version. That is what it now does, capped at the old size rather than approximately calibrated to it.
+
+### Catching the settings that could not be tuned
+
+After a fix appeared not to work, he asked whether the INI had been kept in sync. It had not: twelve settings the code reads had never been added to the template, so they ran on hardcoded defaults and were untunable by anyone — including one he needed at that moment. An earlier drift check existed but compared the deployed file against the template, and so was structurally incapable of noticing settings missing from the template itself. The check now runs against the code, and found a thirteenth on its first run. A warning that stays silent about the one thing going wrong is worse than no warning, and it took him asking to expose that.
+
 ### Calling time on the segmented health bar
 
 Starfield's boss/legendary enemies show a segmented health display, and the overlay had a speculative implementation of it resting on an unverified guess about which actor value drives the segment count. It never worked — the pip row stayed rigid regardless of target. Rather than let it become the next multi-day offset hunt on the heels of one that had just ended, Alexander's call was to simply drop the feature. Removed rather than left in as dead decoration. Knowing which unknowns are worth chasing is a real contribution, and this project has more than once needed someone to say when one isn't.
+
+### Calling time on auto-advance, too
+
+The same judgement applied to a feature he had asked for himself. Auto-advancing to the next enemy on a kill worked mechanically but kept selecting targets behind walls and on other floors, because this project has no line-of-sight test and three successive filters had each turned out not to be one. Rather than accept a fourth approximation, he proposed parking the feature until real occlusion exists. That converted an accumulating pile of heuristics into a single, clearly-stated dependency — and it is the right trade, since the depth-buffer work that unblocks it also serves hit-chance and per-body-part targeting later.
+
+He also asked, when that idea came up, that it be written down properly rather than left in the conversation, noting it had not previously been considered for enemies behind cover — only for body-part visibility. That reframing is what makes it worth doing: the same work now unblocks three features instead of one.
 
 ### Routing targeting through the scanner
 
