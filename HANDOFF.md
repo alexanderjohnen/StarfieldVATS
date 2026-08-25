@@ -1,139 +1,161 @@
-# StarfieldVATS — Handoff (2026-08-24, end of session)
+# StarfieldVATS — Handoff (2026-08-25, end of session)
 
 Read this first in a new chat. Point-in-time snapshot — verify against actual
-code/log before trusting anything here. Full blow-by-blow history (a *lot*
-happened today, including 3 hard crashes) is in git log, not repeated here —
-`git log --oneline` and read commit bodies if you need the "why" behind
-something. Public repo: https://github.com/alexanderjohnen/StarfieldVATS.
+code/log before trusting anything here, offsets and "confirmed" claims can go
+stale. **If anything below is unclear or seems inconsistent with the code:
+check the public repo (https://github.com/alexanderjohnen/StarfieldVATS,
+`git log --oneline` + commit bodies for the "why") and also search this
+machine's other Claude Code session history/transcripts — this project has
+had many prior sessions not fully summarized here, and searching past chats
+for a topic (health bar, hit marker, a specific offset, a past crash) often
+surfaces detail this file deliberately left out to stay short.**
 
 ## What this is
 
 SFSE mod for Starfield: real-time FO76-style VATS. Hotkey locks a target
-while the game keeps running; a hit-chance roll decides hit/miss; a real
-player-fired round gets redirected in-flight toward the target (no
-camera/weapon snap). `C:\Dev\StarfieldVATS`, game v1.16.244. Alexander tests
-in-game; Claude cannot — always read the SFSE log yourself
-(`Documents\My Games\Starfield\SFSE\Logs\StarfieldVATS.log`) rather than
-guessing. **Commit after every deployed build.**
+while the game keeps running; every shot redirects toward the target unless
+something physically blocks it (no dice roll anymore, see below); a real
+player-fired round gets its trajectory bent in-flight (no camera/weapon
+snap). `C:\Dev\StarfieldVATS`, game v1.16.244. Alexander tests in-game;
+Claude cannot — always read the SFSE log yourself
+(`Documents\My Games\Starfield\SFSE\Logs\StarfieldVATS.log`, truncated fresh
+every game launch, not appended) rather than guessing. **Commit after every
+deployed build.**
 
-Build/deploy (fails if Starfield is running):
+Build/deploy (fails if Starfield is running — check with
+`tasklist //FI "IMAGENAME eq Starfield.exe"` first; it has sometimes shown
+**two** processes, both need to be gone):
 ```
 cd C:\Dev\StarfieldVATS && powershell -ExecutionPolicy Bypass -File deploy.ps1
 ```
 
-## Confirmed working
+Local is currently **8 commits ahead of origin/main** (last pushed:
+"Move the crosshair-hiding credit to where it belongs"). Ask before pushing —
+this project deliberately keeps `docs/hudmenu-decompiled/` (Bethesda's
+copyrighted decompiled UI assets) out of git entirely (`.gitignore`), stripped
+from history once already; don't re-add it to a commit.
 
-- **Real-time lock** (hotkey while hand scanner open), hit-chance roll,
-  projectile redirect for the core "curve a real bullet toward the target"
-  mechanic.
-- **ADS ends the lock** (`AdsBlocker.cpp`) — detects the ADS mouse button via
-  a `WH_MOUSE_LL` hook, calls `Controller::ForceOff()`. Confirmed in-game.
-- **Damage numbers hidden while Locked** (`DamageNumbersVisibility.cpp`) —
-  toggles Starfield's real Interface setting `bDamageNumbersEnabled` (found
-  via a real `StarfieldPrefs.ini` sample). Confirmed working. Far safer than
-  fighting Scaleform for the popups, which turned out to be structurally
-  unreachable anyway (see below).
-- Crosshair hiding while Locked (`CrosshairVisibility.cpp`) — pre-existing,
-  unchanged.
+## Confirmed working, this session's big finding
 
-## Open: hit marker / kill marker not hiding
+The redirect mechanic itself was root-caused and fixed. At normal projectile
+speed (500 m/s), a round's entire flight at typical engagement range takes
+about one game frame — there is no frame in which its trajectory can be
+rewritten, which is why redirect only ever worked on slow ordnance (rockets)
+and never on guns, no matter how the polling/timing was tuned.
+**`Settings::lockedProjectileSpeed` (INI `[Combat] fLockedProjectileSpeed`,
+default 80 m/s) force-slows the equipped weapon's projectile for the
+duration of a lock**, giving real homing time. Confirmed in-game:
+"jeder Hit war ein richtiger Hit" across a real fight.
 
-`CombatHudVisibility.cpp` — one-shot toggle at Lock (like the two above),
-targeting the real container instance name **`HitAndKillIndicator_mc`**
-(confirmed 2026-08-24 by Alexander directly in JPEXS's timeline view for
-`hudmenu.gfx` frame 1 — `PlaceObject2 chid:275 dpt:127 nm:
-"HitAndKillIndicator_mc"`, placed directly on `root1`, no nesting). Despite
-using the confirmed name, it still didn't resolve in the last test
-(`combat-hud: none of the candidate paths resolved`). A safe diagnostic was
-just added (`IsAvailable()` on the bare container path, logged) — **next
-step: read the log after a fresh test, see whether `container available=`
-logs true or false** to know if the break is the container itself or its
-children (`HitIndicator_mc`/`KillIndicator_mc`).
+Also this session:
+- **Hit-chance roll removed entirely** (Alexander's call) — every shot now
+  redirects toward the target unless a real obstruction blocks it; no RNG,
+  no distance falloff. `AimAssist.cpp`'s `ComputeChancePercent` is gone.
+- **`ProjectileTypeOverride` now engaged for the whole lock**, not per
+  trigger-hold — removes the race where a round could leave the barrel
+  before the hitscan→real-projectile flip landed (the likely explanation
+  for the old automatic-vs-semi-auto asymmetry). `Controller::
+  SyncProjectileOverride()` re-checks the equipped weapon every frame while
+  Locked and swaps the override if it changed — **fixes a real bug found
+  this session**: switching weapons mid-lock left the new weapon un-flipped
+  (confirmed from a log: zero redirects for the rest of that hold) until
+  VATS was toggled off/on. Confirmed fixed logically; not yet re-tested
+  in-game with a fresh weapon switch.
+- **Heap corruption fixed**: `ProjectileTracker`'s tracked-rounds map is
+  keyed by raw pointer, and Starfield's allocator recycles projectile slots
+  aggressively (one address reused 23x in one session) — `HomeProjectile`
+  now re-validates formType/shooterHandle before every write, making a
+  write into a recycled allocation structurally impossible. This was a
+  latent bug the speed override massively amplified (rounds now live ~6x
+  longer). Root-caused from an actual crash log, confirmed via commit
+  history, not yet independently re-confirmed crash-free over a long
+  session.
+- **Three regressions were introduced and reverted in the same session**
+  (see `docs/CONTRIBUTIONS.md` for the honest accounting) — a hook-
+  synchronous `Engage()` call that stalled system-wide input and broke
+  firing outright, a pre-launch projectile write that crashed
+  (float-where-a-pointer-belongs signature), and a stale `desiredTargetHandle`
+  write removed as unjustified risk. All reverted same-session; not
+  currently in the code.
+- **FavoritesMenu now ends an active lock** — confirmed working by
+  Alexander. **DataMenu/StarMap/DialogueMenu/PauseMenu/LoadingMenu** already
+  did.
+- **Aim point**: replaced the fixed feet+1.2 chest-height offset with
+  `WorldBoundProbe::GetAimPoint` (`RE::NiAVObject::worldBound`, a pose-
+  current bounding-sphere center, falls back to the old fixed offset if the
+  chain fails). Works well in most real testing (tracks a death/collapse
+  animation smoothly). **Known bad case, screenshot-confirmed**: a wide/
+  crouching attack pose pulls the sphere center toward hip height (the
+  sphere has to enclose spread-out limbs too, not just the torso) — a
+  follow-up `BoneProbe` searched the skeleton for a named "center of mass"
+  bone (COM/Spine/Chest/...) and found nothing useful (only a "Root" node
+  sitting at literal feet height). **Deprioritized/parked** per Alexander's
+  own real-world testing showing worldBound is good enough most of the
+  time — revisit only if the bad pose recurs as an actual practical problem.
 
-Floating damage numbers (not the marker) are a *separate*, permanently dead
-end: `docs/hudmenu-decompiled/scripts/HitDamageIndicator.as`'s
-`SpawnNewClip()` does `addChild()` with no instance name — AS3
-auto-generates a different name every single time, so no static path could
-ever reach them. Don't retry that one.
+## Open, diagnostics deployed but NOT YET TESTED — pick these up first
 
-**Do NOT make this per-frame again** (was tried, reverted) — a crash report
-that session showed an unrelated engine job thread faulting inside
-Scaleform's own AS3 VM; not proven to be this project's fault, but going
-from one Scaleform touch per lock to ~60/sec is the one thing that changed
-that session, so it was pulled back. Stay one-shot.
+- **Health bar**: both prior theories for live current health are now
+  *disproven with hard evidence* (not just "didn't find it yet"). This
+  session's log showed `avStorage.baseValues`' health entry read once at
+  full HP and then genuinely never changed across a real fight with
+  confirmed hits — almost certainly MAX health, not current (the two are
+  equal at full HP, which is exactly when the original cross-check
+  happened, so it never actually distinguished the two). `avStorage.
+  modifiers` was raw-dumped and parses cleanly at the already-used 24-byte
+  stride (20 real entries, all plausible) but genuinely has no health
+  entry — not a parsing bug. Live health must live elsewhere entirely.
+  `HealthReader::ScanForLiveHealthCandidates` (new this session) blind-
+  scans a 0x2000-byte window of the Actor object itself for any float that
+  *decreases* while staying within ~2%-105% of the actor's own known max
+  HP — same raw-memory-diffing technique that originally found
+  ProjectileTracker's real offsets. Deployed, **next in-game test needed**:
+  lock a target, deal damage over several hits (not one-shot), check the
+  log for `[VATS] health scan:` lines with a real HP-sized candidate.
+- **Hit marker**: still doesn't hide (`CombatHudVisibility.cpp`) despite
+  the JPEXS-confirmed real container name+root and both dot- and slash-
+  notation paths, all failing `IsAvailable()`. Added a baseline sanity
+  probe this session: `GetVariable(root, realRootPath)` with **no child
+  appended**, mirroring an engine-internal call CommonLibSF's own
+  `GameMenuBase.h` uses. If this baseline also fails, the fault is
+  upstream of any path guess (wrong root/movie pointer, wrong timing), not
+  the path strings; if it succeeds, the root chain is proven good and the
+  fault is specifically in reaching a named child. **Next test needed**:
+  check the log for `combat-hud: baseline GetVariable(...)` after a lock.
+- **"Lock ends when target dies"**: code has existed since 2026-08-22
+  (dead-bit check → `ForceOff()` in `Overlay.cpp`'s Locked branch), but
+  Alexander reports it does NOT work in practice. Investigated this
+  session: the log genuinely could never have distinguished this working
+  from not, since `ForceOff()` logs one generic line shared by every
+  trigger (dead target, any blocking menu). Added a distinct log line for
+  the dead-triggered case, plus continuous log-on-change of the target's
+  raw `boolBits` (not just when the dead bit specifically flips) - if a
+  visibly-dead target never shows bit `0x800` set, `GameOffsets::
+  kActorDeadBit` itself is the suspect (e.g. Starfield's crawling/downed
+  state might not be "dead" yet by this bit, and true death - the bit
+  actually flipping - might come later or not fire the way assumed).
+  **Next test needed**: lock a target, kill it, check whether `[VATS]
+  target dead bit set...` ever appears and whether the lock actually ends.
 
-## Open: native health bar — blocked, needs better tooling
+## Discussed, NOT implemented yet
 
-Goal: make Starfield's *own* enemy health bar show on the VATS target
-(ours never worked and was deleted — `HealthReader.cpp`/`HealthWidgetReader.cpp`
-are gone).
-
-- **Reading the health value directly: proven impossible**, not just hard.
-  `docs/hudmenu-decompiled/scripts/EnemyHealthMeter.as` shows the value
-  only ever arrives as a parameter to a native push-event callback
-  (`BSUIDataManager.Subscribe("HudEnemyData", ...)`) — nothing is ever
-  stored at a readable path. Don't re-attempt Scaleform probing for this;
-  it also caused 2 of today's 3 crashes (a bare-clip destructor crash, then
-  a full PC freeze from named-property probing) before being proven moot.
-- **Forcing the native trigger** (`RE::Actor::currentCombatTarget`,
-  `Actor.h` offset 0x298 — confirmed correlated with the health bar's
-  real trigger condition via a removed read-only probe): tried 3 ways
-  (one-shot write, per-render-frame rewrite, 5ms background-thread
-  rewrite) — **all failed**. The engine recomputes this field at least
-  once per frame from a live aim-assist/target-detection computation, not
-  a value a mod can just hold in place. `CombatTargetOverride.cpp`'s
-  `Engage()`/`Disengage()` (one write per lock) are still wired in,
-  harmless, but don't fix anything on their own.
-- **Real fix would need**: finding and hooking whatever native function
-  computes "is X under my aim-assist cone" — likely the same
-  `RangedAimAssistImpl`/`IAimAssistImpl` function already identified (RTTI
-  name only, no header, no known address) during the bullet-bending
-  investigation (`AimAssistProbe.cpp`). This needs a real disassembler
-  (IDA/Ghidra) or a published mod that's already solved it — neither
-  available right now. **Don't attempt more blind field-write guessing.**
-  If Alexander gets a disassembler or finds a reference mod, this is where
-  to resume.
-
-## Open: shots still not landing reliably — mid-investigation
-
-Fixed today: each redirected round used to be aimed **once** and left alone
-for the rest of its flight. `ProjectileTracker.cpp` now homes it
-continuously (re-aims every poll tick toward the target's current position,
-up to 1.5s) via a new `TrackedState` map instead of a one-shot set — deployed,
-not yet confirmed to have fixed anything.
-
-**New finding, NOT YET ACTED ON**: Alexander reports shots going
-"perfectly straight, as if never touched" with a scoped/semi-auto weapon,
-across multiple targets — logged as `HIT` and `redirect: HIT` every time,
-but visually unaffected. Leading theory: `ProjectileTypeOverride::Engage()`
-(the hitscan→real-projectile flip that makes redirect possible at all) only
-runs inside `AimAssist.cpp`'s `SteeringLoop`, which only starts once a **new
-OS thread** spawned from the mouse-hook callback gets scheduled — for a
-single/semi-auto shot, the game's own native hitscan resolution may well
-finish before that thread even starts, so the flip lands too late to affect
-that shot at all. Automatic weapons wouldn't show this (later rounds in the
-burst fire after the override is already active), which would explain why
-earlier sessions looked fine.
-
-**Candidate fix, not implemented**: call `ProjectileTypeOverride::Engage()`
-synchronously inside the `WM_LBUTTONDOWN` handler itself (`AimAssist.cpp`'s
-`HookProc`), before spawning the thread, to close the race window. Must NOT
-call `REX::INFO` (blocking file I/O) from inside the low-level hook
-callback — this project already hit that exact problem once
-(`BackKeyInterceptor.cpp`'s comment explains why) and had to defer logging
-to a detached thread. So: move the SafeRead/SafeWrite part of `Engage()`
-into the hook synchronously, keep the logging on `SteeringLoop`'s own
-thread by passing the resulting `Token` into it instead of having
-`SteeringLoop` call `Engage()` itself.
-
-Also confirmed (again) this session: `BGSProjectileData`'s `hitScan` flag
-bit reads `false` on literally every sample ever seen, including
-known-real projectiles — it's dead/unreliable, ignore it. The `type` byte
-(`+0x84`, 0x02=hitscan/0x00=real, "9 samples zero exceptions") is still the
-only trusted signal.
+- **VATS resource/energy bar**: Alexander wants a second bar near the
+  target box (HUD-only, position left/right/top/bottom of it, whichever
+  looks best) showing how much longer VATS can be sustained. Design
+  discussion only so far - recommended a project-owned resource (simple
+  float in `Controller`, drains per second while Locked, regenerates while
+  Off, INI-tunable) over hooking Starfield's real O2 bar, specifically to
+  avoid a new native write/offset for a cosmetic feature, and to avoid
+  competing with O2's other real uses (sprinting etc.). Not started.
+- **Auto-advance to next target in radius X on kill**: explicitly deferred
+  by Alexander until the resource/energy system above exists, so hopping
+  targets isn't free.
 
 ## Persistent memory
 
 `starfield-vats-mod-design`, `starfield-vats-ui-hook`,
-`commonlibsf-unmapped-ids`, `feedback-commit-every-vats-build` — see those
-for anything older than today not covered above.
+`commonlibsf-unmapped-ids`, `feedback-commit-every-vats-build`,
+`feedback-model-tier-recommendations` — see those for anything older than
+this session not covered above. `docs/CONTRIBUTIONS.md` has the detailed,
+honest attribution writeup (including this session's regressions) if asked
+about who contributed what.
