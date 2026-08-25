@@ -144,31 +144,60 @@ namespace VATS
 			return false;
 		}
 
-		// Read-only: reports where an object currently sits, plus the stage
-		// dimensions if they can be read. Nothing here can pick a sensible
-		// offset without knowing the coordinate space, and guessing one
-		// blind risks flinging the crit banner off-screen entirely.
-		void LogPosition(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_objectPath)
+		// Read-only, one-shot per session. Answers two separate questions
+		// that both have to be settled before anything else is built.
+		//
+		// 1) Where the object sits, and how big the coordinate space is.
+		//    No offset can be chosen sensibly without this, and a blind
+		//    guess risks flinging the crit banner off-screen.
+		//
+		// 2) Whether a CRIT can be DETECTED rather than merely relocated -
+		//    Alexander's question, and the better design if it works: hide
+		//    the vanilla visuals outright and draw our own crit indicator
+		//    on the VATS box, with nothing moved and so nothing to restore.
+		//    The engine-side route is closed (BSUIDataManager, which is
+		//    what HitKillIndicator.as subscribes to for `uHitType ===
+		//    CRITICAL`, does not appear anywhere in CommonLibSF, so reaching
+		//    it would mean reverse-engineering an unmapped interface - the
+		//    exact category that has crashed this project twice). The
+		//    Scaleform side may be readable instead: a crit makes the AS
+		//    call `CritBanner_mc.gotoAndPlay("CriticalHit")`, so the clip's
+		//    playhead moves. If currentFrame/currentLabel read as sane
+		//    values here, polling one of them detects crits without writing
+		//    anything at all.
+		void LogInspection(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_hitIndicatorPath)
 		{
 			static bool s_logged = false;
-			if (s_logged || !a_root->IsAvailable(a_objectPath.c_str())) {
+			if (s_logged) {
 				return;
 			}
 			s_logged = true;
 
-			for (const char* property : { "x", "y", "width", "height" }) {
-				const std::string         path = a_objectPath + "." + property;
-				RE::Scaleform::GFx::Value value;
-				if (a_root->GetVariable(&value, path.c_str()) && value.IsNumber()) {
-					REX::INFO("[VATS] combat-hud: calibration {} = {:.1f}", path, value.GetNumber());
-				} else {
-					REX::INFO("[VATS] combat-hud: calibration {} unreadable", path);
+			const std::string paths[] = { a_hitIndicatorPath, a_hitIndicatorPath + ".CritBanner_mc" };
+			for (const auto& objectPath : paths) {
+				if (!a_root->IsAvailable(objectPath.c_str())) {
+					REX::INFO("[VATS] combat-hud: inspect '{}' not available", objectPath);
+					continue;
+				}
+				for (const char* property : { "x", "y", "width", "height", "currentFrame", "totalFrames", "currentLabel" }) {
+					const std::string         path = objectPath + "." + property;
+					RE::Scaleform::GFx::Value value;
+					if (!a_root->GetVariable(&value, path.c_str())) {
+						REX::INFO("[VATS] combat-hud: inspect {} unreadable", path);
+					} else if (value.IsNumber()) {
+						REX::INFO("[VATS] combat-hud: inspect {} = {:.1f}", path, value.GetNumber());
+					} else if (value.IsString()) {
+						REX::INFO("[VATS] combat-hud: inspect {} = '{}'", path, value.GetString());
+					} else {
+						REX::INFO("[VATS] combat-hud: inspect {} present but neither number nor string", path);
+					}
 				}
 			}
+
 			for (const char* stagePath : { "root1.stage.stageWidth", "root1.stage.stageHeight" }) {
 				RE::Scaleform::GFx::Value value;
 				if (a_root->GetVariable(&value, stagePath) && value.IsNumber()) {
-					REX::INFO("[VATS] combat-hud: calibration {} = {:.1f}", stagePath, value.GetNumber());
+					REX::INFO("[VATS] combat-hud: inspect {} = {:.1f}", stagePath, value.GetNumber());
 				}
 			}
 		}
@@ -260,10 +289,33 @@ namespace VATS
 			// CritBanner_mc is nested one level deeper under HitIndicator_mc
 			// specifically (per HitKillIndicator.as:
 			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling.
-			// Hit and kill markers are always hidden - confirmed working
-			// in-game 2026-08-25, Alexander reports no hit markers at all
-			// while Locked.
+			// Hide the CONTAINER itself first, not just its children. This
+			// is what makes full suppression possible at all.
+			//
+			// Hiding the children works for ordinary hits but breaks on
+			// crits: a crit runs the indicator's timeline, and entering a
+			// keyframe re-instantiates the timeline-placed children with
+			// their authored properties, putting `visible` back to true. Any
+			// property we set on a child - visibility, position, alpha - is
+			// subject to being reset that way, so no one-shot write to a
+			// child can hold. Re-applying it would mean polling the AS3 VM
+			// for the whole lock, which is the mechanism already under
+			// suspicion for an earlier crash here.
+			//
+			// The container sidesteps that entirely: HitAndKillIndicator_mc
+			// is placed on the main timeline, which does not animate, so
+			// nothing re-instantiates it and nothing resets what we set. A
+			// hidden container cannot render any descendant no matter how
+			// often those descendants are rebuilt. Alexander's call
+			// (2026-08-25) is to suppress crit feedback outright and rely on
+			// the game's own crit sound cue, which this delivers without a
+			// single per-frame write.
 			bool changedAny = false;
+			changedAny |= TryHideLeaf(root, container);
+
+			// The children are still hidden as well. Redundant while the
+			// container hide holds, harmless if it does not, and it keeps
+			// ordinary-hit suppression working even in the latter case.
 			changedAny |= TryHideLeaf(root, container + ".HitIndicator_mc");
 			changedAny |= TryHideLeaf(root, container + ".KillIndicator_mc");
 
@@ -291,11 +343,7 @@ namespace VATS
 			if (settings.moveCritMarker) {
 				changedAny |= TryMoveObject(root, container + ".HitIndicator_mc", settings.critMarkerOffsetX, settings.critMarkerOffsetY);
 			} else {
-				// Read-only calibration: the parent clip's coordinate scale
-				// is unknown, so log where the object currently sits before
-				// anyone picks an offset. Costs one read and changes
-				// nothing.
-				LogPosition(root, container + ".HitIndicator_mc");
+				LogInspection(root, container + ".HitIndicator_mc");
 			}
 
 			// Stop at the first container that actually worked. The
