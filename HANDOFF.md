@@ -137,6 +137,56 @@ Also this session:
   **Next test needed**: lock a target, kill it, check whether `[VATS]
   target dead bit set...` ever appears and whether the lock actually ends.
 
+## Backlog: real occlusion via the depth buffer (2026-08-25)
+
+**The problem it solves.** Nothing in this project can currently answer
+"is there a wall between the player and that actor". Havok/`bhkWorld`/
+`NiPick` have no bindings anywhere in CommonLibSF (grepped, zero hits),
+and the one engine LOS function tried, `HasDetectionLOS`, is stubbed out
+as a **confirmed** crash cause. So the cone scan happily picks targets
+through walls, which is exactly what Alexander hit when auto-advance
+hopped to an enemy in the next room. `commandTarget` sidesteps it for the
+crosshair case only, and only at interaction range.
+
+**The idea.** We already project a world position to screen coordinates
+every frame for the target box (`CameraProject.cpp`). The game's depth
+buffer says how far away the *visible* geometry is at any screen pixel.
+Compare the two: if the actor's own distance is greater than the depth
+sampled at its projected position, something is drawn in front of it, so
+it is occluded. One sample answers "is this target visible at all";
+several samples across the body answer "which parts are exposed", which
+is what a per-body-part hit system would eventually need.
+
+**Why this project specifically should like it.** It happens entirely
+inside our own rendering code - the D3D12 present hook we already own
+(`UI/D3DHook.cpp`). No struct offsets, no Address Library IDs, none of
+the category that has hard-crashed this project twice. That is a
+genuinely different risk profile from every other occlusion approach
+considered so far.
+
+**Corroboration it is the right mechanism.** Alexander noticed
+(screenshot, 2026-08-22) that Starfield's own scanner outline is clipped
+exactly at an actor's visible silhouette - occluded parts get no outline
+at all. That is depth-testing against the scene, not a physics raycast,
+i.e. the game solves this same problem the same way.
+
+**What it would take.** Locating the depth-stencil resource in the D3D12
+frame and getting it readable on the CPU (a resolve/copy into a readback
+buffer, one frame of latency, which is irrelevant at these timescales),
+then converting sampled depth back to view distance through the same
+projection constants `CameraProject` already uses. Estimated one to two
+sessions. Deliberately NOT started for auto-advance alone - see the
+cheaper option below - but it is the right answer the moment occlusion is
+needed for more than one feature.
+
+**Cheaper stand-in, not started either.** Restrict auto-advance to actors
+whose `currentCombatTarget` is the player (`GameOffsets::kPlayerHandle`,
+measured 2026-08-25). Not real occlusion, but strongly correlated - an
+actor actively shooting at the player is rarely behind a wall, and one in
+the next room who has not noticed them is excluded. Zero new offsets.
+Would need to apply to the advance only, never to ordinary acquisition,
+or it would make it impossible to open a fight from stealth.
+
 ## Discussed, NOT implemented yet
 
 - **VATS resource/energy bar**: Alexander wants a second bar near the
