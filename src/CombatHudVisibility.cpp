@@ -2,7 +2,9 @@
 
 #include "Settings.h"
 
+#include <chrono>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -97,6 +99,46 @@ namespace VATS
 			float       originalNumber{ 0.0f };
 		};
 		std::vector<Touched> s_touched;
+
+		// Bumped on every HideActive(). A delayed restore captures the
+		// value current when it was scheduled and does nothing if a new
+		// lock has started since - otherwise the tail end of the previous
+		// lock's restore would un-hide the new one.
+		std::uint32_t s_generation = 0;
+
+		// How long after a lock ends before the HUD elements are put back.
+		//
+		// This is the actual fix for the crit and kill markers appearing,
+		// and the diagnosis is Alexander's: he noticed he was HEARING the
+		// crit sound without seeing the crit, which means the hiding worked
+		// all along. What he was seeing was the restore. A killing blow ends
+		// the lock at the same instant the game starts the kill/crit
+		// animation, so the old immediate restore made those elements
+		// visible again a frame or two into an animation that was supposed
+		// to have played out unseen.
+		//
+		// Waiting simply lets the animation finish while still hidden. No
+		// polling of the AS3 VM, no per-frame writes - one delayed write,
+		// using the same "sleep on a throwaway thread, bounce the actual
+		// engine call back to the game thread" pattern the scanner-close
+		// path already uses.
+		constexpr auto kRestoreDelay = std::chrono::milliseconds(1500);
+
+		// Puts back exactly what one HideActive() changed. Game thread only.
+		void RestoreNow(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::vector<Touched>& a_touched)
+		{
+			for (const auto& touched : a_touched) {
+				if (touched.isBoolean) {
+					if (touched.originalBool) {
+						const RE::Scaleform::GFx::Value trueVal(true);
+						a_root->SetVariable(touched.path.c_str(), trueVal);
+					}
+				} else {
+					const RE::Scaleform::GFx::Value original(static_cast<double>(touched.originalNumber));
+					a_root->SetVariable(touched.path.c_str(), original);
+				}
+			}
+		}
 
 		// Property name for visibility. hudmenu is ActionScript 3 -
 		// docs/hudmenu-decompiled/scripts/HitKillIndicator.as opens with
@@ -266,8 +308,11 @@ namespace VATS
 				s_realRoot, gotRoot, gotRoot && rootVal.IsObject(), gotRoot && rootVal.IsDisplayObject(), gotRoot && rootVal.IsUndefined());
 		}
 
+		// Invalidates any restore still pending from a previous lock, so a
+		// delayed restore can never un-hide the lock that is starting now.
+		++s_generation;
+
 		s_touched.clear();
-		const auto& settings = Settings::Get();
 		for (const auto& container : s_containerPaths) {
 			// Diagnostic (2026-08-24): even the confirmed-real
 			// "root1.HitAndKillIndicator_mc" container didn't resolve on
@@ -284,67 +329,26 @@ namespace VATS
 				continue;
 			}
 
-			// HitIndicator_mc/KillIndicator_mc are declared as public vars
-			// on the class, so they are direct children of the container.
-			// CritBanner_mc is nested one level deeper under HitIndicator_mc
-			// specifically (per HitKillIndicator.as:
+			// The container, then its children. HitIndicator_mc and
+			// KillIndicator_mc are public vars on the class, so they are
+			// direct children; CritBanner_mc is nested one level deeper
+			// under HitIndicator_mc specifically (per HitKillIndicator.as:
 			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling.
-			// Hide the CONTAINER itself first, not just its children. This
-			// is what makes full suppression possible at all.
 			//
-			// Hiding the children works for ordinary hits but breaks on
-			// crits: a crit runs the indicator's timeline, and entering a
-			// keyframe re-instantiates the timeline-placed children with
-			// their authored properties, putting `visible` back to true. Any
-			// property we set on a child - visibility, position, alpha - is
-			// subject to being reset that way, so no one-shot write to a
-			// child can hold. Re-applying it would mean polling the AS3 VM
-			// for the whole lock, which is the mechanism already under
-			// suspicion for an earlier crash here.
-			//
-			// The container sidesteps that entirely: HitAndKillIndicator_mc
-			// is placed on the main timeline, which does not animate, so
-			// nothing re-instantiates it and nothing resets what we set. A
-			// hidden container cannot render any descendant no matter how
-			// often those descendants are rebuilt. Alexander's call
-			// (2026-08-25) is to suppress crit feedback outright and rely on
-			// the game's own crit sound cue, which this delivers without a
-			// single per-frame write.
+			// This hiding was never the problem. Two rounds of theorising
+			// about why crit and kill markers still appeared - a different
+			// crit object, then Flash keyframes resetting `visible` - were
+			// both wrong, and both were built on the assumption that the
+			// markers were showing WHILE Locked. Alexander worked out that
+			// they were not: he noticed he kept HEARING the crit sound
+			// without seeing anything, and only saw the marker at the moment
+			// the enemy died and the mode ended. The hiding works. What was
+			// visible was the restore. See kRestoreDelay.
 			bool changedAny = false;
 			changedAny |= TryHideLeaf(root, container);
-
-			// The children are still hidden as well. Redundant while the
-			// container hide holds, harmless if it does not, and it keeps
-			// ordinary-hit suppression working even in the latter case.
 			changedAny |= TryHideLeaf(root, container + ".HitIndicator_mc");
 			changedAny |= TryHideLeaf(root, container + ".KillIndicator_mc");
-
 			changedAny |= TryHideLeaf(root, container + ".HitIndicator_mc.CritBanner_mc");
-
-			// Hiding does not fully hold for crits, and that is the whole
-			// reason move mode exists. Alexander's observation: ordinary
-			// hits show nothing while Locked (the hide works), but a
-			// CRITICAL hit briefly flashes up both the crit banner and a hit
-			// marker. That fits Flash's keyframe behaviour - entering a
-			// keyframe re-instantiates the timeline-placed display objects
-			// with their authored properties, resetting `visible` back to
-			// true - and it also resolves what the crit visual actually is.
-			// An earlier reading of the same evidence concluded it must be a
-			// different object entirely, since a hidden parent cannot render
-			// a child; the real explanation is that the parent stops being
-			// hidden for those few frames.
-			//
-			// So the position is offset as well as the visibility being set.
-			// The two do not conflict: ordinary hits stay suppressed because
-			// the hide is still in force, and the crit flash - which
-			// overrides it - happens wherever the object has been moved to.
-			// Alexander's call that a brief hit marker alongside a crit is
-			// fine is what makes this workable.
-			if (settings.moveCritMarker) {
-				changedAny |= TryMoveObject(root, container + ".HitIndicator_mc", settings.critMarkerOffsetX, settings.critMarkerOffsetY);
-			} else {
-				LogInspection(root, container + ".HitIndicator_mc");
-			}
 
 			// Stop at the first container that actually worked. The
 			// remaining candidates are aliases for the same objects
@@ -362,21 +366,40 @@ namespace VATS
 
 	void CombatHudVisibility::Restore()
 	{
-		auto* root = GetHudMovieRoot();
-		if (!root) {
+		if (s_touched.empty()) {
 			return;
 		}
-		for (const auto& touched : s_touched) {
-			if (touched.isBoolean) {
-				if (touched.originalBool) {
-					const RE::Scaleform::GFx::Value trueVal(true);
-					root->SetVariable(touched.path.c_str(), trueVal);
-				}
-			} else {
-				const RE::Scaleform::GFx::Value original(static_cast<double>(touched.originalNumber));
-				root->SetVariable(touched.path.c_str(), original);
+
+		// Deferred - see kRestoreDelay for why. The sleep runs on a
+		// throwaway thread and the actual Scaleform writes are bounced back
+		// onto the game thread, the same shape the scanner-close path uses
+		// (touching RE:: state from a bare std::thread crashed this project
+		// once already).
+		const std::uint32_t   generation = s_generation;
+		std::vector<Touched>  work;
+		work.swap(s_touched);
+
+		std::thread([generation, work = std::move(work)]() {
+			std::this_thread::sleep_for(kRestoreDelay);
+
+			auto* tasks = SFSE::GetTaskInterface();
+			if (!tasks) {
+				return;
 			}
-		}
-		s_touched.clear();
+			tasks->AddTask([generation, work]() {
+				// A new lock since this was scheduled means its own
+				// HideActive() is now in force; restoring here would
+				// un-hide it.
+				if (generation != s_generation) {
+					return;
+				}
+				auto* root = GetHudMovieRoot();
+				if (!root) {
+					return;
+				}
+				RestoreNow(root, work);
+			});
+		}).detach();
 	}
+
 }

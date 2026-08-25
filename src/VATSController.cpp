@@ -252,26 +252,57 @@ namespace VATS
 			dying = m_target.get();
 		}
 
-		// requireAlive matters here specifically: the corpse just created
-		// is the thing nearest the crosshair, and the scan's own dead
-		// filter cannot see that it is dead (see Targeting.h). Excluding
-		// it by pointer is not enough either - any other body lying nearby
-		// would be picked instead.
-		auto pick = FindNearestActorToCrosshair(
-			settings.autoAdvanceRangeMeters,
-			static_cast<float>(settings.targetConeDeg),
-			dying,
-			/*a_requireAlive*/ true);
-		if (!pick || !pick->actor) {
+		// Preferred source: the game's own crosshair activation target
+		// (Alexander's suggestion, 2026-08-25, after the cone scan hopped
+		// to an enemy in the next room). The cone scan has no line-of-sight
+		// test at all - this project has never had a usable raycast, and
+		// the one engine LOS function it tried is disabled as a confirmed
+		// crash cause - so it happily picks targets through walls.
+		//
+		// commandTarget solves that without any raycasting of our own: it
+		// is what drives the vanilla "hold E to interact" prompt, and the
+		// game will not offer that through a wall, so it is occlusion-
+		// correct by construction. Same reasoning that made it the source
+		// for ordinary target acquisition in the first place. The trade is
+		// range - it only reaches normal interaction distance - so the
+		// advance simply does not fire for a distant next enemy, which is
+		// the safer failure: no hop is better than a hop through a wall.
+		RE::NiPointer<RE::Actor> next = GetCrosshairActivationTarget();
+		float                    reportedDistance = -1.0f;
+		float                    reportedAngle = -1.0f;
+
+		if (next && next.get() == dying) {
+			next = nullptr;  // still looking at the body that just dropped
+		}
+
+		if (!next && !settings.autoAdvanceRequireCrosshair) {
+			// Permissive fallback, off by default. requireAlive matters
+			// here specifically: the corpse just created is the thing
+			// nearest the crosshair, and the scan's own dead filter cannot
+			// see that it is dead (see Targeting.h). Excluding it by
+			// pointer is not enough either - any other body lying nearby
+			// would be picked instead.
+			if (auto pick = FindNearestActorToCrosshair(
+					settings.autoAdvanceRangeMeters,
+					static_cast<float>(settings.targetConeDeg),
+					dying,
+					/*a_requireAlive*/ true)) {
+				next = pick->actor;
+				reportedDistance = pick->worldDistance;
+				reportedAngle = pick->angleDeg;
+			}
+		}
+
+		if (!next) {
 			return false;
 		}
 
 		{
 			const std::scoped_lock lock(m_targetLock);
-			m_target = pick->actor;
+			m_target = next;
 		}
-		REX::INFO("[VATS] auto-advance: new target formID=0x{:08X} at {:.1f}m, {:.1f}deg off-centre",
-			pick->actor->GetFormID(), pick->worldDistance, pick->angleDeg);
+		REX::INFO("[VATS] auto-advance: new target formID=0x{:08X} (source={}, dist={:.1f}m, angle={:.1f}deg)",
+			next->GetFormID(), reportedDistance < 0.0f ? "crosshair" : "cone-scan", reportedDistance, reportedAngle);
 		return true;
 	}
 

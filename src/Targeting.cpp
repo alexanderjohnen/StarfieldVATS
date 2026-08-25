@@ -4,6 +4,8 @@
 #include "HealthReader.h"
 #include "SafeMem.h"
 
+#include <unordered_set>
+
 namespace VATS
 {
 	namespace
@@ -39,6 +41,50 @@ namespace VATS
 		[[nodiscard]] bool Read(const void* a_base, std::size_t a_off, T& a_out)
 		{
 			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
+		}
+
+		// READ-ONLY PROBE, changes no behaviour (2026-08-25). Alexander
+		// wants friendly NPCs to be untargetable, and there is no safe
+		// ready-made answer for "is this actor hostile to the player":
+		// CommonLibSF's Actor::IsHostileToActor is declared against
+		// ID::Actor::IsHostileToActor, which is literally 0 - an unmapped
+		// Address Library ID, the exact shape that has hard-crashed this
+		// project twice (GetActorKnowledge, HasDetectionLOS). Calling it is
+		// not an option. The virtual IsInCombat() at vtable slot 0x16C is
+		// the safer category in principle, but a slot index that deep is
+		// itself reverse-engineered, and calling the wrong slot is worse
+		// than reading the wrong field.
+		//
+		// So this logs the plain data candidates first, once per actor, to
+		// find out empirically which of them actually distinguishes friend
+		// from foe before anything is wired up:
+		//   - currentCombatTarget: a named Actor member. If a hostile in a
+		//     fight has the player here, comparing it to the player's own
+		//     formID identifies "is fighting me". Note this is a
+		//     TESObjectHandle, and whether it is simply the formID is
+		//     unconfirmed for 1.16.244 - that is part of what this answers.
+		//   - boolBits: kPlayerTeammate is nominally 1<<26, but the same
+		//     enum's kDead is already proven wrong for this game, so it is
+		//     logged raw rather than trusted.
+		// Compare a companion, a neutral civilian and a hostile in the log
+		// before drawing any conclusion.
+		void LogHostilityCandidates(RE::Actor* a_actor)
+		{
+			static std::unordered_set<std::uint32_t> s_logged;
+			const std::uint32_t                      formID = a_actor->GetFormID();
+			if (!s_logged.insert(formID).second) {
+				return;
+			}
+
+			auto* player = RE::PlayerCharacter::GetSingleton();
+
+			std::uint32_t combatTarget = 0;
+			const bool    haveCombatTarget = Read(a_actor, GameOffsets::kCurrentCombatTarget, combatTarget);
+			std::uint32_t boolBits = 0;
+			const bool    haveBoolBits = Read(a_actor, kBoolBitsOff, boolBits);
+
+			REX::INFO("[VATS] hostility probe: formID=0x{:08X} combatTarget=0x{:08X} (read={}) boolBits=0x{:08X} (read={}) playerFormID=0x{:08X}",
+				formID, combatTarget, haveCombatTarget, boolBits, haveBoolBits, player ? player->GetFormID() : 0);
 		}
 
 		[[nodiscard]] bool TryReadCandidate(const void* a_entry, const void* a_player, RE::NiPoint3& a_posOut)
@@ -213,6 +259,7 @@ namespace VATS
 			return nullptr;
 		}
 
+		LogHostilityCandidates(actor);
 		return RE::NiPointer<RE::Actor>(actor);
 	}
 

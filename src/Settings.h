@@ -164,6 +164,20 @@ namespace VATS
 		// view cone (iConeDegrees) applies unchanged.
 		float autoAdvanceRangeMeters{ 30.0f };
 
+		// Only advance to what the game's own crosshair activation target
+		// reports (the value behind the vanilla "hold E" prompt). That is
+		// occlusion-correct by construction - the game will not offer an
+		// interaction through a wall - which is what the cone scan cannot
+		// do: it has no line-of-sight test at all and happily hopped to an
+		// enemy in the next room (Alexander, 2026-08-25). The cost is
+		// range, since it only reaches normal interaction distance, so a
+		// distant next enemy simply does not trigger an advance. That is
+		// the safer failure: no hop beats a hop through a wall.
+		//
+		// Turning this off falls back to the cone scan within
+		// fAutoAdvanceRangeMeters, walls included.
+		bool autoAdvanceRequireCrosshair{ true };
+
 		// Where on a target the box sits and rounds are steered, as a
 		// multiple of how high the target's bounding-sphere centre already
 		// is above its own feet. 1.0 aims at that raw centre - which is the
