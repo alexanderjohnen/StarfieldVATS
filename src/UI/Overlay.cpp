@@ -1,5 +1,6 @@
 #include "Overlay.h"
 
+#include "BoneProbe.h"
 #include "CameraProject.h"
 #include "GameOffsets.h"
 #include "HealthReader.h"
@@ -579,11 +580,12 @@ namespace VATS::UI
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
 
-		// Read-only probe (2026-08-25), draws nothing, changes nothing -
-		// see WorldBoundProbe.h. Logs on pose change so the log can be
-		// compared against what Alexander does in-game (stand/crouch/
-		// prone) before this is ever wired into the actual aim point.
+		// Read-only probes (2026-08-25), draw nothing, change nothing.
+		// worldBound alone turned out insufficient - screenshot-confirmed
+		// too low on a wide/crouching pose (see BoneProbe.h) - so a named-
+		// bone candidate is now probed alongside it for comparison.
 		WorldBoundProbe::LogIfChanged(state.actor.get());
+		BoneProbe::LogIfChanged(state.actor.get());
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a
 		// possible live "can the player currently see this target" signal

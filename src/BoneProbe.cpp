@@ -1,0 +1,230 @@
+#include "BoneProbe.h"
+
+#include "GameOffsets.h"
+#include "SafeMem.h"
+#include "WorldBoundProbe.h"
+
+#include <array>
+#include <chrono>
+#include <cstring>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace VATS
+{
+	namespace
+	{
+		template <class T>
+		[[nodiscard]] bool Read(const void* a_base, std::size_t a_off, T& a_out)
+		{
+			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
+		}
+
+		// NiObjectNET::name (BSFixedString, confirmed via CommonLibSF's own
+		// static_assert(offsetof(NiObjectNET, name) == 0x10)) and
+		// NiAVObject::world/NiTransform::translate (both confirmed by
+		// static_assert on the enclosing structs' total sizes, which only
+		// arithmetically fit if these field offsets are also right) - all
+		// high-confidence, unlike the offset below.
+		constexpr std::size_t kNiObjectName = offsetof(RE::NiObjectNET, name);
+		constexpr std::size_t kNiAVObjectWorld = offsetof(RE::NiAVObject, world);
+		constexpr std::size_t kNiTransformTranslate = offsetof(RE::NiTransform, translate);
+
+		// UNVERIFIED, unlike the three above - CommonLibSF's own
+		// NiNode.h has its static_assert on sizeof(NiNode) commented out,
+		// meaning literally nobody has confirmed this layout for this
+		// game version. Best estimate: right after NiAVObject's own
+		// (confirmed) 0x130 bytes, no padding expected for a pointer-sized
+		// member. Every use below sanity-checks the resulting {size,
+		// capacity, data} triple before trusting it as a real array,
+		// rather than assuming a non-faulting read means the offset was
+		// right - same discipline as every other guessed offset in this
+		// project (avStorage, cell references).
+		constexpr std::size_t kNiNodeChildren = sizeof(RE::NiAVObject);
+
+		// BSStringPool::Entry (confirmed sizeof == 0x18): _left@00,
+		// {_length|_right} union@08, _refCount@10, _flags@14. String bytes
+		// for a leaf entry (external() == false) sit immediately after the
+		// struct, i.e. at entry+0x18 - see BSStringPool.h's Entry::data().
+		constexpr std::size_t  kEntryLengthOrRight = 0x08;
+		constexpr std::size_t  kEntryFlags = 0x14;
+		constexpr std::size_t  kEntryStringData = 0x18;
+		constexpr std::uint8_t kEntryExternalFlag = 1u << 1;
+
+		constexpr std::size_t kMaxNameLen = 48;
+		constexpr int         kMaxNodesVisited = 400;  // sanity cap, same spirit as the cell-reference scan cap
+		constexpr int         kMaxDepth = 10;
+
+		// Loose, case-insensitive substring match against a short list of
+		// plausible "center" joint names - deliberately not exact
+		// (Starfield's real naming convention for these is unconfirmed,
+		// may or may not follow Skyrim/FO4's "NPC COM [COM ]" bracketed
+		// style). A false-positive match just adds one extra log line;
+		// it's not wired into anything that could be harmed by it.
+		constexpr std::array<const char*, 7> kCandidates{
+			"COM", "Spine", "Chest", "Torso", "Pelvis", "Hips", "Root"
+		};
+
+		[[nodiscard]] bool CaseInsensitiveContains(const char* a_haystack, const char* a_needle)
+		{
+			const std::size_t needleLen = std::strlen(a_needle);
+			if (needleLen == 0) {
+				return true;
+			}
+			for (const char* p = a_haystack; *p; ++p) {
+				if (_strnicmp(p, a_needle, needleLen) == 0) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		[[nodiscard]] bool ContainsCandidate(const char* a_name)
+		{
+			for (const char* c : kCandidates) {
+				if (CaseInsensitiveContains(a_name, c)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Follows BSStringPool::Entry::leaf() by hand (plain data, no
+		// engine call) and copies the string bytes out. Bounded to a few
+		// hops as a guard against a corrupted/cyclic external-entry chain.
+		// Returns true (with an empty string) for a null/empty name, which
+		// is a normal, common case - only returns false on an actual
+		// unreadable/implausible chain.
+		[[nodiscard]] bool ReadNodeName(const void* a_node, char (&a_out)[kMaxNameLen])
+		{
+			a_out[0] = '\0';
+
+			std::uint64_t entry = 0;
+			if (!Read(a_node, kNiObjectName, entry)) {
+				return false;
+			}
+			if (!entry) {
+				return true;  // no name, not an error
+			}
+
+			for (int hop = 0; hop < 4; ++hop) {
+				std::uint8_t flags = 0;
+				if (!Read(reinterpret_cast<const void*>(entry), kEntryFlags, flags)) {
+					return false;
+				}
+				if ((flags & kEntryExternalFlag) == 0) {
+					break;
+				}
+				std::uint64_t next = 0;
+				if (!Read(reinterpret_cast<const void*>(entry), kEntryLengthOrRight, next) || !next) {
+					return false;
+				}
+				entry = next;
+			}
+
+			std::uint32_t length = 0;
+			if (!Read(reinterpret_cast<const void*>(entry), kEntryLengthOrRight, length)) {
+				return false;
+			}
+			length = std::min<std::uint32_t>(length, kMaxNameLen - 1);
+			if (length > 0 &&
+				!SafeRead(reinterpret_cast<const std::byte*>(entry) + kEntryStringData, a_out, length)) {
+				return false;
+			}
+			a_out[length] = '\0';
+			return true;
+		}
+
+		[[nodiscard]] bool ReadWorldPos(const void* a_node, RE::NiPoint3& a_out)
+		{
+			return Read(a_node, kNiAVObjectWorld + kNiTransformTranslate, a_out);
+		}
+	}
+
+	void BoneProbe::LogIfChanged(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return;
+		}
+
+		static std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> s_lastLogged;
+		const std::uint32_t                                                             formID = a_actor->GetFormID();
+		const auto                                                                      now = std::chrono::steady_clock::now();
+		if (const auto it = s_lastLogged.find(formID); it != s_lastLogged.end() && now - it->second < std::chrono::seconds(1)) {
+			return;
+		}
+		s_lastLogged[formID] = now;
+
+		std::uint64_t loadedData = 0;
+		if (!Read(a_actor, GameOffsets::kActorLoadedData, loadedData) || !loadedData) {
+			return;
+		}
+		std::uint64_t root = 0;
+		if (!Read(reinterpret_cast<const void*>(loadedData), GameOffsets::kLoadedRefData3D, root) || !root) {
+			return;
+		}
+
+		RE::NiPoint3 feet{};
+		if (!Read(a_actor, GameOffsets::kLocation, feet)) {
+			return;
+		}
+		const RE::NiPoint3 worldBoundRef = WorldBoundProbe::GetAimPoint(a_actor, feet);
+
+		struct WorkItem
+		{
+			std::uint64_t node;
+			int           depth;
+		};
+		std::vector<WorkItem> stack{ { root, 0 } };
+		int                   visited = 0;
+		int                   matches = 0;
+
+		while (!stack.empty() && visited < kMaxNodesVisited) {
+			const WorkItem item = stack.back();
+			stack.pop_back();
+			++visited;
+
+			char name[kMaxNameLen];
+			if (ReadNodeName(reinterpret_cast<const void*>(item.node), name) && name[0] != '\0' &&
+				ContainsCandidate(name)) {
+				RE::NiPoint3 pos{};
+				if (ReadWorldPos(reinterpret_cast<const void*>(item.node), pos)) {
+					++matches;
+					REX::INFO("[VATS] bone: formID=0x{:08X} name='{}' pos=({:.2f},{:.2f},{:.2f}) aboveFeet={:.2f} vsWorldBound=({:.2f},{:.2f},{:.2f})",
+						formID, name, pos.x, pos.y, pos.z, pos.z - feet.z,
+						pos.x - worldBoundRef.x, pos.y - worldBoundRef.y, pos.z - worldBoundRef.z);
+				}
+			}
+
+			if (item.depth >= kMaxDepth) {
+				continue;
+			}
+
+			// Attempt children (NiNode::children, see kNiNodeChildren's
+			// comment for why this offset is a guess) - sanity-checked
+			// before trusting it as a real array, since item.node isn't
+			// necessarily a NiNode at all (leaf mesh objects have no
+			// children, and there's no cheap RTTI check available here).
+			std::uint32_t size = 0;
+			std::uint32_t capacity = 0;
+			std::uint64_t data = 0;
+			if (!Read(reinterpret_cast<const void*>(item.node), kNiNodeChildren + 0x00, size) ||
+				!Read(reinterpret_cast<const void*>(item.node), kNiNodeChildren + 0x04, capacity) ||
+				!Read(reinterpret_cast<const void*>(item.node), kNiNodeChildren + 0x08, data) ||
+				size > 200 || capacity < size || capacity > 200 || (size > 0 && data < 0x10000)) {
+				continue;  // doesn't look like a real array - treat as a leaf
+			}
+			for (std::uint32_t i = 0; i < size && visited + static_cast<int>(stack.size()) < kMaxNodesVisited; ++i) {
+				std::uint64_t child = 0;
+				if (Read(reinterpret_cast<const void*>(data), 8ull * i, child) && child) {
+					stack.push_back({ child, item.depth + 1 });
+				}
+			}
+		}
+
+		if (matches == 0) {
+			REX::INFO("[VATS] bone: formID=0x{:08X} no candidate name matched ({} nodes visited)", formID, visited);
+		}
+	}
+}
