@@ -144,6 +144,35 @@ namespace VATS
 			return false;
 		}
 
+		// Read-only: reports where an object currently sits, plus the stage
+		// dimensions if they can be read. Nothing here can pick a sensible
+		// offset without knowing the coordinate space, and guessing one
+		// blind risks flinging the crit banner off-screen entirely.
+		void LogPosition(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_objectPath)
+		{
+			static bool s_logged = false;
+			if (s_logged || !a_root->IsAvailable(a_objectPath.c_str())) {
+				return;
+			}
+			s_logged = true;
+
+			for (const char* property : { "x", "y", "width", "height" }) {
+				const std::string         path = a_objectPath + "." + property;
+				RE::Scaleform::GFx::Value value;
+				if (a_root->GetVariable(&value, path.c_str()) && value.IsNumber()) {
+					REX::INFO("[VATS] combat-hud: calibration {} = {:.1f}", path, value.GetNumber());
+				} else {
+					REX::INFO("[VATS] combat-hud: calibration {} unreadable", path);
+				}
+			}
+			for (const char* stagePath : { "root1.stage.stageWidth", "root1.stage.stageHeight" }) {
+				RE::Scaleform::GFx::Value value;
+				if (a_root->GetVariable(&value, stagePath) && value.IsNumber()) {
+					REX::INFO("[VATS] combat-hud: calibration {} = {:.1f}", stagePath, value.GetNumber());
+				}
+			}
+		}
+
 		// Shifts one display object by a_dx/a_dy in its parent's coordinate
 		// space, remembering the originals so Restore() can put it back.
 		// Used instead of hiding when Alexander wants the crit banner kept
@@ -238,33 +267,35 @@ namespace VATS
 			changedAny |= TryHideLeaf(root, container + ".HitIndicator_mc");
 			changedAny |= TryHideLeaf(root, container + ".KillIndicator_mc");
 
-			// The crit visual is handled separately, and it is NOT simply a
-			// child of the hit marker. It was assumed to be, on the strength
-			// of HitKillIndicator.as declaring `this.HitIndicator_mc.
-			// CritBanner_mc` - but Alexander observed a crit marker still
-			// appearing in a session where the hit marker was verifiably
-			// hidden, and a hidden parent cannot render a child. So whatever
-			// he is seeing is a different object; the decompile also lists a
-			// separate `CritText_mc` alongside `CritBanner_mc`.
+			changedAny |= TryHideLeaf(root, container + ".HitIndicator_mc.CritBanner_mc");
+
+			// Hiding does not fully hold for crits, and that is the whole
+			// reason move mode exists. Alexander's observation: ordinary
+			// hits show nothing while Locked (the hide works), but a
+			// CRITICAL hit briefly flashes up both the crit banner and a hit
+			// marker. That fits Flash's keyframe behaviour - entering a
+			// keyframe re-instantiates the timeline-placed display objects
+			// with their authored properties, resetting `visible` back to
+			// true - and it also resolves what the crit visual actually is.
+			// An earlier reading of the same evidence concluded it must be a
+			// different object entirely, since a hidden parent cannot render
+			// a child; the real explanation is that the parent stops being
+			// hidden for those few frames.
 			//
-			// Rather than guess again, every candidate is probed for
-			// availability and logged, and each one that resolves is either
-			// hidden or moved per the setting. Probing costs nothing:
-			// IsAvailable never constructs a Value, and a miss is a no-op.
-			static constexpr const char* kCritPaths[] = {
-				".HitIndicator_mc.CritBanner_mc",
-				".CritBanner_mc",
-				".CritText_mc",
-				".HitIndicator_mc.CritText_mc",
-				".KillIndicator_mc.CritBanner_mc",
-			};
-			for (const char* suffix : kCritPaths) {
-				const std::string path = container + suffix;
-				if (settings.moveCritMarker) {
-					changedAny |= TryMoveObject(root, path, settings.critMarkerOffsetX, settings.critMarkerOffsetY);
-				} else {
-					changedAny |= TryHideLeaf(root, path);
-				}
+			// So the position is offset as well as the visibility being set.
+			// The two do not conflict: ordinary hits stay suppressed because
+			// the hide is still in force, and the crit flash - which
+			// overrides it - happens wherever the object has been moved to.
+			// Alexander's call that a brief hit marker alongside a crit is
+			// fine is what makes this workable.
+			if (settings.moveCritMarker) {
+				changedAny |= TryMoveObject(root, container + ".HitIndicator_mc", settings.critMarkerOffsetX, settings.critMarkerOffsetY);
+			} else {
+				// Read-only calibration: the parent clip's coordinate scale
+				// is unknown, so log where the object currently sits before
+				// anyone picks an offset. Costs one read and changes
+				// nothing.
+				LogPosition(root, container + ".HitIndicator_mc");
 			}
 
 			// Stop at the first container that actually worked. The
