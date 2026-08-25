@@ -85,6 +85,57 @@ namespace VATS::UI
 			}
 		}
 
+		// Diagnostic (2026-08-25) - GameOffsets::kBoolBits is a bare
+		// offsetof(RE::Actor, boolBits) claim, never empirically verified
+		// (unlike kCellReferences, which WAS wrong by 8 bytes when trusted
+		// the same way). Alexander confirmed a locked target's boolBits
+		// never shows the dead bit set even when the actor is visibly,
+		// definitely dead on the ground - and two completely different
+		// dead/alive actors logged the exact same alternating pair of
+		// values (0x12A021A2/0x12A021A3), which is far more consistent with
+		// "wrong offset, landed on some frame-parity/engine bookkeeping
+		// field" than "right offset, wrong bit index". Dumps a wide DWORD
+		// window around the claimed offset so a real, stable "dead" field
+		// can be found by comparison instead of guessed at - one full dump
+		// immediately per newly-seen formID (baseline), then throttled
+		// repeats so a motionless corpse's genuinely-stable entries can be
+		// told apart from whatever keeps toggling every frame regardless of
+		// actor state.
+		void DumpBoolBitsWindow(RE::Actor* a_actor)
+		{
+			static std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> s_lastDump;
+			const std::uint32_t                                                             formID = a_actor->GetFormID();
+			const auto                                                                      now = std::chrono::steady_clock::now();
+			if (const auto it = s_lastDump.find(formID); it != s_lastDump.end() && now - it->second < std::chrono::milliseconds(500)) {
+				return;
+			}
+			s_lastDump[formID] = now;
+
+			constexpr std::ptrdiff_t kWindowStart = static_cast<std::ptrdiff_t>(GameOffsets::kBoolBits) - 0x20;
+			constexpr std::size_t    kWindowBytes = 0x200;
+
+			const auto* base = reinterpret_cast<const std::byte*>(a_actor) + kWindowStart;
+			std::string line;
+			char        cell[48];
+			int         perLine = 0;
+			for (std::size_t off = 0; off < kWindowBytes; off += 4) {
+				std::uint32_t raw = 0;
+				if (!SafeRead(base + off, &raw, sizeof(raw))) {
+					continue;
+				}
+				std::snprintf(cell, sizeof(cell), "+%03zX:%08X ", static_cast<std::size_t>(kWindowStart) + off, raw);
+				line += cell;
+				if (++perLine >= 8) {
+					REX::INFO("[VATS] boolBits window formID=0x{:08X}: {}", formID, line);
+					line.clear();
+					perLine = 0;
+				}
+			}
+			if (!line.empty()) {
+				REX::INFO("[VATS] boolBits window formID=0x{:08X}: {}", formID, line);
+			}
+		}
+
 		void DrawCenteredText(ImDrawList* a_dl, float a_centerX, float a_y, const char* a_text, ImU32 a_color)
 		{
 			const auto   size = ImGui::CalcTextSize(a_text);
@@ -574,6 +625,8 @@ namespace VATS::UI
 		{
 			std::uint32_t boolBits = 0;
 			const bool    boolBitsRead = SafeRead(reinterpret_cast<const std::byte*>(state.actor.get()) + GameOffsets::kBoolBits, &boolBits, sizeof(boolBits));
+
+			DumpBoolBitsWindow(state.actor.get());
 
 			// Continuous visibility (2026-08-25), log-on-change only -
 			// answers whether the dead bit (0x800) EVER flips as a real

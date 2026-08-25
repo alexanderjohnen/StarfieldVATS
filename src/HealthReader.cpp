@@ -276,29 +276,96 @@ namespace VATS
 		// lookup hasn't resolved for this actor).
 		HealthReading baseValuesReading{};
 		const bool     haveMax = GetActorHealth(a_actor, baseValuesReading) && baseValuesReading.max > 0.0f;
-		const float    kMinPlausibleHP = haveMax ? baseValuesReading.max * 0.02f : 1.0f;
-		const float    kMaxPlausibleHP = haveMax ? baseValuesReading.max * 1.05f : 5000.0f;
+		const float    knownMax = haveMax ? baseValuesReading.max : 5000.0f;
 
-		static std::unordered_map<std::uint32_t, std::vector<float>> s_snapshots;
-		std::vector<float>&                                          snapshot = s_snapshots[formID];
-		const bool                                                   firstScan = snapshot.empty();
-		if (firstScan) {
-			snapshot.assign(kScanBytes / sizeof(float), 0.0f);
-		}
+		// Floor is deliberately 0, not a fraction of max (the previous 2%
+		// floor is exactly why this search could never succeed - see the
+		// ZEROED branch below).
+		const float kMinPlausibleHP = 0.0f;
+		const float kMaxPlausibleHP = knownMax * 1.05f;
+		// A single sample-to-sample drop must be this large to count as a
+		// hit rather than a smooth tick.
+		const float kMinStepDrop = knownMax * 0.02f;
+		// "Was meaningfully alive" -> "is essentially zero" in one step.
+		const float kZeroedFrom = knownMax * 0.10f;
+		const float kZeroedTo = knownMax * 0.01f;
 
-		const auto* base = reinterpret_cast<const std::byte*>(a_actor);
-		for (std::size_t off = 0; off < kScanBytes; off += sizeof(float)) {
-			float current = 0.0f;
-			if (!SafeRead(base + off, &current, sizeof(current))) {
-				continue;
+		// Scans one contiguous window and reports two distinct signatures.
+		// Keyed per (formID, window label) so the Actor object and the
+		// AIProcess object each keep their own snapshot.
+		const auto scanWindow = [&](const void* a_base, std::size_t a_bytes, const char* a_label) {
+			if (!a_base) {
+				return;
 			}
-			float& prev = snapshot[off / sizeof(float)];
-			if (!firstScan && current < prev && current >= kMinPlausibleHP && current <= kMaxPlausibleHP &&
-				prev >= kMinPlausibleHP && prev <= kMaxPlausibleHP) {
-				REX::INFO("[VATS] health scan: formID=0x{:08X} offset=0x{:03X} DECREASED {:.1f} -> {:.1f} (knownMax={:.1f}, range=[{:.1f},{:.1f}])",
-					formID, off, prev, current, haveMax ? baseValuesReading.max : -1.0f, kMinPlausibleHP, kMaxPlausibleHP);
+
+			static std::unordered_map<std::string, std::vector<float>> s_snapshots;
+			const std::string                                          key = std::to_string(formID) + a_label;
+			std::vector<float>&                                        snapshot = s_snapshots[key];
+			const bool                                                 firstScan = snapshot.empty();
+			if (firstScan) {
+				snapshot.assign(a_bytes / sizeof(float), 0.0f);
 			}
-			prev = current;
+
+			const auto* base = reinterpret_cast<const std::byte*>(a_base);
+			for (std::size_t off = 0; off < a_bytes; off += sizeof(float)) {
+				float current = 0.0f;
+				if (!SafeRead(base + off, &current, sizeof(current))) {
+					continue;
+				}
+				float& prev = snapshot[off / sizeof(float)];
+				if (firstScan) {
+					prev = current;
+					continue;
+				}
+
+				const bool bothInRange = current >= kMinPlausibleHP && current <= kMaxPlausibleHP &&
+				                         prev >= kMinPlausibleHP && prev <= kMaxPlausibleHP;
+
+				// The death signature: a real current-health field is the
+				// one value that collapses from a substantial fraction of
+				// max to essentially nothing at the exact moment the actor
+				// dies. This is what the whole search is actually for, and
+				// it is precisely what the old 2%-of-max floor made
+				// impossible to observe (zero is below any such floor, and
+				// the old check additionally required BOTH samples in
+				// range, so a 30 -> 0 transition was discarded twice over).
+				if (prev >= kZeroedFrom && current <= kZeroedTo) {
+					REX::INFO("[VATS] health scan: formID=0x{:08X} {}+0x{:04X} ZEROED {:.1f} -> {:.1f} (knownMax={:.1f}) <<< DEATH CANDIDATE",
+						formID, a_label, off, prev, current, haveMax ? baseValuesReading.max : -1.0f);
+				} else if (bothInRange && (prev - current) >= kMinStepDrop) {
+					// Step threshold added 2026-08-25 to kill the dominant
+					// false positive: two separate targets each produced a
+					// candidate running exactly 20.0 -> 9.7 at exactly
+					// 1.0/second (0.2 per 200ms sample) - a 20-second
+					// countdown timer, not health, at a different offset in
+					// each actor. Real weapon damage arrives in discrete
+					// chunks far larger than 2% of max per sample, so this
+					// separates hits from any smoothly-ticking timer or
+					// blend weight without needing to know what those
+					// fields are.
+					REX::INFO("[VATS] health scan: formID=0x{:08X} {}+0x{:04X} DROPPED {:.1f} -> {:.1f} (knownMax={:.1f}, minStep={:.1f})",
+						formID, a_label, off, prev, current, haveMax ? baseValuesReading.max : -1.0f, kMinStepDrop);
+				}
+				prev = current;
+			}
+		};
+
+		scanWindow(a_actor, kScanBytes, "actor");
+
+		// Second window (2026-08-25): the first pass scanned only the Actor
+		// object itself and found nothing real, so live health plausibly
+		// isn't stored there at all. AIProcess is the obvious next place -
+		// it's the per-actor "currently simulated" state block (only
+		// populated for actors the engine is actively processing, which a
+		// locked combat target always is), and in this engine family it has
+		// historically cached exactly this kind of live combat data.
+		// currentProcess is a plain named pointer member at a header offset
+		// that this session's raw dump independently corroborated (+0x228
+		// read as a well-formed heap pointer), so this is a plain guarded
+		// data read, consistent with this project's low-risk pattern.
+		const void* aiProcess = nullptr;
+		if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + offsetof(RE::Actor, currentProcess), &aiProcess, sizeof(aiProcess)) && aiProcess) {
+			scanWindow(aiProcess, 0x1000, "aiproc");
 		}
 	}
 }
