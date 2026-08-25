@@ -619,12 +619,19 @@ namespace VATS::UI
 		{
 			HealthReading hp{};
 			if (GetActorHealth(state.actor.get(), hp) && hp.current <= 0.0f) {
-				// With budget left, hop to the next living enemy rather
-				// than dropping out of VATS entirely - Alexander's
-				// request. The resource system is what makes this fair:
-				// each hop still has to be paid for in damage dealt, so a
-				// chain of kills ends on its own once the bar runs out.
-				if (VatsResource::Get().GetState().current > 0.0f && Controller::Get().TryAdvanceToNextTarget()) {
+				// With budget left, hop to the next enemy rather than
+				// dropping out of VATS entirely - Alexander's request. The
+				// resource system is what makes this fair: each hop still
+				// has to be paid for in damage dealt, so a chain of kills
+				// ends on its own once the bar runs out.
+				//
+				// TryAdvanceOrHold, not a single attempt: at the instant of
+				// death the player is still aiming at the body that just
+				// dropped, so an immediate crosshair-based pick can only
+				// fail. It holds the lock open briefly instead, giving them
+				// time to swing onto the next target. Draws nothing while
+				// waiting - a box on a corpse would be worse than none.
+				if (VatsResource::Get().GetState().current > 0.0f && Controller::Get().TryAdvanceOrHold()) {
 					return;
 				}
 

@@ -54,12 +54,15 @@ namespace VATS
 		autoAdvanceOnKill = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceOnKill", 1, INI_PATH) != 0;
 		autoAdvanceRangeMeters = GetPrivateProfileFloatA("Resource", "fAutoAdvanceRangeMeters", 30.0f, INI_PATH);
 		autoAdvanceRequireCrosshair = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceRequireCrosshair", 1, INI_PATH) != 0;
+		autoAdvanceGraceMs = REX::W32::GetPrivateProfileIntA("Resource", "iAutoAdvanceGraceMs", 1200, INI_PATH);
 		aimPointHeightFactor = GetPrivateProfileFloatA("Targeting", "fAimPointHeightFactor", 1.5f, INI_PATH);
+		ignoreFriendlyActors = REX::W32::GetPrivateProfileIntA("Targeting", "bIgnoreFriendlyActors", 1, INI_PATH) != 0;
+		requireHostileTarget = REX::W32::GetPrivateProfileIntA("Targeting", "bRequireHostileTarget", 0, INI_PATH) != 0;
 		moveCritMarker = REX::W32::GetPrivateProfileIntA("HUD", "bMoveCritMarker", 0, INI_PATH) != 0;
 		critMarkerOffsetX = GetPrivateProfileFloatA("HUD", "fCritMarkerOffsetX", 0.0f, INI_PATH);
 		critMarkerOffsetY = GetPrivateProfileFloatA("HUD", "fCritMarkerOffsetY", -180.0f, INI_PATH);
 
-		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}, fCostPerDamage={}, bAutoAdvanceOnKill={}, fAutoAdvanceRangeMeters={}, bAutoAdvanceRequireCrosshair={}, fAimPointHeightFactor={}, bMoveCritMarker={}, fCritMarkerOffsetX={}, fCritMarkerOffsetY={}",
-			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen, vatsCostPerDamage, autoAdvanceOnKill, autoAdvanceRangeMeters, autoAdvanceRequireCrosshair, aimPointHeightFactor, moveCritMarker, critMarkerOffsetX, critMarkerOffsetY);
+		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}, fCostPerDamage={}, bAutoAdvanceOnKill={}, fAutoAdvanceRangeMeters={}, bAutoAdvanceRequireCrosshair={}, iAutoAdvanceGraceMs={}, fAimPointHeightFactor={}, bIgnoreFriendlyActors={}, bRequireHostileTarget={}, bMoveCritMarker={}, fCritMarkerOffsetX={}, fCritMarkerOffsetY={}",
+			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen, vatsCostPerDamage, autoAdvanceOnKill, autoAdvanceRangeMeters, autoAdvanceRequireCrosshair, autoAdvanceGraceMs, aimPointHeightFactor, ignoreFriendlyActors, requireHostileTarget, moveCritMarker, critMarkerOffsetX, critMarkerOffsetY);
 	}
 }

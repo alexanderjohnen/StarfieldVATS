@@ -20,7 +20,25 @@ namespace VATS::GameOffsets
 	inline constexpr auto kBoolBits = offsetof(RE::Actor, boolBits);
 
 	inline constexpr std::uint8_t  kFormTypeACHR = 75;   // matches crash logger's independent RTTI labeling
+	// UNUSED for death detection since 2026-08-25 - this bit reads
+	// identically on a living actor and one lying dead on the floor, so it
+	// never distinguished anything. Death is taken from health instead
+	// (HealthReader.h). Kept only so the old value stays documented.
 	inline constexpr std::uint32_t kActorDeadBit = 1u << 11;  // RE::Actor::BOOL_BITS::kDead
+
+	// VERIFIED BY MEASUREMENT 2026-08-25, unlike kActorDeadBit above. A
+	// companion and an enemy probed back to back read boolBits 0x162021A2
+	// and 0x122021A2 - differing in exactly this one bit, set on the
+	// teammate and clear on the enemy, which is also the bit the header
+	// names kPlayerTeammate.
+	inline constexpr std::uint32_t kActorPlayerTeammateBit = 1u << 26;  // RE::Actor::BOOL_BITS::kPlayerTeammate
+
+	// The player's own reference handle, as it appears in other actors'
+	// currentCombatTarget. Empirical: an enemy actively fighting the player
+	// read 1 there while the player's form ID is 0x14, so the field holds a
+	// handle rather than a form ID - consistent with this project's
+	// projectile logs, where player-fired rounds carry shooterHandle=1.
+	inline constexpr std::uint32_t kPlayerHandle = 1;
 
 	// UNVERIFIED — candidate for a real occlusion-respecting target source
 	// (2026-08-22 investigation), not yet trusted. CommonLibSF's

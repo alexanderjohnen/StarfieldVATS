@@ -178,6 +178,33 @@ namespace VATS
 		// fAutoAdvanceRangeMeters, walls included.
 		bool autoAdvanceRequireCrosshair{ true };
 
+		// How long the lock stays open after a kill, waiting for the player
+		// to put their crosshair on the next enemy. Without this the
+		// crosshair-based advance could essentially never fire: at the
+		// instant of death the player is by definition still aiming at the
+		// body that just dropped, so the one attempt made at that moment
+		// always failed. Nothing is drawn while waiting.
+		std::uint32_t autoAdvanceGraceMs{ 1200 };
+
+		// Excludes the player's own teammates (companions) from targeting.
+		// Measured rather than assumed - see IsTargetable in Targeting.cpp
+		// for the companion/enemy probe this is built on.
+		//
+		// Note this is NOT a full faction/relationship check, which is how
+		// Bethesda actually models friend/neutral/enemy. The engine's own
+		// combined answer, Actor::IsHostileToActor, is unreachable here (an
+		// Address Library ID of 0), and reconstructing it would mean
+		// walking the actor's faction list, the player's, and the
+		// faction-reaction records - several unverified structures deep. So
+		// this covers the case Alexander actually hit, companions, and
+		// leaves neutral civilians targetable.
+		bool ignoreFriendlyActors{ true };
+
+		// Stricter: only actors currently fighting the player at all. Off
+		// by default because it would also exclude an enemy who has not
+		// noticed you yet, which breaks opening a fight from stealth.
+		bool requireHostileTarget{ false };
+
 		// Where on a target the box sits and rounds are steered, as a
 		// multiple of how high the target's bounding-sphere centre already
 		// is above its own feet. 1.0 aims at that raw centre - which is the

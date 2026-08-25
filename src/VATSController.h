@@ -104,12 +104,34 @@ namespace VATS
 		// caller ends the lock as before.
 		[[nodiscard]] bool TryAdvanceToNextTarget();
 
+		// Called each frame while the locked target is dead. Returns true
+		// to stay Locked (either because the lock just moved to a new
+		// target, or because we are still inside the grace window waiting
+		// for the player to pick one), false to end the lock.
+		//
+		// The grace window exists because requiring the crosshair target
+		// at the exact instant of death almost never fired: at that moment
+		// the player is by definition still aiming at the enemy who just
+		// dropped. Holding the lock open briefly lets them swing onto the
+		// next one, which is both how the re-acquire naturally plays and
+		// what keeps the occlusion-correct crosshair source usable - the
+		// alternative was going back to a cone scan that picks targets
+		// through walls.
+		[[nodiscard]] bool TryAdvanceOrHold();
+
 	private:
 		void Advance();  // game thread only
 
 		std::atomic<VATSMode>    m_mode{ VATSMode::kOff };
 		std::mutex               m_targetLock;
 		RE::NiPointer<RE::Actor> m_target;
+
+		// Deadline for the post-kill grace window (see TryAdvanceOrHold).
+		// Zero means "not currently waiting"; reset on every lock and on
+		// every successful advance.
+		std::mutex                            m_advanceLock;
+		std::chrono::steady_clock::time_point m_advanceDeadline{};
+		bool                                  m_advancePending{ false };
 
 		std::atomic<bool>        m_shotHit{ false };
 		std::atomic<std::int64_t> m_shotTimestamp{ 0 };  // steady_clock ticks; 0 = no shot recorded yet

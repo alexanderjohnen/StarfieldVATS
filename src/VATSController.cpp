@@ -306,6 +306,34 @@ namespace VATS
 		return true;
 	}
 
+	bool Controller::TryAdvanceOrHold()
+	{
+		const auto& settings = Settings::Get();
+		if (!settings.autoAdvanceOnKill) {
+			return false;
+		}
+
+		if (TryAdvanceToNextTarget()) {
+			const std::scoped_lock lock(m_advanceLock);
+			m_advancePending = false;
+			return true;
+		}
+
+		const auto now = std::chrono::steady_clock::now();
+		const std::scoped_lock lock(m_advanceLock);
+		if (!m_advancePending) {
+			m_advancePending = true;
+			m_advanceDeadline = now + std::chrono::milliseconds(settings.autoAdvanceGraceMs);
+			return true;
+		}
+		if (now < m_advanceDeadline) {
+			return true;  // still waiting for the player to pick the next one
+		}
+
+		m_advancePending = false;
+		return false;
+	}
+
 	void Controller::Advance()
 	{
 		const VATSMode current = m_mode.load(std::memory_order_relaxed);
@@ -355,6 +383,10 @@ namespace VATS
 			// damage accounting fresh so a target that was already hurt
 			// before being locked isn't billed retroactively.
 			VatsResource::Get().OnLockStart();
+			{
+				const std::scoped_lock advanceLock(m_advanceLock);
+				m_advancePending = false;
+			}
 
 			// EXPERIMENTAL (2026-08-24, Alexander's idea) - see
 			// CombatTargetOverride.h. Engaged unconditionally (no settings

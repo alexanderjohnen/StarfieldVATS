@@ -3,6 +3,9 @@
 #include "Settings.h"
 
 #include <chrono>
+#include <cstring>
+#include <future>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -122,7 +125,45 @@ namespace VATS
 		// using the same "sleep on a throwaway thread, bounce the actual
 		// engine call back to the game thread" pattern the scanner-close
 		// path already uses.
-		constexpr auto kRestoreDelay = std::chrono::milliseconds(1500);
+		// A fixed 1500ms was the first attempt and it was not enough -
+		// Alexander: "verblüffend, wie viel später nach einem Kill ich noch
+		// eine Hit/Crit anzeige bekomme". Rather than keep raising a
+		// guessed number, ask the animation whether it has finished.
+		//
+		// HitKillIndicator.as parks both indicators on the frame labelled
+		// "End" in its constructor (`gotoAndStop("End")`), and the
+		// inspection probe confirmed currentLabel reads back as exactly
+		// that at rest. So "currentLabel == End" is the object's own idle
+		// signal, and waiting for it is self-timing for any animation
+		// length instead of a number that has to be re-tuned.
+		//
+		// Polled at 250ms, up to a hard cap, and only between locks - never
+		// during one. That is a few reads spread over a couple of seconds,
+		// nothing like the per-frame AS3 traffic that is suspected in an
+		// earlier crash here.
+		constexpr auto        kRestorePollInterval = std::chrono::milliseconds(250);
+		constexpr int         kMaxRestorePolls = 24;  // ~6s ceiling, then restore anyway
+		constexpr const char* kIdleLabel = "End";
+
+		// Path whose currentLabel is polled to decide when the animation has
+		// finished, captured by HideActive() from whichever container
+		// actually resolved.
+		std::string s_idleCheckPath;
+
+		// True when the indicator has parked itself back on its idle frame.
+		// Unreadable label counts as idle: a missing signal must not leave
+		// the vanilla HUD suppressed indefinitely. Game thread only.
+		[[nodiscard]] bool IsIndicatorIdle(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_path)
+		{
+			if (a_path.empty()) {
+				return true;
+			}
+			RE::Scaleform::GFx::Value label;
+			if (!a_root->GetVariable(&label, (a_path + ".currentLabel").c_str()) || !label.IsString()) {
+				return true;
+			}
+			return std::strcmp(label.GetString(), kIdleLabel) == 0;
+		}
 
 		// Puts back exactly what one HideActive() changed. Game thread only.
 		void RestoreNow(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::vector<Touched>& a_touched)
@@ -357,6 +398,7 @@ namespace VATS
 			// recorded confusing "was visible=false" entries for things this
 			// call had itself just hidden a moment earlier.
 			if (changedAny) {
+				s_idleCheckPath = container + ".HitIndicator_mc";
 				return;
 			}
 		}
@@ -370,35 +412,60 @@ namespace VATS
 			return;
 		}
 
-		// Deferred - see kRestoreDelay for why. The sleep runs on a
-		// throwaway thread and the actual Scaleform writes are bounced back
-		// onto the game thread, the same shape the scanner-close path uses
-		// (touching RE:: state from a bare std::thread crashed this project
-		// once already).
+		// Deferred until the indicator animation has parked itself - see
+		// kRestorePollInterval. The waiting happens on a throwaway thread
+		// and every Scaleform touch is bounced back onto the game thread,
+		// the same shape the scanner-close path uses (touching RE:: state
+		// from a bare std::thread crashed this project once already).
 		const std::uint32_t   generation = s_generation;
+		const std::string     idlePath = s_idleCheckPath;
 		std::vector<Touched>  work;
 		work.swap(s_touched);
 
-		std::thread([generation, work = std::move(work)]() {
-			std::this_thread::sleep_for(kRestoreDelay);
+		std::thread([generation, idlePath, work = std::move(work)]() {
+			for (int poll = 0; poll < kMaxRestorePolls; ++poll) {
+				std::this_thread::sleep_for(kRestorePollInterval);
 
-			auto* tasks = SFSE::GetTaskInterface();
-			if (!tasks) {
-				return;
+				auto* tasks = SFSE::GetTaskInterface();
+				if (!tasks) {
+					return;
+				}
+
+				// The check and the restore both run on the game thread;
+				// this thread only sleeps and waits for the verdict.
+				auto done = std::make_shared<std::promise<bool>>();
+				auto future = done->get_future();
+				tasks->AddTask([generation, idlePath, work, done, poll]() {
+					// A new lock since this was scheduled means its own
+					// HideActive() is now in force; restoring here would
+					// un-hide it.
+					if (generation != s_generation) {
+						done->set_value(true);
+						return;
+					}
+					auto* root = GetHudMovieRoot();
+					if (!root) {
+						done->set_value(true);
+						return;
+					}
+
+					const bool idle = IsIndicatorIdle(root, idlePath);
+					const bool lastChance = poll + 1 >= kMaxRestorePolls;
+					if (!idle && !lastChance) {
+						done->set_value(false);  // still animating, keep waiting
+						return;
+					}
+					if (!idle) {
+						REX::WARN("[VATS] combat-hud: indicator never returned to '{}', restoring anyway after {} polls", kIdleLabel, kMaxRestorePolls);
+					}
+					RestoreNow(root, work);
+					done->set_value(true);
+				});
+
+				if (future.get()) {
+					return;
+				}
 			}
-			tasks->AddTask([generation, work]() {
-				// A new lock since this was scheduled means its own
-				// HideActive() is now in force; restoring here would
-				// un-hide it.
-				if (generation != s_generation) {
-					return;
-				}
-				auto* root = GetHudMovieRoot();
-				if (!root) {
-					return;
-				}
-				RestoreNow(root, work);
-			});
 		}).detach();
 	}
 

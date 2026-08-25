@@ -3,8 +3,7 @@
 #include "GameOffsets.h"
 #include "HealthReader.h"
 #include "SafeMem.h"
-
-#include <unordered_set>
+#include "Settings.h"
 
 namespace VATS
 {
@@ -43,48 +42,57 @@ namespace VATS
 			return SafeRead(static_cast<const std::byte*>(a_base) + a_off, &a_out, sizeof(T));
 		}
 
-		// READ-ONLY PROBE, changes no behaviour (2026-08-25). Alexander
-		// wants friendly NPCs to be untargetable, and there is no safe
-		// ready-made answer for "is this actor hostile to the player":
-		// CommonLibSF's Actor::IsHostileToActor is declared against
-		// ID::Actor::IsHostileToActor, which is literally 0 - an unmapped
-		// Address Library ID, the exact shape that has hard-crashed this
-		// project twice (GetActorKnowledge, HasDetectionLOS). Calling it is
-		// not an option. The virtual IsInCombat() at vtable slot 0x16C is
-		// the safer category in principle, but a slot index that deep is
-		// itself reverse-engineered, and calling the wrong slot is worse
-		// than reading the wrong field.
+		// Should this actor be targetable at all?
 		//
-		// So this logs the plain data candidates first, once per actor, to
-		// find out empirically which of them actually distinguishes friend
-		// from foe before anything is wired up:
-		//   - currentCombatTarget: a named Actor member. If a hostile in a
-		//     fight has the player here, comparing it to the player's own
-		//     formID identifies "is fighting me". Note this is a
-		//     TESObjectHandle, and whether it is simply the formID is
-		//     unconfirmed for 1.16.244 - that is part of what this answers.
-		//   - boolBits: kPlayerTeammate is nominally 1<<26, but the same
-		//     enum's kDead is already proven wrong for this game, so it is
-		//     logged raw rather than trusted.
-		// Compare a companion, a neutral civilian and a hostile in the log
-		// before drawing any conclusion.
-		void LogHostilityCandidates(RE::Actor* a_actor)
+		// There is no safe ready-made hostility test here. CommonLibSF's
+		// Actor::IsHostileToActor is declared against an Address Library ID
+		// of literally 0 - unmapped, the exact shape that has hard-crashed
+		// this project twice (GetActorKnowledge, HasDetectionLOS) - and the
+		// virtual IsInCombat sits at a reverse-engineered vtable slot deep
+		// enough that calling the wrong one would be worse than reading the
+		// wrong field. So this is built on measurement instead.
+		//
+		// The probe that produced it (2026-08-25) logged a companion and an
+		// enemy side by side:
+		//   companion  combatTarget=0x00000000  boolBits=0x162021A2
+		//   enemy      combatTarget=0x00000001  boolBits=0x122021A2
+		//
+		// The two boolBits differ in exactly one bit, 0x04000000 - bit 26,
+		// which the header calls kPlayerTeammate, set on the companion and
+		// clear on the enemy. Unlike the dead bit (nominally 1<<11, proven
+		// inert in this game), this one is corroborated by measurement
+		// rather than taken on the header's word: the single differing bit
+		// between a teammate and a non-teammate landing exactly on the bit
+		// named "teammate" is not a coincidence worth doubting.
+		//
+		// combatTarget is the second signal, and it reads 1 for the enemy
+		// against a player formID of 0x14 - so it holds a handle, not a
+		// form ID, and 1 is the player's. That matches this project's own
+		// projectile logs, where player-fired rounds carry shooterHandle=1.
+		// It is a strictly stronger filter (only actors actively fighting
+		// the player) but it would also exclude an enemy who has not
+		// noticed you yet, which would break sneak attacks - so it is off
+		// by default.
+		[[nodiscard]] bool IsTargetable(RE::Actor* a_actor)
 		{
-			static std::unordered_set<std::uint32_t> s_logged;
-			const std::uint32_t                      formID = a_actor->GetFormID();
-			if (!s_logged.insert(formID).second) {
-				return;
+			const auto& settings = Settings::Get();
+			if (!settings.ignoreFriendlyActors) {
+				return true;
 			}
 
-			auto* player = RE::PlayerCharacter::GetSingleton();
-
-			std::uint32_t combatTarget = 0;
-			const bool    haveCombatTarget = Read(a_actor, GameOffsets::kCurrentCombatTarget, combatTarget);
 			std::uint32_t boolBits = 0;
-			const bool    haveBoolBits = Read(a_actor, kBoolBitsOff, boolBits);
+			if (Read(a_actor, kBoolBitsOff, boolBits) && (boolBits & GameOffsets::kActorPlayerTeammateBit) != 0) {
+				return false;
+			}
 
-			REX::INFO("[VATS] hostility probe: formID=0x{:08X} combatTarget=0x{:08X} (read={}) boolBits=0x{:08X} (read={}) playerFormID=0x{:08X}",
-				formID, combatTarget, haveCombatTarget, boolBits, haveBoolBits, player ? player->GetFormID() : 0);
+			if (settings.requireHostileTarget) {
+				std::uint32_t combatTarget = 0;
+				if (!Read(a_actor, GameOffsets::kCurrentCombatTarget, combatTarget) ||
+					combatTarget != GameOffsets::kPlayerHandle) {
+					return false;
+				}
+			}
+			return true;
 		}
 
 		[[nodiscard]] bool TryReadCandidate(const void* a_entry, const void* a_player, RE::NiPoint3& a_posOut)
@@ -173,6 +181,7 @@ namespace VATS
 		std::uint32_t nOutOfRange = 0;
 		std::uint32_t nOutsideCone = 0;
 		std::uint32_t nDeadSkipped = 0;
+		std::uint32_t nFriendlySkipped = 0;
 		float         closestMissAngleDeg = -1.0f;  // smallest angle among actors that failed the cone check
 
 		for (std::uint32_t i = 0; i < scanCount; ++i) {
@@ -219,6 +228,11 @@ namespace VATS
 				continue;
 			}
 
+			if (!IsTargetable(candidate)) {
+				++nFriendlySkipped;
+				continue;
+			}
+
 			bestCosAngle = cosAngle;
 			best = TargetPick{ RE::NiPointer<RE::Actor>(candidate), dist, angleDeg };
 		}
@@ -227,8 +241,8 @@ namespace VATS
 			REX::WARN("[targeting] cellRefs={} exceeds scan cap {} — {} entries were NOT scanned this call",
 				size, kScanCap, size - scanCount);
 		}
-		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
-			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
+		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
+			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, nFriendlySkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
 
 		return best;
 	}
@@ -259,7 +273,10 @@ namespace VATS
 			return nullptr;
 		}
 
-		LogHostilityCandidates(actor);
+		if (!IsTargetable(actor)) {
+			return nullptr;  // companion / non-hostile, see IsTargetable
+		}
+
 		return RE::NiPointer<RE::Actor>(actor);
 	}
 
