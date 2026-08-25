@@ -255,11 +255,29 @@ namespace VATS
 		// 0x260, Actor.h) and extend well past it into whatever follows -
 		// deliberately blind/broad rather than a targeted guess, since
 		// the whole point is not knowing where else health could be
-		// cached. 0x1000 bytes = 1024 candidate float slots, one
-		// SafeRead-guarded 4-byte read each.
-		constexpr std::size_t kScanBytes = 0x1000;
-		constexpr float       kMinPlausibleHP = 1.0f;
-		constexpr float       kMaxPlausibleHP = 5000.0f;
+		// cached. Widened 2026-08-25 (0x1000 -> 0x2000) after the first
+		// pass found nothing convincing in the smaller window. 0x2000
+		// bytes = 2048 candidate float slots, one SafeRead-guarded 4-byte
+		// read each - still cheap at the 5Hz-per-actor throttle below.
+		constexpr std::size_t kScanBytes = 0x2000;
+
+		// Plausibility range narrowed 2026-08-25: the flat 1-5000 window
+		// from the first pass let through several candidates (a smoothly
+		// decaying ~149 value that plateaued - looks like a fading timer/
+		// blend weight, not discrete hit damage; a couple of near-
+		// unchanged small values) that don't obviously look like health
+		// at all. This actor's own known MAX health (already reliably
+		// read from avStorage.baseValues - that value itself isn't in
+		// question, only whether it's current or max) is a much tighter,
+		// per-actor ground truth: a real current-health field should
+		// start at-or-below max and only matters within roughly that
+		// range, not an arbitrary global window. Falls back to the old
+		// flat range if maxHealth isn't available yet (e.g. baseValues
+		// lookup hasn't resolved for this actor).
+		HealthReading baseValuesReading{};
+		const bool     haveMax = GetActorHealth(a_actor, baseValuesReading) && baseValuesReading.max > 0.0f;
+		const float    kMinPlausibleHP = haveMax ? baseValuesReading.max * 0.02f : 1.0f;
+		const float    kMaxPlausibleHP = haveMax ? baseValuesReading.max * 1.05f : 5000.0f;
 
 		static std::unordered_map<std::uint32_t, std::vector<float>> s_snapshots;
 		std::vector<float>&                                          snapshot = s_snapshots[formID];
@@ -277,8 +295,8 @@ namespace VATS
 			float& prev = snapshot[off / sizeof(float)];
 			if (!firstScan && current < prev && current >= kMinPlausibleHP && current <= kMaxPlausibleHP &&
 				prev >= kMinPlausibleHP && prev <= kMaxPlausibleHP) {
-				REX::INFO("[VATS] health scan: formID=0x{:08X} offset=0x{:03X} DECREASED {:.1f} -> {:.1f} (candidate)",
-					formID, off, prev, current);
+				REX::INFO("[VATS] health scan: formID=0x{:08X} offset=0x{:03X} DECREASED {:.1f} -> {:.1f} (knownMax={:.1f}, range=[{:.1f},{:.1f}])",
+					formID, off, prev, current, haveMax ? baseValuesReading.max : -1.0f, kMinPlausibleHP, kMaxPlausibleHP);
 			}
 			prev = current;
 		}
