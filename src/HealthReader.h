@@ -32,4 +32,16 @@ namespace VATS
 	// this still succeeds with current == max, so the bar degrades to
 	// "always full" rather than vanishing.
 	[[nodiscard]] bool GetActorHealth(RE::Actor* a_actor, HealthReading& a_out);
+
+	// Reads any actor value's BASE (i.e. maximum) entry from
+	// avStorage.baseValues - the same read GetActorHealth uses for `max`,
+	// exposed generically. Used by the VATS resource system for the
+	// player's full health and full oxygen (VatsResource.h): those are
+	// deliberately read at full value rather than current, so the bar can't
+	// shrink while the player is hurt or winded.
+	//
+	// Pass an entry from RE::ActorValue::GetSingleton(), e.g. `->health` or
+	// `->oxygen`. Returns false if the actor has no entry for it (the array
+	// is sparse - only values actually touched for this actor appear).
+	[[nodiscard]] bool GetActorBaseValue(RE::Actor* a_actor, const RE::ActorValueInfo* a_info, float& a_out);
 }

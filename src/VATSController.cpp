@@ -7,6 +7,7 @@
 #include "EngineInputLayer.h"
 #include "Settings.h"
 #include "Targeting.h"
+#include "VatsResource.h"
 
 #include <chrono>
 #include <thread>
@@ -278,6 +279,12 @@ namespace VATS
 			if (console) {
 				console->Log("[VATS] LOCKED | target formID=0x{:08X}", formID);
 			}
+
+			// Re-reads the player's full health/oxygen so perk, gear and
+			// food changes since the last lock are picked up, and starts
+			// damage accounting fresh so a target that was already hurt
+			// before being locked isn't billed retroactively.
+			VatsResource::Get().OnLockStart();
 
 			// EXPERIMENTAL (2026-08-24, Alexander's idea) - see
 			// CombatTargetOverride.h. Engaged unconditionally (no settings

@@ -87,19 +87,49 @@ namespace VATS
 		// only touches what Hide() actually changed.
 		std::vector<std::pair<std::string, bool>> s_hidden;
 
-		void TryHideLeaf(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_path)
+		// Property name for visibility. hudmenu is ActionScript 3 -
+		// docs/hudmenu-decompiled/scripts/HitKillIndicator.as opens with
+		// `package`, declares `public class HitKillIndicator extends
+		// MovieClip` and imports `flash.display.MovieClip`, all of which are
+		// AS3-only. In AS3 the property is `visible`; `_visible` is the AS2
+		// spelling, and it is what every attempt here used until 2026-08-25.
+		// That fits the evidence exactly: the container path resolves
+		// (`root1.HitAndKillIndicator_mc available=true`) while every leaf
+		// under it failed, i.e. the object was always reachable and only the
+		// property name was wrong. AS2 spelling kept as a trailing fallback
+		// since trying it costs nothing.
+		constexpr const char* kVisibilityProperties[] = { "visible", "_visible" };
+
+		// Hides one display object by whichever visibility property actually
+		// resolves on it.
+		void TryHideLeaf(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_objectPath)
 		{
-			RE::Scaleform::GFx::Value current;
-			if (!a_root->GetVariable(&current, a_path.c_str()) || !current.IsBoolean()) {
-				return;  // not present or not a boolean - nothing to do
+			// Log whether the object itself resolves, separately from its
+			// properties - that distinction is what finally localized this
+			// bug, so keep it visible for the next one.
+			const bool objectAvailable = a_root->IsAvailable(a_objectPath.c_str());
+			REX::INFO("[VATS] combat-hud: object '{}' available={}", a_objectPath, objectAvailable);
+			if (!objectAvailable) {
+				return;
 			}
-			const bool wasVisible = current.GetBoolean();
-			if (wasVisible) {
-				const RE::Scaleform::GFx::Value falseVal(false);
-				a_root->SetVariable(a_path.c_str(), falseVal);
+
+			for (const char* property : kVisibilityProperties) {
+				const std::string         path = a_objectPath + "." + property;
+				RE::Scaleform::GFx::Value current;
+				if (!a_root->GetVariable(&current, path.c_str()) || !current.IsBoolean()) {
+					continue;
+				}
+				const bool wasVisible = current.GetBoolean();
+				if (wasVisible) {
+					const RE::Scaleform::GFx::Value falseVal(false);
+					a_root->SetVariable(path.c_str(), falseVal);
+				}
+				s_hidden.emplace_back(path, wasVisible);
+				REX::INFO("[VATS] combat-hud: hid '{}' (was visible={})", path, wasVisible);
+				return;
 			}
-			s_hidden.emplace_back(a_path, wasVisible);
-			REX::INFO("[VATS] combat-hud: found '{}' (was visible={})", a_path, wasVisible);
+
+			REX::WARN("[VATS] combat-hud: '{}' resolves but neither 'visible' nor '_visible' read as a boolean on it", a_objectPath);
 		}
 	}
 
@@ -146,13 +176,20 @@ namespace VATS
 			const bool containerAvailable = root->IsAvailable(container.c_str());
 			REX::INFO("[VATS] combat-hud: container '{}' available={}", container, containerAvailable);
 
-			// HitIndicator_mc/KillIndicator_mc are direct children of the
-			// container; CritBanner_mc is nested one level deeper under
-			// HitIndicator_mc specifically (per HitKillIndicator.as:
-			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling.
-			TryHideLeaf(root, container + ".HitIndicator_mc._visible");
-			TryHideLeaf(root, container + ".KillIndicator_mc._visible");
-			TryHideLeaf(root, container + ".HitIndicator_mc.CritBanner_mc._visible");
+			if (!containerAvailable) {
+				continue;
+			}
+
+			// HitIndicator_mc/KillIndicator_mc are declared as public vars
+			// on the class, so they are direct children of the container.
+			// CritBanner_mc is nested one level deeper under HitIndicator_mc
+			// specifically (per HitKillIndicator.as:
+			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling - it is
+			// the critical-hit banner, which Alexander wants gone along with
+			// the plain hit marker.
+			TryHideLeaf(root, container + ".HitIndicator_mc");
+			TryHideLeaf(root, container + ".KillIndicator_mc");
+			TryHideLeaf(root, container + ".HitIndicator_mc.CritBanner_mc");
 		}
 		if (s_hidden.empty()) {
 			REX::WARN("[VATS] combat-hud: none of the candidate HitKillIndicator paths resolved - see kContainerNames/kFallbackParents in CombatHudVisibility.cpp, or the logged HUDMenu root path above for a better guess");

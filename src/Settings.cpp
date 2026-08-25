@@ -47,8 +47,11 @@ namespace VATS
 		hideCrosshairWhileLocked = REX::W32::GetPrivateProfileIntA("HUD", "bHideCrosshairWhileLocked", 1, INI_PATH) != 0;
 		showTargetHealth = REX::W32::GetPrivateProfileIntA("HUD", "bShowTargetHealth", 1, INI_PATH) != 0;
 		lockedProjectileSpeed = GetPrivateProfileFloatA("Combat", "fLockedProjectileSpeed", 80.0f, INI_PATH);
+		vatsResourceEnabled = REX::W32::GetPrivateProfileIntA("Resource", "bEnabled", 1, INI_PATH) != 0;
+		vatsCapacityPerHealth = GetPrivateProfileFloatA("Resource", "fCapacityPerHealth", 1.0f, INI_PATH);
+		vatsRefillPerOxygen = GetPrivateProfileFloatA("Resource", "fRefillPerOxygen", 0.5f, INI_PATH);
 
-		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}",
-			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed);
+		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}",
+			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen);
 	}
 }

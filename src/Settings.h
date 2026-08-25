@@ -124,5 +124,21 @@ namespace VATS
 		// always worked for (slow) rockets. Lowering the speed gives the
 		// round real flight time to be homed. 0 disables the override.
 		float lockedProjectileSpeed{ 80.0f };
+
+		// --- VATS resource bar (2026-08-25, Alexander's design) ---
+		// See VatsResource.h for the full reasoning. Capacity comes from the
+		// player's FULL health, refill rate from their FULL oxygen, and the
+		// budget is spent per point of damage dealt rather than per shot.
+		bool vatsResourceEnabled{ true };
+
+		// Capacity = full health x this. At 1.0 a player with 1820 max
+		// health can deal 1820 damage across a lock - roughly four
+		// 480-health enemies on one full bar. Lower it to make VATS scarcer.
+		float vatsCapacityPerHealth{ 1.0f };
+
+		// Refill per second = full oxygen x this. At 0.5 a player with 270
+		// max oxygen regains 135 points/second, refilling that same 1820
+		// bar in about 13 seconds out of VATS.
+		float vatsRefillPerOxygen{ 0.5f };
 	};
 }

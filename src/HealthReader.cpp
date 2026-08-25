@@ -126,4 +126,12 @@ namespace VATS
 		a_out.max = maxSeen;
 		return true;
 	}
+
+	bool GetActorBaseValue(RE::Actor* a_actor, const RE::ActorValueInfo* a_info, float& a_out)
+	{
+		if (!a_actor || !a_info) {
+			return false;
+		}
+		return FindByAvPointer(a_actor->avStorage.baseValues, a_info, kBaseValueStride, a_out);
+	}
 }

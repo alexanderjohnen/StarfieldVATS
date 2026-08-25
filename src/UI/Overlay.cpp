@@ -9,6 +9,7 @@
 #include "Settings.h"
 #include "Targeting.h"
 #include "VATSController.h"
+#include "VatsResource.h"
 
 #include "RE/U/UI.h"
 
@@ -147,6 +148,30 @@ namespace VATS::UI
 			const float frac = a_max > 0.0f ? std::clamp(a_current / a_max, 0.0f, 1.0f) : 0.0f;
 			if (frac > 0.0f) {
 				a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x0 + kBarWidth * frac, a_y + kBarHeight }, IM_COL32(210, 40, 40, 235));
+			}
+		}
+
+		// The VATS resource bar, drawn under the target's health bar.
+		// Deliberately narrower and thinner than the health bar, and in the
+		// HUD's own off-white rather than a second saturated colour, so the
+		// two read as "the target's" and "mine" at a glance instead of
+		// competing. Turns amber as it runs low, since running dry ends the
+		// lock outright and that is worth seeing coming.
+		void DrawResourceBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_capacity)
+		{
+			constexpr float kBarWidth = 92.0f;
+			constexpr float kBarHeight = 4.0f;
+
+			const float x0 = a_centerX - kBarWidth * 0.5f;
+			const float x1 = a_centerX + kBarWidth * 0.5f;
+
+			a_dl->AddRectFilled(ImVec2{ x0 - 1.5f, a_y - 1.5f }, ImVec2{ x1 + 1.5f, a_y + kBarHeight + 1.5f }, kOutline);
+			a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x1, a_y + kBarHeight }, IM_COL32(18, 26, 28, 210));
+
+			const float frac = a_capacity > 0.0f ? std::clamp(a_current / a_capacity, 0.0f, 1.0f) : 0.0f;
+			if (frac > 0.0f) {
+				const ImU32 fill = frac < 0.25f ? IM_COL32(240, 170, 60, 240) : kLockedColor;
+				a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x0 + kBarWidth * frac, a_y + kBarHeight }, fill);
 			}
 		}
 
@@ -335,6 +360,14 @@ namespace VATS::UI
 				const float barY = py + 40.0f;
 				DrawHealthBar(dl, px, barY, hp.current, hp.max);
 				tetherStartY = barY + 7.0f + 6.0f;
+			}
+
+			// Only meaningful while actually Locked - it's the budget being
+			// spent on this lock, not a property of the target.
+			if (const auto resource = VatsResource::Get().GetState();
+				resource.valid && Controller::Get().GetMode() == VATSMode::kLocked) {
+				DrawResourceBar(dl, px, tetherStartY, resource.current, resource.capacity);
+				tetherStartY += 4.0f + 6.0f;
 			}
 
 			// Small tether line from box toward screen bottom, echoing the
@@ -538,6 +571,9 @@ namespace VATS::UI
 		// in "just in case."
 
 		if (state.mode == VATSMode::kOff) {
+			// The bar refills only while VATS is off - Alexander's design,
+			// so hopping straight into a new lock never comes free.
+			VatsResource::Get().TickIdle();
 			LogIfChanged(DrawOutcome::kOff, 0, "off");
 			return;
 		}
@@ -549,12 +585,19 @@ namespace VATS::UI
 			return;
 		}
 
+		// VATS resource: spend budget for the damage dealt to the locked
+		// target, and end the lock when it runs dry - same handling as a
+		// dead target, and the bar then refills while Off. Alexander's
+		// design, see VatsResource.h.
+		if (!VatsResource::Get().TickLocked(state.actor.get())) {
+			Controller::Get().ForceOff();
+			return;
+		}
+
 		// End the lock outright once the target dies, rather than leaving
 		// VATS Locked on a corpse until the player notices and presses the
-		// hotkey themselves — Alexander's call, 2026-08-22. Auto-advancing
-		// to a new target (if oxygen/AP allows) was also floated but needs
-		// the O2-cost system this project doesn't have yet; not attempted
-		// here, ForceOff only for now.
+		// hotkey themselves — Alexander's call, 2026-08-22.
+		//
 		// Death is detected from health, not from Actor::boolBits. The bit
 		// check that lived here from 2026-08-22 until 2026-08-25 never once
 		// fired: a locked target's boolBits reads the same 0x12A021A2
