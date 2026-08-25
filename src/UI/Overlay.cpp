@@ -137,10 +137,10 @@ namespace VATS::UI
 		// stayed rigid regardless of the target - and Alexander's call was
 		// that it isn't worth another multi-day offset hunt. Drop rather
 		// than keep dead decoration.
-		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max)
+		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max, float a_scale)
 		{
-			constexpr float kBarWidth = 116.0f;
-			constexpr float kBarHeight = 7.0f;
+			const float kBarWidth = 116.0f * a_scale;
+			const float kBarHeight = std::max(3.0f, 7.0f * a_scale);
 
 			const float x0 = a_centerX - kBarWidth * 0.5f;
 			const float x1 = a_centerX + kBarWidth * 0.5f;
@@ -160,10 +160,10 @@ namespace VATS::UI
 		// two read as "the target's" and "mine" at a glance instead of
 		// competing. Turns amber as it runs low, since running dry ends the
 		// lock outright and that is worth seeing coming.
-		void DrawResourceBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_capacity)
+		void DrawResourceBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_capacity, float a_scale)
 		{
-			constexpr float kBarWidth = 92.0f;
-			constexpr float kBarHeight = 4.0f;
+			const float kBarWidth = 92.0f * a_scale;
+			const float kBarHeight = std::max(2.0f, 4.0f * a_scale);
 
 			const float x0 = a_centerX - kBarWidth * 0.5f;
 			const float x1 = a_centerX + kBarWidth * 0.5f;
@@ -393,7 +393,17 @@ namespace VATS::UI
 						// Clamped at both ends: a bad radius must not fill
 						// the screen, and a distant target must not shrink
 						// the box into an invisible speck.
-						halfH = std::clamp(scaled, 16.0f, 90.0f);
+						// Capped at the old fixed size, not at an arbitrary
+						// ceiling. The first calibration claimed 0.20 landed
+						// on the old 36px up close and it did not - at 3m it
+						// produced nearly double, so the box grew as the
+						// player closed in, exactly the behaviour this was
+						// meant to remove. A cap makes it exact instead of
+						// approximately right: never larger than the version
+						// Alexander liked, only smaller as the target
+						// recedes. The floor keeps a distant target from
+						// shrinking into an invisible speck.
+						halfH = std::clamp(scaled, 16.0f, kDefaultHalfH);
 						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
 					}
 				}
@@ -418,12 +428,16 @@ namespace VATS::UI
 			// Order, bottom to top: the target's health closest to the
 			// target, then the player's own VATS budget above it - so
 			// "theirs" and "mine" stay spatially distinct.
-			constexpr float kBarGap = 6.0f;
-			float           stackY = py - halfH - kBarGap;
+			// Both bars scale with the box, so the whole cluster stays one
+			// coherent element rather than a shrinking box with two
+			// full-size bars stapled above it.
+			const float hudScale = halfH / kDefaultHalfH;
+			const float kBarGap = 6.0f * hudScale;
+			float       stackY = py - halfH - kBarGap;
 
 			if (haveHealth) {
-				stackY -= 7.0f;  // health bar height
-				DrawHealthBar(dl, px, stackY, hp.current, hp.max);
+				stackY -= std::max(3.0f, 7.0f * hudScale);
+				DrawHealthBar(dl, px, stackY, hp.current, hp.max, hudScale);
 				stackY -= kBarGap;
 			}
 
@@ -431,8 +445,8 @@ namespace VATS::UI
 			// spent on this lock, not a property of the target.
 			if (const auto resource = VatsResource::Get().GetState();
 				resource.valid && Controller::Get().GetMode() == VATSMode::kLocked) {
-				stackY -= 4.0f;  // resource bar height
-				DrawResourceBar(dl, px, stackY, resource.current, resource.capacity);
+				stackY -= std::max(2.0f, 4.0f * hudScale);
+				DrawResourceBar(dl, px, stackY, resource.current, resource.capacity, hudScale);
 			}
 
 			const float tetherStartY = py + halfH;

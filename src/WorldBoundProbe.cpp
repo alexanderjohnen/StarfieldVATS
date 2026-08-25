@@ -89,50 +89,48 @@ namespace VATS
 
 		RE::NiPoint3 out = bound.center;
 
-		// Bias upward from the bounding sphere's centre toward the chest.
-		// The centre is the GEOMETRIC middle of the whole body, which for a
-		// standing humanoid is hip height, not chest - visible in-game as a
-		// target box sitting over the target's thighs (screenshot,
-		// 2026-08-25), and as redirected rounds converging lower than the
-		// player aimed.
-		//
-		// Scaled by how high the centre already sits above the actor's own
-		// feet, rather than by a fixed distance or by the sphere's radius.
-		// That keeps it pose-aware for free: a standing figure with its
-		// centre ~0.9m up aims at ~1.35m (chest), while a crouching or
-		// prone one has a much lower centre and so gets a proportionally
-		// smaller lift instead of being aimed at above its own body. A
-		// fixed offset would have broken exactly the prone case this was
-		// partly meant to help.
-		// One-shot per actor. The height factor has now been guessed at
-		// twice (1.5 then 1.25) and read too high both times, which means
-		// the model behind it - "the bounding sphere's centre sits at about
-		// hip height" - is not actually established. An old BoneProbe line
-		// even suggests the centre is only ~0.10 above the feet, which
-		// cannot be squared with a box that renders at chest height. Rather
-		// than pick a third number, log what the inputs really are so the
-		// factor can be derived from measurement.
+		// One-shot per actor. Kept: this is the measurement that showed the
+		// per-character drift Alexander kept noticing (centreAboveFeet
+		// 0.895 vs 0.748 on two standing humanoids) and that the lift model
+		// below was chosen from.
 		{
 			static std::unordered_set<std::uint32_t> s_logged;
 			if (s_logged.insert(a_actor->GetFormID()).second) {
-				REX::INFO("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} factor={:.2f} -> aimZ={:.3f} (aimAboveFeet={:.3f})",
+				const auto& settings = Settings::Get();
+				const float lift = std::min(settings.aimPointRadiusFactor * bound.radius,
+					settings.aimPointMaxLiftFraction * (out.z - a_feet.z));
+				REX::INFO("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} lift={:.3f} -> aimAboveFeet={:.3f}",
 					a_actor->GetFormID(), a_feet.z, out.z, out.z - a_feet.z, bound.radius,
-					Settings::Get().aimPointHeightFactor,
-					a_feet.z + (out.z - a_feet.z) * Settings::Get().aimPointHeightFactor,
-					(out.z - a_feet.z) * Settings::Get().aimPointHeightFactor);
+					lift, (out.z - a_feet.z) + lift);
 			}
 		}
 
+		// Lift from the sphere's centre toward the chest, sized by the
+		// sphere's RADIUS rather than by how high the centre sits above the
+		// feet.
+		//
+		// The height-multiplier version drifted visibly between actors.
+		// Measured (2026-08-25): two standing humanoids read
+		// centreAboveFeet 0.895 and 0.748 - a 20% spread, which Alexander
+		// noticed repeatedly as the box sitting differently on different
+		// characters. A multiplier amplifies that spread; radius largely
+		// cancels it, because an actor whose centre sits lower is generally
+		// the one with the larger bounding sphere. On those same two: the
+		// multiplier put the aim point at 1.34 and 1.12 (spread 0.22),
+		// radius puts it at 1.15 and 1.07 (spread 0.08).
+		//
+		// The cap is what makes radius safe for poses. A body on the ground
+		// keeps a large radius while its centre drops to near-floor, so an
+		// uncapped radius lift would aim above it - the one case the
+		// multiplier handled better. Capping the lift at a fraction of the
+		// centre's own height above the feet restores that: it scales down
+		// with the pose exactly when it needs to, and is inactive for a
+		// standing target where the radius term is the smaller of the two.
 		const float centreAboveFeet = out.z - a_feet.z;
 		if (centreAboveFeet > 0.0f) {
-			out.z = a_feet.z + centreAboveFeet * Settings::Get().aimPointHeightFactor;
-			// Never aim above the top of the actor's own bounding sphere -
-			// a bad factor should degrade to "aims high on the body", never
-			// to "aims over its head".
-			const float maxZ = bound.center.z + bound.radius;
-			if (out.z > maxZ) {
-				out.z = maxZ;
-			}
+			const auto& settings = Settings::Get();
+			out.z += std::min(settings.aimPointRadiusFactor * bound.radius,
+				settings.aimPointMaxLiftFraction * centreAboveFeet);
 		}
 
 		const float minZ = a_feet.z + kMinAimPointAboveFeet;

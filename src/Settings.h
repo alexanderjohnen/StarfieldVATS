@@ -260,14 +260,20 @@ namespace VATS
 		// non-humanoids as of 2026-08-25 - set this back to 1.0 in the INI
 		// to restore the exact previous behaviour without a rebuild if some
 		// creature reacts badly.
-		// Lowered from 1.5 to 1.25 on 2026-08-25 after testing: 1.5 read as
-		// chest height on paper but landed around head height on a standing
-		// target in practice, so the bounding sphere's centre must already
-		// sit higher than the hip-height estimate it was derived from. It
-		// looked right on a downed target, which is exactly what a
-		// proportional lift does when it is slightly too aggressive - the
-		// error scales down with the pose.
-		float aimPointHeightFactor{ 1.25f };
+		// How far above the bounding sphere's centre to aim, as a fraction
+		// of the sphere's RADIUS. Replaced a multiplier on the centre's
+		// height above the feet, which drifted visibly between characters -
+		// two standing humanoids measured 0.895 and 0.748, and a multiplier
+		// amplifies that spread while radius largely cancels it. See
+		// WorldBoundProbe::GetAimPoint for the numbers.
+		float aimPointRadiusFactor{ 0.25f };
+
+		// Safety cap on that lift, as a fraction of the centre's height
+		// above the actor's own feet. Inactive for a standing target; it
+		// only bites for a downed or prone one, whose sphere stays large
+		// while its centre drops to near-floor, where an uncapped radius
+		// lift would aim above the body.
+		float aimPointMaxLiftFraction{ 0.5f };
 
 		// Starfield's hit and kill markers are hidden while Locked. That
 		// hide holds for ordinary hits but not for critical ones, which
