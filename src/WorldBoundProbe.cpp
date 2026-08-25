@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace VATS
 {
@@ -103,6 +104,25 @@ namespace VATS
 		// smaller lift instead of being aimed at above its own body. A
 		// fixed offset would have broken exactly the prone case this was
 		// partly meant to help.
+		// One-shot per actor. The height factor has now been guessed at
+		// twice (1.5 then 1.25) and read too high both times, which means
+		// the model behind it - "the bounding sphere's centre sits at about
+		// hip height" - is not actually established. An old BoneProbe line
+		// even suggests the centre is only ~0.10 above the feet, which
+		// cannot be squared with a box that renders at chest height. Rather
+		// than pick a third number, log what the inputs really are so the
+		// factor can be derived from measurement.
+		{
+			static std::unordered_set<std::uint32_t> s_logged;
+			if (s_logged.insert(a_actor->GetFormID()).second) {
+				REX::INFO("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} factor={:.2f} -> aimZ={:.3f} (aimAboveFeet={:.3f})",
+					a_actor->GetFormID(), a_feet.z, out.z, out.z - a_feet.z, bound.radius,
+					Settings::Get().aimPointHeightFactor,
+					a_feet.z + (out.z - a_feet.z) * Settings::Get().aimPointHeightFactor,
+					(out.z - a_feet.z) * Settings::Get().aimPointHeightFactor);
+			}
+		}
+
 		const float centreAboveFeet = out.z - a_feet.z;
 		if (centreAboveFeet > 0.0f) {
 			out.z = a_feet.z + centreAboveFeet * Settings::Get().aimPointHeightFactor;
