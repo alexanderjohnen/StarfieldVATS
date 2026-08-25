@@ -417,39 +417,51 @@ namespace VATS::UI
 				DrawCenteredText(dl, px, py - 36.0f - 20.0f, "MISS", kHitColor);
 			}
 
-			// Both bars sit ABOVE the box, stacked upward, rather than below
-			// it (moved 2026-08-25 at Alexander's request). The box marks
-			// the actual aim point, which is partway up the target's body,
-			// so anything hung underneath it ended up over the target's
-			// legs or on the floor - visibly wrong, and it read as clutter
-			// rather than as a nameplate. Above the box the pair reads the
-			// way every enemy nameplate in the genre does.
+			// Each bar's side of the box is configurable independently
+			// (Alexander, 2026-08-25 - he wanted the VATS bar underneath
+			// while the target's health stays above). Two stacks grow away
+			// from the box in opposite directions, so any combination of
+			// the two settings lays out sensibly without special cases.
 			//
-			// Order, bottom to top: the target's health closest to the
-			// target, then the player's own VATS budget above it - so
-			// "theirs" and "mine" stay spatially distinct.
-			// Both bars scale with the box, so the whole cluster stays one
-			// coherent element rather than a shrinking box with two
-			// full-size bars stapled above it.
+			// Both bars scale with the box, so the cluster stays one
+			// coherent element rather than a shrinking box with full-size
+			// bars stapled to it.
+			const auto& settings = Settings::Get();
 			const float hudScale = halfH / kDefaultHalfH;
 			const float kBarGap = 6.0f * hudScale;
-			float       stackY = py - halfH - kBarGap;
+			float       stackUp = py - halfH - kBarGap;    // bottom edge of the next bar placed above
+			float       stackDown = py + halfH + kBarGap;  // top edge of the next bar placed below
 
 			if (haveHealth) {
-				stackY -= std::max(3.0f, 7.0f * hudScale);
-				DrawHealthBar(dl, px, stackY, hp.current, hp.max, hudScale);
-				stackY -= kBarGap;
+				const float barH = std::max(3.0f, 7.0f * hudScale);
+				if (settings.healthBarBelowBox) {
+					DrawHealthBar(dl, px, stackDown, hp.current, hp.max, hudScale);
+					stackDown += barH + kBarGap;
+				} else {
+					stackUp -= barH;
+					DrawHealthBar(dl, px, stackUp, hp.current, hp.max, hudScale);
+					stackUp -= kBarGap;
+				}
 			}
 
 			// Only meaningful while actually Locked - it's the budget being
 			// spent on this lock, not a property of the target.
 			if (const auto resource = VatsResource::Get().GetState();
 				resource.valid && Controller::Get().GetMode() == VATSMode::kLocked) {
-				stackY -= std::max(2.0f, 4.0f * hudScale);
-				DrawResourceBar(dl, px, stackY, resource.current, resource.capacity, hudScale);
+				const float barH = std::max(2.0f, 4.0f * hudScale);
+				if (settings.resourceBarBelowBox) {
+					DrawResourceBar(dl, px, stackDown, resource.current, resource.capacity, hudScale);
+					stackDown += barH + kBarGap;
+				} else {
+					stackUp -= barH;
+					DrawResourceBar(dl, px, stackUp, resource.current, resource.capacity, hudScale);
+					stackUp -= kBarGap;
+				}
 			}
 
-			const float tetherStartY = py + halfH;
+			// Starts below whatever ended up under the box, so the tether
+			// never runs through a bar.
+			const float tetherStartY = stackDown - kBarGap;
 
 			// Small tether line from box toward screen bottom, echoing the
 			// FO4 VATS look; subtle, mostly for readability against clutter.

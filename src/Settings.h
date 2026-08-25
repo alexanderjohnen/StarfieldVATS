@@ -307,6 +307,13 @@ namespace VATS
 		// for a box that hugs more of the body.
 		float targetBoxScale{ 0.20f };
 
+		// Which side of the target box each bar sits on, independently.
+		// The target's health reads like an enemy nameplate above the box;
+		// the player's own VATS budget belongs somewhere it won't be
+		// confused for a property of the target, so it defaults below.
+		bool healthBarBelowBox{ false };
+		bool resourceBarBelowBox{ true };
+
 		bool  moveCritMarker{ false };
 		float critMarkerOffsetX{ 0.0f };
 		float critMarkerOffsetY{ -180.0f };
