@@ -292,6 +292,15 @@ namespace VATS
 		// in the base game - which argues for cutting sooner.
 		std::uint32_t hudRestoreDelayMs{ 2500 };
 
+		// Target box size, as a fraction of the target's projected
+		// bounding-sphere radius. The sphere encloses the whole actor, so
+		// 1.0 would frame the entire body - far larger than intended. 0.2
+		// is calibrated to land on the old fixed 36px half-height at close
+		// range, which is the look Alexander asked for, and to shrink from
+		// there instead of staying put while the target recedes. Raise it
+		// for a box that hugs more of the body.
+		float targetBoxScale{ 0.20f };
+
 		bool  moveCritMarker{ false };
 		float critMarkerOffsetX{ 0.0f };
 		float critMarkerOffsetY{ -180.0f };

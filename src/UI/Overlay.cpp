@@ -375,11 +375,25 @@ namespace VATS::UI
 					float ax = 0.0f;
 					float ay = 0.0f;
 					if (WorldToScreen(above, ax, ay)) {
-						// Clamped so a bad radius or a near-degenerate
-						// projection can never produce a box that fills the
-						// screen or collapses to nothing.
-						const float projected = std::abs(ay - sy) * io.DisplaySize.y;
-						halfH = std::clamp(projected, 14.0f, 260.0f);
+						// Scaled DOWN from the projected radius, not equal to
+						// it. The bounding sphere encloses the entire actor,
+						// so using the radius directly framed the whole body
+						// and produced a box roughly five times the intended
+						// size (2026-08-25, first attempt - the scaling was
+						// right, the scale was not).
+						//
+						// The fraction is calibrated so that at close range
+						// this lands on the old fixed 36px half-height, i.e.
+						// the look Alexander asked for - the box framing a
+						// torso the way it did when standing in front of a
+						// target - and shrinks from there rather than staying
+						// put while the target recedes.
+						const float projectedRadiusPx = std::abs(ay - sy) * io.DisplaySize.y;
+						const float scaled = projectedRadiusPx * Settings::Get().targetBoxScale;
+						// Clamped at both ends: a bad radius must not fill
+						// the screen, and a distant target must not shrink
+						// the box into an invisible speck.
+						halfH = std::clamp(scaled, 16.0f, 90.0f);
 						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
 					}
 				}
