@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 #include <cstdio>
 
 namespace VATS::UI
@@ -572,8 +573,37 @@ namespace VATS::UI
 		// here, ForceOff only for now.
 		{
 			std::uint32_t boolBits = 0;
-			if (SafeRead(reinterpret_cast<const std::byte*>(state.actor.get()) + GameOffsets::kBoolBits, &boolBits, sizeof(boolBits)) &&
-				(boolBits & GameOffsets::kActorDeadBit) != 0) {
+			const bool    boolBitsRead = SafeRead(reinterpret_cast<const std::byte*>(state.actor.get()) + GameOffsets::kBoolBits, &boolBits, sizeof(boolBits));
+
+			// Continuous visibility (2026-08-25), log-on-change only -
+			// answers whether the dead bit (0x800) EVER flips as a real
+			// target goes down/dies, not just whatever happens the one
+			// frame the check below fires (if it ever does). If a target
+			// is confirmed dead on screen but this never shows the bit
+			// set, GameOffsets::kActorDeadBit itself is the suspect, not
+			// the ForceOff() logic around it.
+			if (boolBitsRead) {
+				static std::unordered_map<std::uint32_t, std::uint32_t> s_lastBoolBits;
+				const std::uint32_t                                     formID = state.actor->GetFormID();
+				const auto                                              it = s_lastBoolBits.find(formID);
+				if (it == s_lastBoolBits.end() || it->second != boolBits) {
+					REX::INFO("[VATS] target boolBits=0x{:08X} (deadBitSet={}) formID=0x{:08X}",
+						boolBits, (boolBits & GameOffsets::kActorDeadBit) != 0, formID);
+					s_lastBoolBits[formID] = boolBits;
+				}
+			}
+
+			if (boolBitsRead && (boolBits & GameOffsets::kActorDeadBit) != 0) {
+				// Distinct log line (2026-08-25) - "OFF (forced - blocking
+				// menu or transition)" from ForceOff() itself is shared by
+				// every trigger (dead target, PauseMenu, DataMenu, ...),
+				// so there was no way to tell from the log whether this
+				// path had EVER actually fired, despite existing since
+				// 2026-08-22. Alexander reported it not working in
+				// practice; this line is what will actually prove or
+				// disprove that on the next test instead of relying on
+				// the code merely existing.
+				REX::INFO("[VATS] target dead bit set (boolBits=0x{:08X}), forcing lock off", boolBits);
 				Controller::Get().ForceOff();
 				return;
 			}
