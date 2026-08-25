@@ -32,7 +32,6 @@ namespace VATS::UI
 		// still the right dim/uncommitted tint for that hint.
 		constexpr ImU32 kLockedColor = IM_COL32(225, 238, 240, 235);
 		constexpr ImU32 kAimColor = IM_COL32(225, 238, 240, 140);
-		constexpr ImU32 kWhiteDim = IM_COL32(225, 238, 240, 90);
 		// Dark outline drawn under every white stroke. Without it the box
 		// reads fine against dark backdrops but vanishes completely against
 		// Starfield's bright station-interior surfaces (confirmed in-game
@@ -459,16 +458,11 @@ namespace VATS::UI
 				}
 			}
 
-			// Starts below whatever ended up under the box, so the tether
-			// never runs through a bar.
-			const float tetherStartY = stackDown - kBarGap;
-
-			// Small tether line from box toward screen bottom, echoing the
-			// FO4 VATS look; subtle, mostly for readability against clutter.
-			dl->AddLine(
-				ImVec2{ px, tetherStartY },
-				ImVec2{ px, tetherStartY + 20.0f },
-				kWhiteDim, 1.5f);
+			// The short vertical tether line that used to hang below the box
+			// is gone (2026-08-25, Alexander's call). It was decoration
+			// borrowed from the FO4 VATS look, added on the theory that it
+			// helped the box read against scene clutter - which never got
+			// tested, and nothing else depended on it.
 		}
 	}
 

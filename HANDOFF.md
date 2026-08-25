@@ -110,12 +110,36 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
-- **Aim point model just changed and is unverified**: lift is now a
-  fraction of the bounding sphere's *radius*, capped at a fraction of the
-  centre's height above the feet. The previous height-multiplier drifted
-  visibly between characters (measured: centreAboveFeet 0.895 vs 0.748 on
-  two standing humanoids). Tunables: `fAimPointRadiusFactor`,
-  `fAimPointMaxLiftFraction`.
+- **The box still does not sit reliably centred on the target — pick this
+  up first.** Alexander's report after the radius change: better, but
+  still off on some characters. Switching the vertical lift from a
+  height-multiplier to a fraction of the bounding sphere's *radius*
+  (capped by pose) reduced the drift but did not remove it, so the
+  remaining error is probably not in the lift at all.
+
+  What has *not* been checked, and should be before anything else is
+  adjusted:
+  - **Whether the error is vertical or horizontal.** Everything so far has
+    assumed vertical. `bound.center`'s x/y are used unmodified, so a
+    horizontal offset would have a completely different cause - and
+    `BoneProbe` did log small non-zero x/y deltas between the root bone
+    and the sphere centre.
+  - **Whether the projection is the culprit rather than the aim point.**
+    `CameraProject` self-computes a pinhole projection using
+    `iCameraFovDegrees`, which must match the game's actual FOV setting.
+    If Alexander's in-game FOV is not 90, every box is systematically off
+    and no aim-point tuning will ever fix it.
+  - **Whether `worldBound` is simply off-centre for some skeletons**, e.g.
+    when a weapon or backpack is enclosed in the sphere. That would
+    explain per-character variation better than any factor does.
+
+  The diagnostic already in place logs `feetZ / centreZ / centreAboveFeet
+  / radius / lift`. Extending it with the projected screen position and
+  the actor's x/y would settle direction and cause in one test. Do not
+  adjust `fAimPointRadiusFactor` again before that - it has now been
+  guessed at three times.
+
+  Tunables meanwhile: `fAimPointRadiusFactor`, `fAimPointMaxLiftFraction`.
 - **Never tested against non-humanoid creatures at all.** The aim point is
   proportional specifically so it scales to any body shape, but no alien
   has been fought with it.
