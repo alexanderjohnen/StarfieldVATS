@@ -27,6 +27,7 @@ namespace VATS
 		};
 
 		std::vector<std::string> s_containerPaths;
+		std::string              s_realRoot;  // e.g. "root1" - kept for the baseline sanity probe in HideActive()
 		bool                     s_searched = false;
 
 		[[nodiscard]] RE::Scaleform::GFx::ASMovieRootBase* GetHudMovieRoot()
@@ -49,6 +50,7 @@ namespace VATS
 			if (menu) {
 				if (const char* realRoot = menu->GetRootPath(); realRoot && realRoot[0] != '\0') {
 					REX::INFO("[VATS] combat-hud: HUDMenu root path = '{}'", realRoot);
+					s_realRoot = realRoot;
 					parents.push_back(realRoot);
 					parents.push_back(std::string(realRoot) + ".HUDMovieBaseInstance");
 				}
@@ -109,6 +111,26 @@ namespace VATS
 		auto* root = GetHudMovieRoot();
 		if (!root) {
 			return;
+		}
+
+		// Baseline sanity probe (2026-08-25): every candidate container
+		// path has failed IsAvailable() so far, including the JPEXS-
+		// confirmed real name at the JPEXS-confirmed real root - enough
+		// misses that the problem might not be the path string at all.
+		// CommonLibSF's own GameMenuBase.h shows the ENGINE ITSELF doing
+		// `uiMovie->asMovieRoot->GetVariable(&menuObj, GetRootPath())` -
+		// i.e. GetVariable on the bare root path, no child appended,
+		// resolves the root clip object as a Value. Mirroring that exact,
+		// engine-proven call here: if this ALSO fails, the fault is
+		// upstream of any path guess (wrong root/movie pointer, wrong
+		// timing) and no amount of path-string variation will ever fix
+		// this. If it SUCCEEDS, the root chain is proven good and the
+		// fault is specifically in reaching a named child from it.
+		if (root && !s_realRoot.empty()) {
+			RE::Scaleform::GFx::Value rootVal;
+			const bool                gotRoot = root->GetVariable(&rootVal, s_realRoot.c_str());
+			REX::INFO("[VATS] combat-hud: baseline GetVariable('{}') ok={} isObject={} isDisplayObject={} isUndefined={}",
+				s_realRoot, gotRoot, gotRoot && rootVal.IsObject(), gotRoot && rootVal.IsDisplayObject(), gotRoot && rootVal.IsUndefined());
 		}
 
 		s_hidden.clear();
