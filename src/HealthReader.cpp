@@ -1,44 +1,17 @@
-#include "HealthReader.h"
+﻿#include "HealthReader.h"
 
 #include "ActorValueProbe.h"
 #include "SafeMem.h"
 
 #include <algorithm>
-#include <array>
-#include <chrono>
-#include <cstdio>
-#include <cstring>
-#include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <vector>
 
 namespace VATS
 {
 	namespace
 	{
 		constexpr std::size_t kBaseValueStride = 16;  // ActorValueInfo* (8) + float (4), 8-byte aligned
-
-		// avStorage.modifiers' real element stride, by the same reasoning
-		// already proven for baseValues: real key is an 8-byte
-		// ActorValueInfo* (not the header's claimed 4-byte uint32_t
-		// index), payload is RE::Modifiers (confirmed sizeof 0xC - three
-		// floats: permanent/temporary/damage, see ActorValueStorage.h).
-		// 8 (key) + 12 (payload) = 20, rounded to 24 for 8-byte alignment
-		// - the same pattern baseValues used (12 real bytes -> 16 stride).
-		// UNLIKE baseValues' 16, this number has never been independently
-		// confirmed (no raw-dump cross-check, no getav comparison) - it's
-		// an analogy, not a proven fact. 2026-08-23's original modifiers
-		// search already used this exact value and pointer-keyed lookup
-		// and found nothing; 2026-08-25's baseValues finding (current
-		// reads once at full health, then genuinely never changes across
-		// an entire real fight - confirmed via redirect-hit correlation
-		// in the same log) means "damage writes into baseValues directly"
-		// no longer holds up, so modifiers is worth re-checking with a
-		// live, throttled probe instead of the old one-shot check - and,
-		// if it still never resolves, this stride guess itself becomes a
-		// real suspect rather than baseValues being the answer.
-		constexpr std::size_t kModifierStride = 24;
 
 		// avStorage.baseValues is declared by CommonLibSF's header as
 		// BSTArray<BSTTuple<uint32_t, float>> (key = a 4-byte AV index),
@@ -78,36 +51,6 @@ namespace VATS
 			return false;
 		}
 
-		// Fallback diagnostic if FindByAvPointer's stride hypothesis is
-		// ever wrong for a value: dumps raw floats starting at the array's
-		// own data pointer (the heap-allocated element buffer itself, NOT
-		// the Actor object). Same technique ProjectileTracker.cpp used to
-		// correct RE::Projectile's offsets.
-		void DumpRawFloatWindow(const void* a_dataPtr, std::size_t a_byteCount)
-		{
-			const auto* base = reinterpret_cast<const std::byte*>(a_dataPtr);
-			std::string line;
-			char        cell[40];
-			int         perLine = 0;
-			for (std::size_t off = 0; off < a_byteCount; off += 4) {
-				std::uint32_t raw = 0;
-				if (!SafeRead(base + off, &raw, sizeof(raw))) {
-					continue;
-				}
-				float f = 0.0f;
-				std::memcpy(&f, &raw, sizeof(f));
-				std::snprintf(cell, sizeof(cell), "%03zX:%08X(%.2f) ", off, raw, f);
-				line += cell;
-				if (++perLine >= 6) {
-					REX::INFO("[VATS] health raw dump: {}", line);
-					line.clear();
-					perLine = 0;
-				}
-			}
-			if (!line.empty()) {
-				REX::INFO("[VATS] health raw dump: {}", line);
-			}
-		}
 	}
 
 	bool GetActorHealth(RE::Actor* a_actor, HealthReading& a_out)
@@ -123,32 +66,18 @@ namespace VATS
 		}
 		const RE::ActorValueInfo* healthInfo = avList->health;
 
-		// Diagnostic (2026-08-23) revealed avStorage.modifiers never has a
-		// health entry even after Alexander damaged the target, and
-		// baseValues' health entry read exactly equal to `getav health`
-		// (the console's already-fully-modified current value) at first
-		// sighting - together, that means Starfield writes damage straight
-		// into baseValues for health rather than layering it on via an
-		// ACTOR_VALUE_MODIFIER::kDamage entry the way older Creation Engine
-		// titles do. So this reads the live current value directly, and
-		// tracks "max" ourselves as the highest value ever observed for
-		// this actor (updates upward too, in case of overheal/regen) -
-		// accurate for any target first seen at full health, the common
-		// case; a target re-locked mid-fight after already being damaged
-		// will show a max that's really just "however much health it had
-		// when we started watching it," a known, acceptable limitation.
+		// baseValues supplies MAX health only. Establishing that took
+		// several sessions: its health entry reads correct at full HP and
+		// then never moves again across an entire fight with confirmed hits
+		// landing, which looked like a working "current" read purely
+		// because current and max are equal at full health - exactly when
+		// the original console cross-check happened.
 		float current = 0.0f;
 		if (!FindByAvPointer(a_actor->avStorage.baseValues, healthInfo, kBaseValueStride, current)) {
-			// Diagnostic (2026-08-23): dump once per actor if the pointer-
-			// keyed hypothesis ever fails to find health. Remove once
-			// GetActorHealth is confirmed working.
 			static std::unordered_set<std::uint32_t> s_logged;
-			const std::uint32_t                       formID = a_actor->GetFormID();
-			if (s_logged.insert(formID).second) {
-				const auto& arr = a_actor->avStorage.baseValues;
-				REX::WARN("[VATS] health: no baseValues entry for healthInfo={} on formID=0x{:08X}, size={}, dumping raw element buffer",
-					static_cast<const void*>(healthInfo), formID, arr.size());
-				DumpRawFloatWindow(arr.data(), std::min<std::size_t>(arr.size(), 64) * kBaseValueStride);
+			if (s_logged.insert(a_actor->GetFormID()).second) {
+				REX::WARN("[VATS] health: no baseValues entry for healthInfo={} on formID=0x{:08X}, size={}",
+					static_cast<const void*>(healthInfo), a_actor->GetFormID(), a_actor->avStorage.baseValues.size());
 			}
 			return false;
 		}
@@ -183,49 +112,11 @@ namespace VATS
 			}
 		}
 
-		// Re-checking modifiers live (2026-08-25) - see kModifierStride's
-		// comment for why. Logs the 3-float payload on change, so this
-		// answers definitively: if a `damage` component (index 2) ever
-		// moves as the target takes real damage, THAT'S the live value to
-		// use instead of baseValues; if this array never has a health
-		// entry at all across a whole real fight (not just once, like the
-		// original 2026-08-23 check), the 24-byte stride guess itself is
-		// the next suspect, not "modifiers doesn't hold health" - so a
-		// one-time raw dump fires the first time it's checked per actor,
-		// regardless of whether an entry was found, to have real bytes to
-		// inspect either way.
-		{
-			RE::Modifiers mods{};
-			const bool    foundMods = FindByAvPointer(a_actor->avStorage.modifiers, healthInfo, kModifierStride, mods);
-			static std::unordered_map<std::uint32_t, std::array<float, 3>> s_lastLoggedMods;
-			const std::array<float, 3>                                     nowMods{ mods.modifiers[0], mods.modifiers[1], mods.modifiers[2] };
-			const auto                                                     modIt = s_lastLoggedMods.find(formID);
-			if (!foundMods || modIt == s_lastLoggedMods.end() || modIt->second != nowMods) {
-				REX::INFO("[VATS] health modifiers: formID=0x{:08X} found={} permanent={:.1f} temporary={:.1f} damage={:.1f} (baseValues current={:.1f})",
-					formID, foundMods, nowMods[0], nowMods[1], nowMods[2], current);
-				s_lastLoggedMods[formID] = nowMods;
-			}
-
-			static std::unordered_set<std::uint32_t> s_dumped;
-			if (s_dumped.insert(formID).second) {
-				const auto& arr = a_actor->avStorage.modifiers;
-				REX::INFO("[VATS] health modifiers: raw dump for formID=0x{:08X}, size={}, healthInfo={}",
-					formID, arr.size(), static_cast<const void*>(healthInfo));
-				DumpRawFloatWindow(arr.data(), std::min<std::size_t>(arr.size(), 32) * kModifierStride);
-			}
-		}
-
-		// Diagnostic, kept intentionally live (not "remove once confirmed" -
-		// restored 2026-08-25 specifically *because* nobody ever confirmed
-		// whether `current` genuinely changes across a real fight or stays
-		// pinned to its first-seen value before this file was deleted).
-		// Logs the actual computed current/max on change, so the next
-		// in-game test settles it definitively: if this line never repeats
-		// with a different `current` during a real fight, the read itself
-		// is stale/wrong; if it does change but the HUD bar still doesn't
-		// move, the bug is in Overlay.cpp's drawing instead.
+		// Log-on-change, kept permanently: this is the one line that shows
+		// whether the live read is still working, and a silent regression
+		// here would take the health bar and the death trigger with it.
 		static std::unordered_map<std::uint32_t, float> s_lastLoggedCurrent;
-		const auto                                        it = s_lastLoggedCurrent.find(formID);
+		const auto                                      it = s_lastLoggedCurrent.find(formID);
 		if (it == s_lastLoggedCurrent.end() || it->second != current) {
 			REX::INFO("[VATS] health: formID=0x{:08X} current={:.2f} max={:.1f} (live={})", formID, current, maxSeen, haveLive);
 			s_lastLoggedCurrent[formID] = current;
@@ -234,166 +125,5 @@ namespace VATS
 		a_out.current = current;
 		a_out.max = maxSeen;
 		return true;
-	}
-
-	std::uint32_t GetActorExtraHealthSegments(RE::Actor* a_actor)
-	{
-		if (!a_actor) {
-			return 0;
-		}
-
-		auto* avList = RE::ActorValue::GetSingleton();
-		if (!avList || !avList->legendaryRank) {
-			return 0;
-		}
-
-		float rank = 0.0f;
-		if (!FindByAvPointer(a_actor->avStorage.baseValues, avList->legendaryRank, kBaseValueStride, rank)) {
-			return 0;
-		}
-		return rank > 0.0f ? static_cast<std::uint32_t>(rank + 0.5f) : 0;
-	}
-
-	void ScanForLiveHealthCandidates(RE::Actor* a_actor)
-	{
-		if (!a_actor) {
-			return;
-		}
-
-		// Throttled to ~5Hz per actor - frequent enough to catch a
-		// decrease shortly after it happens (this only needs to notice
-		// SOME frame where old>new, not every one), cheap enough that a
-		// ~440-float SafeRead-guarded scan every 200ms is a non-issue -
-		// same order of magnitude as the per-frame probes already running
-		// (worldBound/bone), just gated slower since this one holds a
-		// snapshot per actor rather than being stateless.
-		static std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> s_lastScan;
-		const std::uint32_t                                                             formID = a_actor->GetFormID();
-		const auto                                                                      now = std::chrono::steady_clock::now();
-		if (const auto it = s_lastScan.find(formID); it != s_lastScan.end() && now - it->second < std::chrono::milliseconds(200)) {
-			return;
-		}
-		s_lastScan[formID] = now;
-
-		// Window chosen to comfortably cover avStorage (confirmed at
-		// 0x260, Actor.h) and extend well past it into whatever follows -
-		// deliberately blind/broad rather than a targeted guess, since
-		// the whole point is not knowing where else health could be
-		// cached. Widened 2026-08-25 (0x1000 -> 0x2000) after the first
-		// pass found nothing convincing in the smaller window. 0x2000
-		// bytes = 2048 candidate float slots, one SafeRead-guarded 4-byte
-		// read each - still cheap at the 5Hz-per-actor throttle below.
-		constexpr std::size_t kScanBytes = 0x2000;
-
-		// Plausibility range narrowed 2026-08-25: the flat 1-5000 window
-		// from the first pass let through several candidates (a smoothly
-		// decaying ~149 value that plateaued - looks like a fading timer/
-		// blend weight, not discrete hit damage; a couple of near-
-		// unchanged small values) that don't obviously look like health
-		// at all. This actor's own known MAX health (already reliably
-		// read from avStorage.baseValues - that value itself isn't in
-		// question, only whether it's current or max) is a much tighter,
-		// per-actor ground truth: a real current-health field should
-		// start at-or-below max and only matters within roughly that
-		// range, not an arbitrary global window. Falls back to the old
-		// flat range if maxHealth isn't available yet (e.g. baseValues
-		// lookup hasn't resolved for this actor).
-		HealthReading baseValuesReading{};
-		const bool     haveMax = GetActorHealth(a_actor, baseValuesReading) && baseValuesReading.max > 0.0f;
-		const float    knownMax = haveMax ? baseValuesReading.max : 5000.0f;
-
-		// Floor is deliberately 0, not a fraction of max (the previous 2%
-		// floor is exactly why this search could never succeed - see the
-		// ZEROED branch below).
-		const float kMinPlausibleHP = 0.0f;
-		const float kMaxPlausibleHP = knownMax * 1.05f;
-		// A single sample-to-sample drop must be this large to count as a
-		// hit rather than a smooth tick.
-		const float kMinStepDrop = knownMax * 0.02f;
-		// "Was meaningfully alive" -> "is essentially zero" in one step.
-		const float kZeroedFrom = knownMax * 0.10f;
-		const float kZeroedTo = knownMax * 0.01f;
-
-		// Scans one contiguous window and reports two distinct signatures.
-		// Keyed per (formID, window label) so the Actor object and the
-		// AIProcess object each keep their own snapshot.
-		const auto scanWindow = [&](const void* a_base, std::size_t a_bytes, const char* a_label) {
-			if (!a_base) {
-				return;
-			}
-
-			static std::unordered_map<std::string, std::vector<float>> s_snapshots;
-			const std::string                                          key = std::to_string(formID) + a_label;
-			std::vector<float>&                                        snapshot = s_snapshots[key];
-			const bool                                                 firstScan = snapshot.empty();
-			if (firstScan) {
-				snapshot.assign(a_bytes / sizeof(float), 0.0f);
-			}
-
-			const auto* base = reinterpret_cast<const std::byte*>(a_base);
-			for (std::size_t off = 0; off < a_bytes; off += sizeof(float)) {
-				float current = 0.0f;
-				if (!SafeRead(base + off, &current, sizeof(current))) {
-					continue;
-				}
-				float& prev = snapshot[off / sizeof(float)];
-				if (firstScan) {
-					prev = current;
-					continue;
-				}
-
-				const bool bothInRange = current >= kMinPlausibleHP && current <= kMaxPlausibleHP &&
-				                         prev >= kMinPlausibleHP && prev <= kMaxPlausibleHP;
-
-				// The death signature: a real current-health field is the
-				// one value that collapses from a substantial fraction of
-				// max to essentially nothing at the exact moment the actor
-				// dies. This is what the whole search is actually for, and
-				// it is precisely what the old 2%-of-max floor made
-				// impossible to observe (zero is below any such floor, and
-				// the old check additionally required BOTH samples in
-				// range, so a 30 -> 0 transition was discarded twice over).
-				// Both ends must also be inside the plausible band, or the
-				// branch fires on junk: without the upper bound the first
-				// test produced "ZEROED 3.4e38 -> -65.9" (FLT_MAX next to a
-				// negative), which is obviously not health.
-				if (prev >= kZeroedFrom && prev <= kMaxPlausibleHP && current <= kZeroedTo && current >= 0.0f) {
-					REX::INFO("[VATS] health scan: formID=0x{:08X} {}+0x{:04X} ZEROED {:.1f} -> {:.1f} (knownMax={:.1f}) <<< DEATH CANDIDATE",
-						formID, a_label, off, prev, current, haveMax ? baseValuesReading.max : -1.0f);
-				} else if (bothInRange && (prev - current) >= kMinStepDrop) {
-					// Step threshold added 2026-08-25 to kill the dominant
-					// false positive: two separate targets each produced a
-					// candidate running exactly 20.0 -> 9.7 at exactly
-					// 1.0/second (0.2 per 200ms sample) - a 20-second
-					// countdown timer, not health, at a different offset in
-					// each actor. Real weapon damage arrives in discrete
-					// chunks far larger than 2% of max per sample, so this
-					// separates hits from any smoothly-ticking timer or
-					// blend weight without needing to know what those
-					// fields are.
-					REX::INFO("[VATS] health scan: formID=0x{:08X} {}+0x{:04X} DROPPED {:.1f} -> {:.1f} (knownMax={:.1f}, minStep={:.1f})",
-						formID, a_label, off, prev, current, haveMax ? baseValuesReading.max : -1.0f, kMinStepDrop);
-				}
-				prev = current;
-			}
-		};
-
-		scanWindow(a_actor, kScanBytes, "actor");
-
-		// Second window (2026-08-25): the first pass scanned only the Actor
-		// object itself and found nothing real, so live health plausibly
-		// isn't stored there at all. AIProcess is the obvious next place -
-		// it's the per-actor "currently simulated" state block (only
-		// populated for actors the engine is actively processing, which a
-		// locked combat target always is), and in this engine family it has
-		// historically cached exactly this kind of live combat data.
-		// currentProcess is a plain named pointer member at a header offset
-		// that this session's raw dump independently corroborated (+0x228
-		// read as a well-formed heap pointer), so this is a plain guarded
-		// data read, consistent with this project's low-risk pattern.
-		const void* aiProcess = nullptr;
-		if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + offsetof(RE::Actor, currentProcess), &aiProcess, sizeof(aiProcess)) && aiProcess) {
-			scanWindow(aiProcess, 0x1000, "aiproc");
-		}
 	}
 }

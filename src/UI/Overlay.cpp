@@ -85,57 +85,6 @@ namespace VATS::UI
 			}
 		}
 
-		// Diagnostic (2026-08-25) - GameOffsets::kBoolBits is a bare
-		// offsetof(RE::Actor, boolBits) claim, never empirically verified
-		// (unlike kCellReferences, which WAS wrong by 8 bytes when trusted
-		// the same way). Alexander confirmed a locked target's boolBits
-		// never shows the dead bit set even when the actor is visibly,
-		// definitely dead on the ground - and two completely different
-		// dead/alive actors logged the exact same alternating pair of
-		// values (0x12A021A2/0x12A021A3), which is far more consistent with
-		// "wrong offset, landed on some frame-parity/engine bookkeeping
-		// field" than "right offset, wrong bit index". Dumps a wide DWORD
-		// window around the claimed offset so a real, stable "dead" field
-		// can be found by comparison instead of guessed at - one full dump
-		// immediately per newly-seen formID (baseline), then throttled
-		// repeats so a motionless corpse's genuinely-stable entries can be
-		// told apart from whatever keeps toggling every frame regardless of
-		// actor state.
-		void DumpBoolBitsWindow(RE::Actor* a_actor)
-		{
-			static std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> s_lastDump;
-			const std::uint32_t                                                             formID = a_actor->GetFormID();
-			const auto                                                                      now = std::chrono::steady_clock::now();
-			if (const auto it = s_lastDump.find(formID); it != s_lastDump.end() && now - it->second < std::chrono::milliseconds(500)) {
-				return;
-			}
-			s_lastDump[formID] = now;
-
-			constexpr std::ptrdiff_t kWindowStart = static_cast<std::ptrdiff_t>(GameOffsets::kBoolBits) - 0x20;
-			constexpr std::size_t    kWindowBytes = 0x200;
-
-			const auto* base = reinterpret_cast<const std::byte*>(a_actor) + kWindowStart;
-			std::string line;
-			char        cell[48];
-			int         perLine = 0;
-			for (std::size_t off = 0; off < kWindowBytes; off += 4) {
-				std::uint32_t raw = 0;
-				if (!SafeRead(base + off, &raw, sizeof(raw))) {
-					continue;
-				}
-				std::snprintf(cell, sizeof(cell), "+%03zX:%08X ", static_cast<std::size_t>(kWindowStart) + off, raw);
-				line += cell;
-				if (++perLine >= 8) {
-					REX::INFO("[VATS] boolBits window formID=0x{:08X}: {}", formID, line);
-					line.clear();
-					perLine = 0;
-				}
-			}
-			if (!line.empty()) {
-				REX::INFO("[VATS] boolBits window formID=0x{:08X}: {}", formID, line);
-			}
-		}
-
 		void DrawCenteredText(ImDrawList* a_dl, float a_centerX, float a_y, const char* a_text, ImU32 a_color)
 		{
 			const auto   size = ImGui::CalcTextSize(a_text);
@@ -177,35 +126,20 @@ namespace VATS::UI
 			}
 		}
 
-		// Segmented boss/legendary health bar, matching Starfield's own
-		// look (screenshot + Alexander's description, 2026-08-23): a red
-		// bar for the currently-active health pool, with a row of small
-		// white pips above it marking how many additional full pools this
-		// enemy has in reserve (a_extraSegments — best-effort, see
-		// HealthReader::GetActorExtraHealthSegments). a_extraSegments == 0
-		// draws just the plain red bar, the correct look for the vast
-		// majority of non-legendary enemies.
-		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max, std::uint32_t a_extraSegments)
+		// Plain health bar. The segmented boss/legendary variant (a row of
+		// pips marking reserve health pools) was removed 2026-08-25: it
+		// rested on an unverified guess that the legendaryRank actor value
+		// drives that display, it never actually worked - the pip row
+		// stayed rigid regardless of the target - and Alexander's call was
+		// that it isn't worth another multi-day offset hunt. Drop rather
+		// than keep dead decoration.
+		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max)
 		{
 			constexpr float kBarWidth = 116.0f;
 			constexpr float kBarHeight = 7.0f;
-			constexpr float kPipHeight = 4.0f;
-			constexpr float kPipGap = 2.0f;
-			constexpr float kRowGap = 3.0f;
 
 			const float x0 = a_centerX - kBarWidth * 0.5f;
 			const float x1 = a_centerX + kBarWidth * 0.5f;
-
-			if (a_extraSegments > 0) {
-				const float pipRowY = a_y - kRowGap - kPipHeight;
-				const float pipWidth = (kBarWidth - kPipGap * static_cast<float>(a_extraSegments - 1)) / static_cast<float>(a_extraSegments);
-				float       px = x0;
-				for (std::uint32_t i = 0; i < a_extraSegments; ++i) {
-					a_dl->AddRectFilled(ImVec2{ px - 1.0f, pipRowY - 1.0f }, ImVec2{ px + pipWidth + 1.0f, pipRowY + kPipHeight + 1.0f }, kOutline);
-					a_dl->AddRectFilled(ImVec2{ px, pipRowY }, ImVec2{ px + pipWidth, pipRowY + kPipHeight }, IM_COL32(235, 238, 240, 235));
-					px += pipWidth + kPipGap;
-				}
-			}
 
 			a_dl->AddRectFilled(ImVec2{ x0 - 1.5f, a_y - 1.5f }, ImVec2{ x1 + 1.5f, a_y + kBarHeight + 1.5f }, kOutline);
 			a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x1, a_y + kBarHeight }, IM_COL32(50, 12, 12, 220));
@@ -398,9 +332,8 @@ namespace VATS::UI
 
 			float tetherStartY = py + 36.0f;
 			if (haveHealth) {
-				const std::uint32_t extraSegments = GetActorExtraHealthSegments(a_actor);
-				const float         barY = py + 40.0f + (extraSegments > 0 ? 8.0f : 0.0f);
-				DrawHealthBar(dl, px, barY, hp.current, hp.max, extraSegments);
+				const float barY = py + 40.0f;
+				DrawHealthBar(dl, px, barY, hp.current, hp.max);
 				tetherStartY = barY + 7.0f + 6.0f;
 			}
 
@@ -622,41 +555,23 @@ namespace VATS::UI
 		// to a new target (if oxygen/AP allows) was also floated but needs
 		// the O2-cost system this project doesn't have yet; not attempted
 		// here, ForceOff only for now.
+		// Death is detected from health, not from Actor::boolBits. The bit
+		// check that lived here from 2026-08-22 until 2026-08-25 never once
+		// fired: a locked target's boolBits reads the same 0x12A021A2
+		// whether it is alive or lying dead on the floor, and a raw dump of
+		// the surrounding memory showed the struct layout is fine, so it is
+		// CommonLibSF's BOOL_BITS enum values that don't match this game
+		// (kSetOnDeath, 1<<23, is set on living actors too). Rather than
+		// keep hunting for the right bit, use the health value that now
+		// actually works - confirmed in-game reading 87.27 -> 16.17 -> 1.12
+		// -> -13.93 across a real kill, going negative on overkill damage.
 		{
-			std::uint32_t boolBits = 0;
-			const bool    boolBitsRead = SafeRead(reinterpret_cast<const std::byte*>(state.actor.get()) + GameOffsets::kBoolBits, &boolBits, sizeof(boolBits));
-
-			DumpBoolBitsWindow(state.actor.get());
-
-			// Continuous visibility (2026-08-25), log-on-change only -
-			// answers whether the dead bit (0x800) EVER flips as a real
-			// target goes down/dies, not just whatever happens the one
-			// frame the check below fires (if it ever does). If a target
-			// is confirmed dead on screen but this never shows the bit
-			// set, GameOffsets::kActorDeadBit itself is the suspect, not
-			// the ForceOff() logic around it.
-			if (boolBitsRead) {
-				static std::unordered_map<std::uint32_t, std::uint32_t> s_lastBoolBits;
-				const std::uint32_t                                     formID = state.actor->GetFormID();
-				const auto                                              it = s_lastBoolBits.find(formID);
-				if (it == s_lastBoolBits.end() || it->second != boolBits) {
-					REX::INFO("[VATS] target boolBits=0x{:08X} (deadBitSet={}) formID=0x{:08X}",
-						boolBits, (boolBits & GameOffsets::kActorDeadBit) != 0, formID);
-					s_lastBoolBits[formID] = boolBits;
-				}
-			}
-
-			if (boolBitsRead && (boolBits & GameOffsets::kActorDeadBit) != 0) {
-				// Distinct log line (2026-08-25) - "OFF (forced - blocking
-				// menu or transition)" from ForceOff() itself is shared by
-				// every trigger (dead target, PauseMenu, DataMenu, ...),
-				// so there was no way to tell from the log whether this
-				// path had EVER actually fired, despite existing since
-				// 2026-08-22. Alexander reported it not working in
-				// practice; this line is what will actually prove or
-				// disprove that on the next test instead of relying on
-				// the code merely existing.
-				REX::INFO("[VATS] target dead bit set (boolBits=0x{:08X}), forcing lock off", boolBits);
+			HealthReading hp{};
+			if (GetActorHealth(state.actor.get(), hp) && hp.current <= 0.0f) {
+				// Distinct from ForceOff()'s own generic line, which every
+				// trigger shares (blocking menu, transition, ...), so the
+				// log can still tell these apart.
+				REX::INFO("[VATS] target died (health={:.2f}), forcing lock off", hp.current);
 				Controller::Get().ForceOff();
 				return;
 			}
@@ -684,7 +599,6 @@ namespace VATS::UI
 		// bone candidate is now probed alongside it for comparison.
 		WorldBoundProbe::LogIfChanged(state.actor.get());
 		BoneProbe::LogIfChanged(state.actor.get());
-		ScanForLiveHealthCandidates(state.actor.get());
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a
 		// possible live "can the player currently see this target" signal
