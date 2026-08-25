@@ -3,6 +3,7 @@
 #include "SafeMem.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -14,6 +15,27 @@ namespace VATS
 	namespace
 	{
 		constexpr std::size_t kBaseValueStride = 16;  // ActorValueInfo* (8) + float (4), 8-byte aligned
+
+		// avStorage.modifiers' real element stride, by the same reasoning
+		// already proven for baseValues: real key is an 8-byte
+		// ActorValueInfo* (not the header's claimed 4-byte uint32_t
+		// index), payload is RE::Modifiers (confirmed sizeof 0xC - three
+		// floats: permanent/temporary/damage, see ActorValueStorage.h).
+		// 8 (key) + 12 (payload) = 20, rounded to 24 for 8-byte alignment
+		// - the same pattern baseValues used (12 real bytes -> 16 stride).
+		// UNLIKE baseValues' 16, this number has never been independently
+		// confirmed (no raw-dump cross-check, no getav comparison) - it's
+		// an analogy, not a proven fact. 2026-08-23's original modifiers
+		// search already used this exact value and pointer-keyed lookup
+		// and found nothing; 2026-08-25's baseValues finding (current
+		// reads once at full health, then genuinely never changes across
+		// an entire real fight - confirmed via redirect-hit correlation
+		// in the same log) means "damage writes into baseValues directly"
+		// no longer holds up, so modifiers is worth re-checking with a
+		// live, throttled probe instead of the old one-shot check - and,
+		// if it still never resolves, this stride guess itself becomes a
+		// real suspect rather than baseValues being the answer.
+		constexpr std::size_t kModifierStride = 24;
 
 		// avStorage.baseValues is declared by CommonLibSF's header as
 		// BSTArray<BSTTuple<uint32_t, float>> (key = a 4-byte AV index),
@@ -133,6 +155,38 @@ namespace VATS
 		float&                                            maxSeen = s_maxSeen[formID];
 		if (current > maxSeen) {
 			maxSeen = current;
+		}
+
+		// Re-checking modifiers live (2026-08-25) - see kModifierStride's
+		// comment for why. Logs the 3-float payload on change, so this
+		// answers definitively: if a `damage` component (index 2) ever
+		// moves as the target takes real damage, THAT'S the live value to
+		// use instead of baseValues; if this array never has a health
+		// entry at all across a whole real fight (not just once, like the
+		// original 2026-08-23 check), the 24-byte stride guess itself is
+		// the next suspect, not "modifiers doesn't hold health" - so a
+		// one-time raw dump fires the first time it's checked per actor,
+		// regardless of whether an entry was found, to have real bytes to
+		// inspect either way.
+		{
+			RE::Modifiers mods{};
+			const bool    foundMods = FindByAvPointer(a_actor->avStorage.modifiers, healthInfo, kModifierStride, mods);
+			static std::unordered_map<std::uint32_t, std::array<float, 3>> s_lastLoggedMods;
+			const std::array<float, 3>                                     nowMods{ mods.modifiers[0], mods.modifiers[1], mods.modifiers[2] };
+			const auto                                                     modIt = s_lastLoggedMods.find(formID);
+			if (!foundMods || modIt == s_lastLoggedMods.end() || modIt->second != nowMods) {
+				REX::INFO("[VATS] health modifiers: formID=0x{:08X} found={} permanent={:.1f} temporary={:.1f} damage={:.1f} (baseValues current={:.1f})",
+					formID, foundMods, nowMods[0], nowMods[1], nowMods[2], current);
+				s_lastLoggedMods[formID] = nowMods;
+			}
+
+			static std::unordered_set<std::uint32_t> s_dumped;
+			if (s_dumped.insert(formID).second) {
+				const auto& arr = a_actor->avStorage.modifiers;
+				REX::INFO("[VATS] health modifiers: raw dump for formID=0x{:08X}, size={}, healthInfo={}",
+					formID, arr.size(), static_cast<const void*>(healthInfo));
+				DumpRawFloatWindow(arr.data(), std::min<std::size_t>(arr.size(), 32) * kModifierStride);
+			}
 		}
 
 		// Diagnostic, kept intentionally live (not "remove once confirmed" -
