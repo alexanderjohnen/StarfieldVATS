@@ -180,5 +180,16 @@ namespace VATS
 		// to restore the exact previous behaviour without a rebuild if some
 		// creature reacts badly.
 		float aimPointHeightFactor{ 1.5f };
+
+		// Starfield's hit and kill markers are always hidden while Locked.
+		// The crit marker is separate: Alexander wants to keep crit
+		// feedback, just out of the way of the VATS overlay, so it can be
+		// moved instead of hidden. Offsets are in the parent clip's own
+		// coordinate space, whose scale is not known yet - the original
+		// coordinates are logged on the first move so these can be
+		// calibrated from a real session (see CombatHudVisibility.h).
+		bool  moveCritMarker{ false };
+		float critMarkerOffsetX{ 0.0f };
+		float critMarkerOffsetY{ -180.0f };
 	};
 }

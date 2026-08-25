@@ -1,6 +1,9 @@
 #include "CombatHudVisibility.h"
 
+#include "Settings.h"
+
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace VATS
@@ -83,9 +86,17 @@ namespace VATS
 			}
 		}
 
-		// (path, wasVisible) pairs actually toggled this Lock, so Restore()
-		// only touches what Hide() actually changed.
-		std::vector<std::pair<std::string, bool>> s_hidden;
+		// Exactly what this Lock changed, so Restore() puts back only that.
+		// Carries a float rather than a bool because move mode restores x/y
+		// coordinates while hide mode restores a visibility flag.
+		struct Touched
+		{
+			std::string path;
+			bool        isBoolean{ true };
+			bool        originalBool{ true };
+			float       originalNumber{ 0.0f };
+		};
+		std::vector<Touched> s_touched;
 
 		// Property name for visibility. hudmenu is ActionScript 3 -
 		// docs/hudmenu-decompiled/scripts/HitKillIndicator.as opens with
@@ -102,7 +113,7 @@ namespace VATS
 
 		// Hides one display object by whichever visibility property actually
 		// resolves on it.
-		void TryHideLeaf(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_objectPath)
+		bool TryHideLeaf(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_objectPath)
 		{
 			// Log whether the object itself resolves, separately from its
 			// properties - that distinction is what finally localized this
@@ -110,7 +121,7 @@ namespace VATS
 			const bool objectAvailable = a_root->IsAvailable(a_objectPath.c_str());
 			REX::INFO("[VATS] combat-hud: object '{}' available={}", a_objectPath, objectAvailable);
 			if (!objectAvailable) {
-				return;
+				return false;
 			}
 
 			for (const char* property : kVisibilityProperties) {
@@ -124,12 +135,46 @@ namespace VATS
 					const RE::Scaleform::GFx::Value falseVal(false);
 					a_root->SetVariable(path.c_str(), falseVal);
 				}
-				s_hidden.emplace_back(path, wasVisible);
+				s_touched.push_back(Touched{ path, true, wasVisible, 0.0f });
 				REX::INFO("[VATS] combat-hud: hid '{}' (was visible={})", path, wasVisible);
-				return;
+				return true;
 			}
 
 			REX::WARN("[VATS] combat-hud: '{}' resolves but neither 'visible' nor '_visible' read as a boolean on it", a_objectPath);
+			return false;
+		}
+
+		// Shifts one display object by a_dx/a_dy in its parent's coordinate
+		// space, remembering the originals so Restore() can put it back.
+		// Used instead of hiding when Alexander wants the crit banner kept
+		// but out of the way - it rides along on HitIndicator_mc, being a
+		// child of it, so moving the parent is the only way to relocate the
+		// banner without also losing it.
+		bool TryMoveObject(RE::Scaleform::GFx::ASMovieRootBase* a_root, const std::string& a_objectPath, float a_dx, float a_dy)
+		{
+			if (!a_root->IsAvailable(a_objectPath.c_str())) {
+				return false;
+			}
+
+			bool movedAny = false;
+			for (const auto& [axis, delta] : { std::pair{ "x", a_dx }, std::pair{ "y", a_dy } }) {
+				const std::string         path = a_objectPath + "." + axis;
+				RE::Scaleform::GFx::Value current;
+				if (!a_root->GetVariable(&current, path.c_str()) || !current.IsNumber()) {
+					continue;
+				}
+				const double original = current.GetNumber();
+				const RE::Scaleform::GFx::Value moved(original + static_cast<double>(delta));
+				a_root->SetVariable(path.c_str(), moved);
+				s_touched.push_back(Touched{ path, false, true, static_cast<float>(original) });
+				// The parent clip's coordinate scale is unknown, so log the
+				// original alongside the new value - one real session's
+				// numbers make the INI offsets calibratable instead of
+				// guessed.
+				REX::INFO("[VATS] combat-hud: moved '{}' {:.1f} -> {:.1f}", path, original, original + delta);
+				movedAny = true;
+			}
+			return movedAny;
 		}
 	}
 
@@ -163,7 +208,8 @@ namespace VATS
 				s_realRoot, gotRoot, gotRoot && rootVal.IsObject(), gotRoot && rootVal.IsDisplayObject(), gotRoot && rootVal.IsUndefined());
 		}
 
-		s_hidden.clear();
+		s_touched.clear();
+		const auto& settings = Settings::Get();
 		for (const auto& container : s_containerPaths) {
 			// Diagnostic (2026-08-24): even the confirmed-real
 			// "root1.HitAndKillIndicator_mc" container didn't resolve on
@@ -184,16 +230,55 @@ namespace VATS
 			// on the class, so they are direct children of the container.
 			// CritBanner_mc is nested one level deeper under HitIndicator_mc
 			// specifically (per HitKillIndicator.as:
-			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling - it is
-			// the critical-hit banner, which Alexander wants gone along with
-			// the plain hit marker.
-			TryHideLeaf(root, container + ".HitIndicator_mc");
-			TryHideLeaf(root, container + ".KillIndicator_mc");
-			TryHideLeaf(root, container + ".HitIndicator_mc.CritBanner_mc");
+			// `this.HitIndicator_mc.CritBanner_mc`), not a sibling.
+			// Hit and kill markers are always hidden - confirmed working
+			// in-game 2026-08-25, Alexander reports no hit markers at all
+			// while Locked.
+			bool changedAny = false;
+			changedAny |= TryHideLeaf(root, container + ".HitIndicator_mc");
+			changedAny |= TryHideLeaf(root, container + ".KillIndicator_mc");
+
+			// The crit visual is handled separately, and it is NOT simply a
+			// child of the hit marker. It was assumed to be, on the strength
+			// of HitKillIndicator.as declaring `this.HitIndicator_mc.
+			// CritBanner_mc` - but Alexander observed a crit marker still
+			// appearing in a session where the hit marker was verifiably
+			// hidden, and a hidden parent cannot render a child. So whatever
+			// he is seeing is a different object; the decompile also lists a
+			// separate `CritText_mc` alongside `CritBanner_mc`.
+			//
+			// Rather than guess again, every candidate is probed for
+			// availability and logged, and each one that resolves is either
+			// hidden or moved per the setting. Probing costs nothing:
+			// IsAvailable never constructs a Value, and a miss is a no-op.
+			static constexpr const char* kCritPaths[] = {
+				".HitIndicator_mc.CritBanner_mc",
+				".CritBanner_mc",
+				".CritText_mc",
+				".HitIndicator_mc.CritText_mc",
+				".KillIndicator_mc.CritBanner_mc",
+			};
+			for (const char* suffix : kCritPaths) {
+				const std::string path = container + suffix;
+				if (settings.moveCritMarker) {
+					changedAny |= TryMoveObject(root, path, settings.critMarkerOffsetX, settings.critMarkerOffsetY);
+				} else {
+					changedAny |= TryHideLeaf(root, path);
+				}
+			}
+
+			// Stop at the first container that actually worked. The
+			// remaining candidates are aliases for the same objects
+			// ("_root" resolves to the same clip as "root1"), so carrying on
+			// re-processed objects already dealt with - harmless, but it
+			// recorded confusing "was visible=false" entries for things this
+			// call had itself just hidden a moment earlier.
+			if (changedAny) {
+				return;
+			}
 		}
-		if (s_hidden.empty()) {
-			REX::WARN("[VATS] combat-hud: none of the candidate HitKillIndicator paths resolved - see kContainerNames/kFallbackParents in CombatHudVisibility.cpp, or the logged HUDMenu root path above for a better guess");
-		}
+
+		REX::WARN("[VATS] combat-hud: none of the candidate HitKillIndicator paths resolved - see kContainerNames/kFallbackParents in CombatHudVisibility.cpp, or the logged HUDMenu root path above for a better guess");
 	}
 
 	void CombatHudVisibility::Restore()
@@ -202,12 +287,17 @@ namespace VATS
 		if (!root) {
 			return;
 		}
-		for (const auto& [path, wasVisible] : s_hidden) {
-			if (wasVisible) {
-				const RE::Scaleform::GFx::Value trueVal(true);
-				root->SetVariable(path.c_str(), trueVal);
+		for (const auto& touched : s_touched) {
+			if (touched.isBoolean) {
+				if (touched.originalBool) {
+					const RE::Scaleform::GFx::Value trueVal(true);
+					root->SetVariable(touched.path.c_str(), trueVal);
+				}
+			} else {
+				const RE::Scaleform::GFx::Value original(static_cast<double>(touched.originalNumber));
+				root->SetVariable(touched.path.c_str(), original);
 			}
 		}
-		s_hidden.clear();
+		s_touched.clear();
 	}
 }

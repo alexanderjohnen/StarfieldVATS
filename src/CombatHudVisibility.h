@@ -41,6 +41,31 @@ namespace VATS
 	// kFallbackParents in the .cpp for the current guesses and the log for
 	// which one (if any) resolved.
 	//
+	// RESOLVED 2026-08-25, and it was the property name, not the path. The
+	// container resolved fine all along (`root1.HitAndKillIndicator_mc
+	// available=true`) while every leaf under it failed, which finally
+	// pointed at the property rather than the path. hudmenu is ActionScript
+	// 3 - HitKillIndicator.as opens with `package`, extends MovieClip and
+	// imports flash.display.MovieClip - and in AS3 the property is
+	// `visible`. Every attempt until then used `_visible`, the AS2 spelling.
+	// Confirmed in-game: `hid 'root1.HitAndKillIndicator_mc.
+	// HitIndicator_mc.visible' (was visible=true)`, and Alexander reports no
+	// hit markers while Locked.
+	//
+	// MOVE MODE (2026-08-25, Alexander's request): he wanted the crit
+	// banner kept rather than suppressed, just out of the way of the VATS
+	// overlay. It cannot be separated from the hit marker - CritBanner_mc is
+	// a CHILD of HitIndicator_mc (`this.HitIndicator_mc.CritBanner_mc` in
+	// HitKillIndicator.as), so hiding the parent necessarily takes the child
+	// with it, and display objects cannot be reparented through this
+	// interface. Moving the parent moves both together, which is what move
+	// mode does: offset HitIndicator_mc and KillIndicator_mc by an
+	// INI-configured amount for the duration of the lock instead of hiding
+	// them. The offset is in the parent clip's own coordinate space, whose
+	// scale we do not know yet - the original x/y are logged on the first
+	// move so it can be calibrated from a real session rather than guessed
+	// at repeatedly.
+	//
 	// Editing HONKCORE's hudmenu.gfx directly (JPEXS) was considered and
 	// rejected 2026-08-24, Alexander's own call: it would hide the marker
 	// permanently (not just while VATS is Locked), and the edit would need
