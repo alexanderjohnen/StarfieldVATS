@@ -149,5 +149,19 @@ namespace VATS
 		// tunable - halving capacity would also have halved what a fresh
 		// lock starts with, which is a different change.
 		float vatsCostPerDamage{ 2.0f };
+
+		// When a locked target dies with budget left, hop straight to the
+		// next living enemy instead of dropping out of VATS. Deliberately
+		// gated behind the resource system existing (Alexander deferred it
+		// until then, 2026-08-25) - without a cost, chaining targets would
+		// be free and VATS would never end on its own.
+		bool autoAdvanceOnKill{ true };
+
+		// How far the auto-advance will look, in metres. Much shorter than
+		// the ordinary acquisition range: hopping to something across the
+		// map would be a surprise rather than a convenience, and the player
+		// still has to be roughly facing the next target since the normal
+		// view cone (iConeDegrees) applies unchanged.
+		float autoAdvanceRangeMeters{ 30.0f };
 	};
 }

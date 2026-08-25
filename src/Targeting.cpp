@@ -1,12 +1,31 @@
 #include "Targeting.h"
 
 #include "GameOffsets.h"
+#include "HealthReader.h"
 #include "SafeMem.h"
 
 namespace VATS
 {
 	namespace
 	{
+		// The only reliable "is this actor dead" test this project has.
+		// Actor::boolBits & BOOL_BITS::kDead - used everywhere here until
+		// 2026-08-25 - is a confirmed no-op: the bit reads identically for
+		// a living actor and for one lying dead on the floor. Health going
+		// to zero (or negative, on overkill) is what actually distinguishes
+		// them, and it only became readable once live health worked.
+		[[nodiscard]] bool IsAlive(RE::Actor* a_actor)
+		{
+			HealthReading hp{};
+			if (!GetActorHealth(a_actor, hp)) {
+				// Unreadable health is not evidence of death - treat as
+				// alive so a failed read can never silently make every
+				// actor untargetable.
+				return true;
+			}
+			return hp.current > 0.0f;
+		}
+
 		// Offsets/constants live in GameOffsets.h — empirically verified,
 		// see the long comment in Targeting.h for how each one was proven.
 		constexpr auto kCellReferencesOffset = GameOffsets::kCellReferences;
@@ -42,7 +61,7 @@ namespace VATS
 		}
 	}
 
-	std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg)
+	std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg, RE::Actor* a_exclude, bool a_requireAlive)
 	{
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		auto* playerCamera = RE::PlayerCamera::GetSingleton();
@@ -107,11 +126,17 @@ namespace VATS
 		std::uint32_t nActorsSeen = 0;
 		std::uint32_t nOutOfRange = 0;
 		std::uint32_t nOutsideCone = 0;
+		std::uint32_t nDeadSkipped = 0;
 		float         closestMissAngleDeg = -1.0f;  // smallest angle among actors that failed the cone check
 
 		for (std::uint32_t i = 0; i < scanCount; ++i) {
 			std::uint64_t entry = 0;
 			if (!Read(reinterpret_cast<const void*>(data), 8ull * i, entry) || !entry) {
+				continue;
+			}
+
+			auto* candidate = reinterpret_cast<RE::Actor*>(entry);
+			if (a_exclude && candidate == a_exclude) {
 				continue;
 			}
 
@@ -140,16 +165,24 @@ namespace VATS
 				continue;
 			}
 
+			// Checked only here, after this candidate has already beaten
+			// every previous one on angle, so the cost lands on a handful
+			// of actors per scan rather than on every reference.
+			if (a_requireAlive && !IsAlive(candidate)) {
+				++nDeadSkipped;
+				continue;
+			}
+
 			bestCosAngle = cosAngle;
-			best = TargetPick{ RE::NiPointer<RE::Actor>(reinterpret_cast<RE::Actor*>(entry)), dist, angleDeg };
+			best = TargetPick{ RE::NiPointer<RE::Actor>(candidate), dist, angleDeg };
 		}
 
 		if (scanCount < size) {
 			REX::WARN("[targeting] cellRefs={} exceeds scan cap {} — {} entries were NOT scanned this call",
 				size, kScanCap, size - scanCount);
 		}
-		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
-			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
+		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
+			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
 
 		return best;
 	}
@@ -171,12 +204,16 @@ namespace VATS
 			return nullptr;  // not an actor (e.g. a container/terminal under the crosshair)
 		}
 
-		std::uint32_t boolBits = 0;
-		if (Read(target, kBoolBitsOff, boolBits) && (boolBits & kDeadBit) != 0) {
-			return nullptr;  // dead
+		// Corpses were targetable until 2026-08-25 (Alexander noticed while
+		// we were fixing the same root cause for auto-advance): this used
+		// the boolBits dead bit, which never actually flips, so nothing was
+		// ever filtered out. Health is the working test - see IsAlive.
+		auto* actor = reinterpret_cast<RE::Actor*>(target);
+		if (!IsAlive(actor)) {
+			return nullptr;
 		}
 
-		return RE::NiPointer<RE::Actor>(reinterpret_cast<RE::Actor*>(target));
+		return RE::NiPointer<RE::Actor>(actor);
 	}
 
 	bool HasDetectionLOS(RE::Actor* a_source, RE::Actor* a_target)

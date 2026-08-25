@@ -236,6 +236,45 @@ namespace VATS
 		});
 	}
 
+	bool Controller::TryAdvanceToNextTarget()
+	{
+		const auto& settings = Settings::Get();
+		if (!settings.autoAdvanceOnKill) {
+			return false;
+		}
+		if (m_mode.load(std::memory_order_relaxed) != VATSMode::kLocked) {
+			return false;
+		}
+
+		RE::Actor* dying = nullptr;
+		{
+			const std::scoped_lock lock(m_targetLock);
+			dying = m_target.get();
+		}
+
+		// requireAlive matters here specifically: the corpse just created
+		// is the thing nearest the crosshair, and the scan's own dead
+		// filter cannot see that it is dead (see Targeting.h). Excluding
+		// it by pointer is not enough either - any other body lying nearby
+		// would be picked instead.
+		auto pick = FindNearestActorToCrosshair(
+			settings.autoAdvanceRangeMeters,
+			static_cast<float>(settings.targetConeDeg),
+			dying,
+			/*a_requireAlive*/ true);
+		if (!pick || !pick->actor) {
+			return false;
+		}
+
+		{
+			const std::scoped_lock lock(m_targetLock);
+			m_target = pick->actor;
+		}
+		REX::INFO("[VATS] auto-advance: new target formID=0x{:08X} at {:.1f}m, {:.1f}deg off-centre",
+			pick->actor->GetFormID(), pick->worldDistance, pick->angleDeg);
+		return true;
+	}
+
 	void Controller::Advance()
 	{
 		const VATSMode current = m_mode.load(std::memory_order_relaxed);

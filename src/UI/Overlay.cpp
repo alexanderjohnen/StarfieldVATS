@@ -603,6 +603,15 @@ namespace VATS::UI
 		{
 			HealthReading hp{};
 			if (GetActorHealth(state.actor.get(), hp) && hp.current <= 0.0f) {
+				// With budget left, hop to the next living enemy rather
+				// than dropping out of VATS entirely - Alexander's
+				// request. The resource system is what makes this fair:
+				// each hop still has to be paid for in damage dealt, so a
+				// chain of kills ends on its own once the bar runs out.
+				if (VatsResource::Get().GetState().current > 0.0f && Controller::Get().TryAdvanceToNextTarget()) {
+					return;
+				}
+
 				// Distinct from ForceOff()'s own generic line, which every
 				// trigger shares (blocking menu, transition, ...), so the
 				// log can still tell these apart.

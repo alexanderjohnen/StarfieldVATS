@@ -51,8 +51,10 @@ namespace VATS
 		vatsCapacityPerHealth = GetPrivateProfileFloatA("Resource", "fCapacityPerHealth", 1.0f, INI_PATH);
 		vatsRefillPerOxygen = GetPrivateProfileFloatA("Resource", "fRefillPerOxygen", 0.5f, INI_PATH);
 		vatsCostPerDamage = GetPrivateProfileFloatA("Resource", "fCostPerDamage", 2.0f, INI_PATH);
+		autoAdvanceOnKill = REX::W32::GetPrivateProfileIntA("Resource", "bAutoAdvanceOnKill", 1, INI_PATH) != 0;
+		autoAdvanceRangeMeters = GetPrivateProfileFloatA("Resource", "fAutoAdvanceRangeMeters", 30.0f, INI_PATH);
 
-		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}, fCostPerDamage={}",
-			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen, vatsCostPerDamage);
+		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, iCameraFovDegrees={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}, fCostPerDamage={}, bAutoAdvanceOnKill={}, fAutoAdvanceRangeMeters={}",
+			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen, vatsCostPerDamage, autoAdvanceOnKill, autoAdvanceRangeMeters);
 	}
 }

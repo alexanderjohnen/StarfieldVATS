@@ -86,6 +86,24 @@ namespace VATS
 		// an actual change. Call from Overlay::Draw() while Locked.
 		void SyncProjectileOverride();
 
+		// Swaps the locked target for the nearest living enemy in front of
+		// the player, staying Locked. Called when the current target dies
+		// with resource budget left (Overlay.cpp) - Alexander's request,
+		// deliberately deferred until the resource system existed so that
+		// chaining kills costs something.
+		//
+		// Safe from the render thread, same as ForceOff(): a target swap
+		// touches only this class's own mutex-guarded state. Everything
+		// the lock transition does that needs the game thread - closing the
+		// scanner, hiding HUD elements, engaging the projectile override -
+		// is already done and stays valid, since none of it is per-target
+		// (the override is per equipped weapon, and SyncProjectileOverride
+		// keeps that current on its own).
+		//
+		// Returns false if nothing suitable is in range, in which case the
+		// caller ends the lock as before.
+		[[nodiscard]] bool TryAdvanceToNextTarget();
+
 	private:
 		void Advance();  // game thread only
 

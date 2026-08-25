@@ -51,7 +51,27 @@ namespace VATS
 	//
 	// Known limitation: only the player's own cell is scanned, so in
 	// exteriors actors in neighboring grid cells are not yet considered.
-	[[nodiscard]] std::optional<TargetPick> FindNearestActorToCrosshair(float a_maxRange, float a_maxConeDeg);
+	// a_exclude is skipped entirely, and a_requireAlive additionally
+	// demands a real health reading above zero. Both exist for
+	// auto-advancing to the next enemy when a locked target dies with VATS
+	// capacity left.
+	//
+	// a_requireAlive is not redundant with the scan's own dead filter -
+	// that filter is a confirmed no-op. It tests Actor::boolBits against
+	// CommonLibSF's BOOL_BITS::kDead, and that bit reads identically for
+	// living and long-dead actors in this game (2026-08-25, see the death
+	// check in Overlay.cpp). Left to it, an auto-advance would almost
+	// always re-lock the corpse the player just made, that being by
+	// definition the thing nearest their crosshair. Real health is only
+	// checkable at all since live health started reading correctly
+	// (HealthReader.h), and it is read only for a candidate that has
+	// already beaten every previous one on angle - a handful of actors per
+	// scan, not every reference in the cell.
+	[[nodiscard]] std::optional<TargetPick> FindNearestActorToCrosshair(
+		float       a_maxRange,
+		float       a_maxConeDeg,
+		RE::Actor*  a_exclude = nullptr,
+		bool        a_requireAlive = false);
 
 	// Reads PlayerCharacter's crosshair-activation target directly (the
 	// same value that drives vanilla "TALK E"/loot prompts) instead of
