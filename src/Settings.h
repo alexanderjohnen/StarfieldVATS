@@ -334,6 +334,28 @@ namespace VATS
 		// that reads as the box shrinking up close. Raise this for a box
 		// that hugs more of the body.
 		float targetBoxScale{ 0.20f };
+		// The distance at which the box reaches its maximum size, in
+		// metres. Closer than this the box holds that size instead of
+		// continuing to grow; further away it shrinks normally.
+		//
+		// This is the second cap on the box size, and it is worth being
+		// precise about why it is not the first one coming back. The old
+		// cap was a PIXEL count - the previous fixed 36px - which was an
+		// arbitrary number that happened to be the old look, bound at
+		// whatever distance the maths made it bind at (roughly 5-7m), and
+		// changed meaning with resolution and with the target's size. This
+		// one is a DISTANCE Alexander picked by looking at a target and
+		// saying "that size" (2026-08-26, at 8m). It scales with the
+		// actor's own bounding sphere and with the display, so the box
+		// stays framed on a larger or smaller creature and on any monitor.
+		//
+		// The trade-off is real and was accepted with the picture in hand:
+		// inside this distance the box again stops tracking the target's
+		// growth, which is the effect that read as "getting smaller up
+		// close". Set it to 0 to disable the cap and let the box scale all
+		// the way in.
+		float boxMaxSizeDistance{ 8.0f };
+
 
 		// Which side of the target box each bar sits on, independently.
 		// The target's health reads like an enemy nameplate above the box;

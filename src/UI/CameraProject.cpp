@@ -132,7 +132,7 @@ namespace VATS::UI
 		return true;
 	}
 
-	bool ProjectedRadiusPixels(const RE::NiPoint3& a_worldPos, float a_worldRadius, float& a_outPixels)
+	bool ProjectedRadiusPixels(const RE::NiPoint3& a_worldPos, float a_worldRadius, float& a_outPixels, float* a_outDepth)
 	{
 		if (!(a_worldRadius > 0.0f)) {
 			return false;
@@ -154,6 +154,9 @@ namespace VATS::UI
 		// strictly 1/depth and nothing else. Backing away from a target
 		// can only ever make it smaller.
 		a_outPixels = (a_worldRadius / fwdComp) / frame.tanHalfFovY * (frame.displayH * 0.5f);
+		if (a_outDepth) {
+			*a_outDepth = fwdComp;
+		}
 		return true;
 	}
 }

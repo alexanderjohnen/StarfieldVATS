@@ -46,7 +46,16 @@ and was stripped from history once already — never add it to a commit.
 - **A safety rule is not a universal.** See "risk categories" below.
 - **Keep `res/StarfieldVATS.ini` in sync with `Settings.cpp`.** Twelve
   settings once became silently untunable. `deploy.ps1` now checks both
-  directions (template vs code, deployed vs template) and warns.
+  directions (template vs code, deployed vs template) and warns —
+  including, since 2026-08-26, that each key sits under the SECTION its
+  `GetPrivateProfile*` call names. A key in the wrong section is read as
+  absent and falls back to the code default while looking perfectly
+  correct in the file; `bDebugAimMarkers` landed under `[Resource]`
+  instead of `[HUD]` and the diagnostic it gates stayed off through two
+  test sessions before the log gave it away.
+- **Just edit the INI.** When a change needs a setting, write it into both
+  the template and the deployed file rather than telling Alexander which
+  line to add — he has asked for this explicitly.
 
 ## Risk categories, learned the hard way
 
@@ -101,9 +110,11 @@ and was stripped from history once already — never add it to a commit.
   position and camera pitch, which showed up as the box growing before it
   shrank when backing away. The old cap at the previous fixed 36px size is
   gone too: it bound from roughly 5-7m inward, freezing the box while the
-  target kept growing, which reads as the box shrinking up close. What is
-  left is a sanity bound relative to the display. NOT yet re-confirmed
-  in-game after either change.
+  target kept growing, which reads as the box shrinking up close. The
+  ceiling is now `fBoxMaxSizeDistanceMeters` (8.0) — a DISTANCE Alexander
+  picked off a screenshot, not a pixel count, so it scales with the
+  creature and the display. Inside it the box holds that size. NOT yet
+  re-confirmed in-game.
 
 ## Open / unverified
 

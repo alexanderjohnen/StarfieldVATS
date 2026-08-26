@@ -467,7 +467,22 @@ namespace VATS::UI
 					aimPoint = WorldBoundProbe::GetAimPoint(a_actor, aimPoint);
 
 					float projectedRadiusPx = 0.0f;
-					if (ProjectedRadiusPixels(aimPoint, radius, projectedRadiusPx)) {
+					float depth = 0.0f;
+					if (ProjectedRadiusPixels(aimPoint, radius, projectedRadiusPx, &depth)) {
+						// Cap the size by refusing to treat the target as
+						// any closer than a reference distance, rather than
+						// by clamping the resulting pixels. Same ceiling
+						// either way, but expressed in the units Alexander
+						// actually chose it in - he looked at a target at
+						// 8m and said that size - and it then scales with
+						// the actor's bounding sphere and with the display
+						// instead of being a fixed pixel count that means
+						// something different on every monitor.
+						const float maxSizeDistance = Settings::Get().boxMaxSizeDistance;
+						if (maxSizeDistance > 0.0f && depth < maxSizeDistance) {
+							projectedRadiusPx *= depth / maxSizeDistance;
+						}
+
 						// Scaled DOWN from the projected radius, not equal to
 						// it. The bounding sphere encloses the entire actor,
 						// so using the radius directly framed the whole body
@@ -475,32 +490,12 @@ namespace VATS::UI
 						// size (2026-08-25, first attempt - the scaling was
 						// right, the scale was not).
 						const float scaled = projectedRadiusPx * Settings::Get().targetBoxScale;
-						// The ceiling used to be kDefaultHalfH, the old
-						// fixed size - deliberately, on the reasoning that
-						// the box should never grow larger than the version
-						// Alexander liked. That reasoning is now known to
-						// be wrong, and it is what he reported next
-						// (2026-08-26): "right up close it gets smaller
-						// again". It does not shrink; it stops. The cap
-						// binds from roughly 5-7m inward (at 0.20 scale and
-						// a ~1m bounding sphere), so across the entire
-						// close half of a fight the box sat frozen at 36px
-						// while the target itself kept doubling in size -
-						// which reads exactly like the box shrinking.
-						//
-						// Logged distances from that session: 1.8m to
-						// 14.6m. So the cap was active for a good part of
-						// it, not an edge case.
-						//
-						// "Nearest is biggest" and "never bigger than the
-						// old fixed box" cannot both hold. Alexander has
-						// now asked for the first one explicitly - the box
-						// should behave like the NPC it frames - so the
-						// look ceiling goes. What remains is a pure sanity
-						// bound against a bad radius filling the screen,
-						// expressed relative to the display rather than as
-						// a chosen size, so it never silently becomes a
-						// look decision again.
+						// Only a floor and a sanity bound remain here. The
+						// look ceiling lives in the distance cap above -
+						// this once clamped to the old fixed 36px, which
+						// bound at whatever distance the maths happened to
+						// produce (roughly 5-7m) and meant a different
+						// thing on every resolution.
 						halfH = std::clamp(scaled, 16.0f, io.DisplaySize.y * 0.45f);
 						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
 					}

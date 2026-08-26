@@ -51,6 +51,10 @@ namespace VATS::UI
 	// This computes the angular size directly instead: strictly 1/depth,
 	// with no dependence on screen position or pitch. Closest is largest,
 	// monotonically, the way the NPC itself behaves.
-	[[nodiscard]] bool ProjectedRadiusPixels(const RE::NiPoint3& a_worldPos, float a_worldRadius, float& a_outPixels);
+	//
+	// a_outDepth, if given, receives the depth along the view axis that
+	// the size was computed from - so a caller that wants to cap the size
+	// can express that cap as a DISTANCE rather than as a pixel count.
+	[[nodiscard]] bool ProjectedRadiusPixels(const RE::NiPoint3& a_worldPos, float a_worldRadius, float& a_outPixels, float* a_outDepth = nullptr);
 
 }
