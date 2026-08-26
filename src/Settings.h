@@ -304,7 +304,6 @@ namespace VATS
 		// several tenths of a second and comes through nearly intact.
 		float aimPointSmoothingSeconds{ 0.35f };
 
-
 		// Starfield's hit and kill markers are hidden while Locked. That
 		// hide holds for ordinary hits but not for critical ones, which
 		// briefly flash the marker back up - so this additionally offsets
@@ -376,13 +375,6 @@ namespace VATS
 		float boxMinSizeDistance{ 16.0f };
 
 
-
-		// Which side of the target box each bar sits on, independently.
-		// The target's health reads like an enemy nameplate above the box;
-		// the player's own VATS budget belongs somewhere it won't be
-		// confused for a property of the target, so it defaults below.
-		bool healthBarBelowBox{ false };
-		bool resourceBarBelowBox{ true };
 
 		// Draws a labelled cross at each of the three candidate anchor
 		// points - the actor's own origin (feet), the raw bounding-sphere

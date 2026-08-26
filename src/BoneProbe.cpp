@@ -164,10 +164,21 @@ namespace VATS
 		// reused. Zero means "not resolved yet".
 		std::atomic<std::size_t> g_childrenOffset{ 0 };
 
+		// Latched after one full sweep comes up empty, so the failure is
+		// reported once instead of once per call. It logged every second
+		// for six minutes on the run that found it (2026-08-26) - a
+		// diagnostic loud enough to bury the rest of the log is its own
+		// problem, and this project has already seen log volume affect
+		// timing.
+		std::atomic<bool> g_childrenProbeFailed{ false };
+
 		[[nodiscard]] std::size_t ResolveChildrenOffset(std::uint64_t a_root)
 		{
 			if (const std::size_t known = g_childrenOffset.load(std::memory_order_relaxed); known != 0) {
 				return known;
+			}
+			if (g_childrenProbeFailed.load(std::memory_order_relaxed)) {
+				return 0;
 			}
 
 			std::uint32_t size = 0;
@@ -191,7 +202,8 @@ namespace VATS
 				}
 			}
 
-			REX::INFO("[VATS] bone: children offset not found in 0x{:X}..0x{:X} - tree walk stays at the root",
+			g_childrenProbeFailed.store(true, std::memory_order_relaxed);
+			REX::INFO("[VATS] bone: children offset not found in 0x{:X}..0x{:X} - tree walk stays at the root, bone route closed for this session",
 				kChildrenSearchBegin, kChildrenSearchEnd);
 			return 0;
 		}

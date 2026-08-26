@@ -48,41 +48,39 @@ namespace VATS::UI
 		// its funnel telemetry line; 10 Hz is still imperceptibly instant.
 		constexpr auto kAimScanInterval = std::chrono::milliseconds(100);
 
-		void DrawCornerBrackets(ImDrawList* a_dl, float a_x0, float a_y0, float a_x1, float a_y1, ImU32 a_color)
+		// Starfield's own scanner draws a thin ring with the range set
+		// beside it rather than a bracketed box - Alexander's call
+		// 2026-08-26, replacing the FO4-style corner brackets this started
+		// with. The brackets never looked like they belonged to this
+		// game's HUD; the ring does, and it also gives the two bars
+		// somewhere natural to live (see the arc gauges below).
+		void DrawTargetRing(ImDrawList* a_dl, float a_cx, float a_cy, float a_r, ImU32 a_color)
 		{
-			// Starfield's HUD brackets read as thin, slightly longer ticks
-			// rather than FO4's thick chunky corners — but thin enough to
-			// miss in combat clutter, so kept a notch above hairline.
-			constexpr float kCorner = 16.0f;
-			constexpr float kThick = 3.0f;
-			constexpr float kOutlineThick = kThick + 2.0f;
+			// Dark pass underneath every stroke, same reasoning as the
+			// brackets had: confirmed 2026-08-22 that a white line alone
+			// vanishes completely against bright station interiors.
+			a_dl->AddCircle(ImVec2{ a_cx, a_cy }, a_r, kOutline, 64, 4.0f);
+			a_dl->AddCircle(ImVec2{ a_cx, a_cy }, a_r, a_color, 64, 2.0f);
+		}
 
-			const ImVec2 kCorners[4][2] = {
-				{ { a_x0, a_y0 }, { a_x0 + kCorner, a_y0 } },  // top-left horiz
-				{ { a_x0, a_y0 }, { a_x0, a_y0 + kCorner } },  // top-left vert
-				{ { a_x1 - kCorner, a_y0 }, { a_x1, a_y0 } },  // top-right horiz
-				{ { a_x1, a_y0 }, { a_x1, a_y0 + kCorner } },  // top-right vert
-			};
-			const ImVec2 kCorners2[4][2] = {
-				{ { a_x0, a_y1 - kCorner }, { a_x0, a_y1 } },  // bottom-left vert
-				{ { a_x0, a_y1 }, { a_x0 + kCorner, a_y1 } },  // bottom-left horiz
-				{ { a_x1, a_y1 - kCorner }, { a_x1, a_y1 } },  // bottom-right vert
-				{ { a_x1 - kCorner, a_y1 }, { a_x1, a_y1 } },  // bottom-right horiz
-			};
+		// One gauge drawn as an arc on the ring. a_aMin -> a_aMax is the
+		// sweep, and the fill always grows from a_aMin, so passing the
+		// left-hand end first makes both gauges fill left-to-right no
+		// matter which half of the ring they sit on.
+		void DrawArcGauge(ImDrawList* a_dl, float a_cx, float a_cy, float a_r,
+			float a_aMin, float a_aMax, float a_frac, ImU32 a_track, ImU32 a_fill, float a_thickness)
+		{
+			constexpr int kSegments = 48;
+			const ImVec2  centre{ a_cx, a_cy };
 
-			// Dark outline pass first, colored strokes on top — keeps the
-			// box legible against both dark and bright/white backgrounds.
-			for (const auto& seg : kCorners) {
-				a_dl->AddLine(seg[0], seg[1], kOutline, kOutlineThick);
-			}
-			for (const auto& seg : kCorners2) {
-				a_dl->AddLine(seg[0], seg[1], kOutline, kOutlineThick);
-			}
-			for (const auto& seg : kCorners) {
-				a_dl->AddLine(seg[0], seg[1], a_color, kThick);
-			}
-			for (const auto& seg : kCorners2) {
-				a_dl->AddLine(seg[0], seg[1], a_color, kThick);
+			a_dl->PathArcTo(centre, a_r, a_aMin, a_aMax, kSegments);
+			a_dl->PathStroke(kOutline, 0, a_thickness + 3.0f);
+			a_dl->PathArcTo(centre, a_r, a_aMin, a_aMax, kSegments);
+			a_dl->PathStroke(a_track, 0, a_thickness);
+
+			if (a_frac > 0.0f) {
+				a_dl->PathArcTo(centre, a_r, a_aMin, a_aMin + (a_aMax - a_aMin) * a_frac, kSegments);
+				a_dl->PathStroke(a_fill, 0, a_thickness);
 			}
 		}
 
@@ -102,80 +100,90 @@ namespace VATS::UI
 			a_dl->AddText(pos, a_color, a_text);
 		}
 
-		// a_value may be null — used for the Aiming highlight, which no
-		// longer shows a distance readout (Starfield's own scan reticle
-		// already has one, see Draw() below), just the label.
-		// Default half-extents, used when the target's real size can't be
-		// determined.
-		constexpr float kDefaultHalfW = 58.0f;
-		constexpr float kDefaultHalfH = 36.0f;
+		// Fallback radius, used when the target's real size can't be
+		// determined. Was a half-width/half-height pair when this was a
+		// box; a ring only needs the one number.
+		constexpr float kDefaultRadius = 36.0f;
 
-		void DrawTargetBox(float a_px, float a_py, const char* a_label, const char* a_value, ImU32 a_color, float a_halfW, float a_halfH)
+		// a_value may be null - the pre-lock "TARGETING (N)" hint has no
+		// distance readout, since Starfield's own scan reticle already
+		// shows one.
+		//
+		// No "TARGET" caption any more (Alexander, 2026-08-26): the ring
+		// plus the two gauges already say everything the word did, and the
+		// scanner it is imitating does not label its own reticle either.
+		void DrawTargetMarker(float a_px, float a_py, const char* a_label, const char* a_value, ImU32 a_color, float a_radius)
 		{
 			auto* dl = ImGui::GetForegroundDrawList();
+			DrawTargetRing(dl, a_px, a_py, a_radius, a_color);
 
-			const float     x0 = a_px - a_halfW;
-			const float     y0 = a_py - a_halfH;
-			const float     x1 = a_px + a_halfW;
-			const float     y1 = a_py + a_halfH;
-
-			// No filled background — Starfield's HUD elements sit directly
-			// over the scene rather than on a tinted panel.
-			DrawCornerBrackets(dl, x0, y0, x1, y1, a_color);
 			if (a_value) {
-				DrawCenteredText(dl, a_px, y0 + 6.0f, a_label, a_color);
-				DrawCenteredText(dl, a_px, a_py + 2.0f, a_value, a_color);
-			} else {
-				DrawCenteredText(dl, a_px, a_py - 6.0f, a_label, a_color);
+				// Set beside the ring rather than inside it, the way the
+				// scanner puts its range next to the reticle instead of
+				// over the thing being scanned - which is the point: the
+				// middle of the ring is where the target is.
+				const float tickInner = a_radius + 3.0f;
+				const float tickOuter = a_radius + 9.0f;
+				dl->AddLine(ImVec2{ a_px + tickInner, a_py }, ImVec2{ a_px + tickOuter, a_py }, kOutline, 4.0f);
+				dl->AddLine(ImVec2{ a_px + tickInner, a_py }, ImVec2{ a_px + tickOuter, a_py }, a_color, 2.0f);
+
+				const auto  size = ImGui::CalcTextSize(a_value);
+				const ImVec2 pos{ a_px + tickOuter + 4.0f, a_py - size.y * 0.5f };
+				for (float ox = -1.0f; ox <= 1.0f; ox += 1.0f) {
+					for (float oy = -1.0f; oy <= 1.0f; oy += 1.0f) {
+						if (ox != 0.0f || oy != 0.0f) {
+							dl->AddText(ImVec2{ pos.x + ox, pos.y + oy }, kOutline, a_value);
+						}
+					}
+				}
+				dl->AddText(pos, a_color, a_value);
+			} else if (a_label) {
+				DrawCenteredText(dl, a_px, a_py - a_radius - 18.0f, a_label, a_color);
 			}
 		}
 
-		// Plain health bar. The segmented boss/legendary variant (a row of
+		// The two gauges are arcs on the ring rather than straight bars
+		// stacked above and below it (Alexander's design, 2026-08-26).
+		// They sit on opposite halves AND on opposite sides of the ring,
+		// which is what keeps them from being confused for one another
+		// now that neither has a caption: the target's health is the outer
+		// arc below, the player's own VATS budget the inner arc above.
+		// Mine inside, theirs outside.
+		//
+		// Angles: 0 is +x, and screen y grows downward, so PI/2 is the
+		// BOTTOM of the ring and 3*PI/2 the top. Each gauge is given its
+		// left-hand end first so both fill left-to-right.
+		constexpr float kPi = 3.14159265358979323846f;
+
+		// Plain health arc. The segmented boss/legendary variant (a row of
 		// pips marking reserve health pools) was removed 2026-08-25: it
 		// rested on an unverified guess that the legendaryRank actor value
 		// drives that display, it never actually worked - the pip row
 		// stayed rigid regardless of the target - and Alexander's call was
 		// that it isn't worth another multi-day offset hunt. Drop rather
 		// than keep dead decoration.
-		void DrawHealthBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_max, float a_scale)
+		void DrawHealthArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_current, float a_max, float a_scale)
 		{
-			const float kBarWidth = 116.0f * a_scale;
-			const float kBarHeight = std::max(3.0f, 7.0f * a_scale);
-
-			const float x0 = a_centerX - kBarWidth * 0.5f;
-			const float x1 = a_centerX + kBarWidth * 0.5f;
-
-			a_dl->AddRectFilled(ImVec2{ x0 - 1.5f, a_y - 1.5f }, ImVec2{ x1 + 1.5f, a_y + kBarHeight + 1.5f }, kOutline);
-			a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x1, a_y + kBarHeight }, IM_COL32(50, 12, 12, 220));
-
 			const float frac = a_max > 0.0f ? std::clamp(a_current / a_max, 0.0f, 1.0f) : 0.0f;
-			if (frac > 0.0f) {
-				a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x0 + kBarWidth * frac, a_y + kBarHeight }, IM_COL32(210, 40, 40, 235));
-			}
+			const float radius = a_ringRadius + std::max(5.0f, 8.0f * a_scale);
+			const float thickness = std::max(3.0f, 5.0f * a_scale);
+			DrawArcGauge(a_dl, a_cx, a_cy, radius, kPi, 0.0f, frac,
+				IM_COL32(50, 12, 12, 220), IM_COL32(210, 40, 40, 235), thickness);
 		}
 
-		// The VATS resource bar, drawn above the target's health bar.
-		// Deliberately narrower and thinner than the health bar, and in the
-		// HUD's own off-white rather than a second saturated colour, so the
-		// two read as "the target's" and "mine" at a glance instead of
-		// competing. Turns amber as it runs low, since running dry ends the
-		// lock outright and that is worth seeing coming.
-		void DrawResourceBar(ImDrawList* a_dl, float a_centerX, float a_y, float a_current, float a_capacity, float a_scale)
+		// The VATS resource arc. Deliberately thinner than the health arc
+		// and in the HUD's own off-white rather than a second saturated
+		// colour, so the two read as "the target's" and "mine" at a glance
+		// instead of competing. Turns amber as it runs low, since running
+		// dry ends the lock outright and that is worth seeing coming.
+		void DrawResourceArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_current, float a_capacity, float a_scale)
 		{
-			const float kBarWidth = 92.0f * a_scale;
-			const float kBarHeight = std::max(2.0f, 4.0f * a_scale);
-
-			const float x0 = a_centerX - kBarWidth * 0.5f;
-			const float x1 = a_centerX + kBarWidth * 0.5f;
-
-			a_dl->AddRectFilled(ImVec2{ x0 - 1.5f, a_y - 1.5f }, ImVec2{ x1 + 1.5f, a_y + kBarHeight + 1.5f }, kOutline);
-			a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x1, a_y + kBarHeight }, IM_COL32(18, 26, 28, 210));
-
 			const float frac = a_capacity > 0.0f ? std::clamp(a_current / a_capacity, 0.0f, 1.0f) : 0.0f;
-			if (frac > 0.0f) {
-				const ImU32 fill = frac < 0.25f ? IM_COL32(240, 170, 60, 240) : kLockedColor;
-				a_dl->AddRectFilled(ImVec2{ x0, a_y }, ImVec2{ x0 + kBarWidth * frac, a_y + kBarHeight }, fill);
-			}
+			const float radius = std::max(4.0f, a_ringRadius - std::max(5.0f, 7.0f * a_scale));
+			const float thickness = std::max(2.0f, 3.5f * a_scale);
+			const ImU32 fill = frac < 0.25f ? IM_COL32(240, 170, 60, 240) : kLockedColor;
+			DrawArcGauge(a_dl, a_cx, a_cy, radius, kPi, 2.0f * kPi, frac,
+				IM_COL32(18, 26, 28, 210), fill, thickness);
 		}
 
 		// Converts a Windows virtual-key code to a short displayable label
@@ -458,17 +466,16 @@ namespace VATS::UI
 			// 2026-08-26: walking backwards made the box grow first and
 			// shrink only afterwards, which an NPC plainly does not do. See
 			// CameraProject.h for why that method did that.
-			float halfW = kDefaultHalfW;
-			float halfH = kDefaultHalfH;
-			float radius = 0.0f;
-			if (WorldBoundProbe::GetBoundRadius(a_actor, radius)) {
+			float radius = kDefaultRadius;
+			float boundRadius = 0.0f;
+			if (WorldBoundProbe::GetBoundRadius(a_actor, boundRadius)) {
 				RE::NiPoint3 aimPoint{};
 				if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &aimPoint, sizeof(aimPoint))) {
 					aimPoint = WorldBoundProbe::GetAimPoint(a_actor, aimPoint);
 
 					float projectedRadiusPx = 0.0f;
 					float depth = 0.0f;
-					if (ProjectedRadiusPixels(aimPoint, radius, projectedRadiusPx, &depth)) {
+					if (ProjectedRadiusPixels(aimPoint, boundRadius, projectedRadiusPx, &depth)) {
 						// Both ends of the size range are DISTANCES, not
 						// pixel counts: the box is sized as though the
 						// target were never closer than one and never
@@ -515,13 +522,12 @@ namespace VATS::UI
 						// set by the two distances above. This used to
 						// clamp to a fixed 16px..36px, which is where the
 						// resolution dependence lived.
-						halfH = std::clamp(scaled, 2.0f, io.DisplaySize.y * 0.45f);
-						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
+						radius = std::clamp(scaled, 2.0f, io.DisplaySize.y * 0.45f);
 					}
 				}
 			}
 
-			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color, halfW, halfH);
+			DrawTargetMarker(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color, radius);
 
 			if (Settings::Get().debugAimMarkers) {
 				DrawAimDiagnostics(a_actor);
@@ -530,56 +536,28 @@ namespace VATS::UI
 			auto* dl = ImGui::GetForegroundDrawList();
 
 			if (showShotFlash && !shotResult.hit) {
-				DrawCenteredText(dl, px, py - 36.0f - 20.0f, "MISS", kHitColor);
+				DrawCenteredText(dl, px, py - radius - 34.0f, "MISS", kHitColor);
 			}
 
-			// Each bar's side of the box is configurable independently
-			// (Alexander, 2026-08-25 - he wanted the VATS bar underneath
-			// while the target's health stays above). Two stacks grow away
-			// from the box in opposite directions, so any combination of
-			// the two settings lays out sensibly without special cases.
-			//
-			// Both bars scale with the box, so the cluster stays one
-			// coherent element rather than a shrinking box with full-size
+			// Both gauges scale with the ring, so the cluster stays one
+			// coherent element rather than a shrinking ring with full-size
 			// bars stapled to it.
-			const auto& settings = Settings::Get();
-			const float hudScale = halfH / kDefaultHalfH;
-			const float kBarGap = 6.0f * hudScale;
-			float       stackUp = py - halfH - kBarGap;    // bottom edge of the next bar placed above
-			float       stackDown = py + halfH + kBarGap;  // top edge of the next bar placed below
+			//
+			// The bHealthBarBelowBox / bResourceBarBelowBox settings are
+			// gone with the stacked layout that needed them: the arcs have
+			// only one sensible arrangement each (see DrawHealthArc), and
+			// a setting that can only hold one value is just a place for a
+			// wrong value to hide.
+			const float hudScale = radius / kDefaultRadius;
 
 			if (haveHealth) {
-				const float barH = std::max(3.0f, 7.0f * hudScale);
-				if (settings.healthBarBelowBox) {
-					DrawHealthBar(dl, px, stackDown, hp.current, hp.max, hudScale);
-					stackDown += barH + kBarGap;
-				} else {
-					stackUp -= barH;
-					DrawHealthBar(dl, px, stackUp, hp.current, hp.max, hudScale);
-					stackUp -= kBarGap;
-				}
+				DrawHealthArc(dl, px, py, radius, hp.current, hp.max, hudScale);
 			}
 
-			// Only meaningful while actually Locked - it's the budget being
-			// spent on this lock, not a property of the target.
-			if (const auto resource = VatsResource::Get().GetState();
-				resource.valid && Controller::Get().GetMode() == VATSMode::kLocked) {
-				const float barH = std::max(2.0f, 4.0f * hudScale);
-				if (settings.resourceBarBelowBox) {
-					DrawResourceBar(dl, px, stackDown, resource.current, resource.capacity, hudScale);
-					stackDown += barH + kBarGap;
-				} else {
-					stackUp -= barH;
-					DrawResourceBar(dl, px, stackUp, resource.current, resource.capacity, hudScale);
-					stackUp -= kBarGap;
-				}
+			const auto& resource = VatsResource::Get().GetState();
+			if (Settings::Get().vatsResourceEnabled && resource.capacity > 0.0f) {
+				DrawResourceArc(dl, px, py, radius, resource.current, resource.capacity, hudScale);
 			}
-
-			// The short vertical tether line that used to hang below the box
-			// is gone (2026-08-25, Alexander's call). It was decoration
-			// borrowed from the FO4 VATS look, added on the theory that it
-			// helped the box read against scene clutter - which never got
-			// tested, and nothing else depended on it.
 		}
 	}
 

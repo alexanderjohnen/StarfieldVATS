@@ -103,7 +103,18 @@ and was stripped from history once already — never add it to a commit.
   spelling — `_visible` is AS2 and was the entire earlier "unreachable
   path" saga). Restore is deferred until the indicator parks on its "End"
   frame, capped by `iHudRestoreDelayMs`.
-- **Target box scales with distance**, capped at its original size.
+- **Target marker scales with distance**, bounded between the size it has
+  at `fBoxMaxSizeDistanceMeters` (8m) and at `fBoxMinSizeDistanceMeters`
+  (16m).
+- **HUD is a scanner-style ring** (2026-08-26, Alexander's design,
+  UNTESTED in-game): a thin circle instead of FO4 corner brackets, the
+  distance set beside it on a tick the way the scanner sets its range, and
+  no "TARGET" caption. The two gauges are arcs on that ring instead of
+  stacked bars - target health outside the bottom half, the player's VATS
+  budget inside the top half. Mine inside, theirs outside, which is what
+  keeps them apart now that neither carries a label.
+  `bHealthBarBelowBox`/`bResourceBarBelowBox` are gone with the stacked
+  layout that needed them.
   Sized from the bounding sphere's angular size (`ProjectedRadiusPixels`,
   strictly 1/depth) since 2026-08-26 — the earlier method of projecting a
   second point and measuring the pixel gap made the size depend on screen
@@ -187,7 +198,43 @@ and was stripped from history once already — never add it to a commit.
   shoulder offset applied outside `cameraRoot` would look exactly like
   that. One screenshot with the target at a screen edge settles the axis.
 
-- **Neutral civilians remain targetable.** Only companions are filtered. A
+- **The skeleton route is all but closed. One attempt left, then drop it.**
+  The idea: read a real chest bone instead of deriving an aim point from
+  the bounding sphere, which would be pose-correct and creature-correct by
+  construction and would also serve per-body-part targeting later. Two
+  findings, both 2026-08-26:
+
+  - `bonedump` proved the tree walk never descended: **"1 nodes visited"**
+    on every actor. So the years of only ever matching `HumanExportRoot`
+    were never a bone-NAMING problem.
+  - The children-offset probe (0xF0..0x1C0, validated by back-reference)
+    then reported **not found**, on a human and a mantid alike.
+
+  What keeps it from being fully closed: `worldBound` at 0x100 from that
+  same pointer reads sane radii on every actor, so the header's
+  NiAVObject layout is right up to at least 0x110 — which argues 0x130
+  should have worked, and points at the *validator* rather than the
+  window. It requires the first child's `parent` at 0x038 to point back,
+  and 0x038 is itself a header claim.
+
+  **The one attempt worth making:** validate by reading the first child's
+  NAME (`ReadNodeName` already works and is proven on the root) instead of
+  its parent pointer, log every shape-plausible candidate with that name
+  rather than auto-accepting, and widen to 0x0F0..0x220. That removes the
+  dependency on a second guessed offset. If no candidate in that range
+  yields a readable bone-ish name, **stop** — the skeleton is not
+  reachable this way, and centre-height plus smoothing is the answer.
+
+  Note also that a named chest bone was never the right target anyway:
+  the rig roots read `HumanExportRoot`, `MantidA_mrRigRoot`,
+  `HopperA_mrRigRoot` — every creature family has its own naming. The
+  naming-free version is the CENTROID of all bones, which is also far more
+  animation-stable than a bounding sphere (a wingbeat moves a few joints
+  of fifty and barely moves the mean, while it tears the sphere open by
+  two metres).
+
+- **Neutral civilians remain targetable.**
+ Only companions are filtered. A
   real faction/relationship check is out of reach (`IsHostileToActor` is ID
   0, and reconstructing it means walking the actor's faction list, the
   player's, and the faction-reaction records).
