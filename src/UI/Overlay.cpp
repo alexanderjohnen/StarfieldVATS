@@ -475,12 +475,33 @@ namespace VATS::UI
 						// size (2026-08-25, first attempt - the scaling was
 						// right, the scale was not).
 						const float scaled = projectedRadiusPx * Settings::Get().targetBoxScale;
-						// Capped at the old fixed size, not at an arbitrary
-						// ceiling: never larger than the version Alexander
-						// liked, only smaller as the target recedes. The
-						// floor keeps a distant target from shrinking into
-						// an invisible speck.
-						halfH = std::clamp(scaled, 16.0f, kDefaultHalfH);
+						// The ceiling used to be kDefaultHalfH, the old
+						// fixed size - deliberately, on the reasoning that
+						// the box should never grow larger than the version
+						// Alexander liked. That reasoning is now known to
+						// be wrong, and it is what he reported next
+						// (2026-08-26): "right up close it gets smaller
+						// again". It does not shrink; it stops. The cap
+						// binds from roughly 5-7m inward (at 0.20 scale and
+						// a ~1m bounding sphere), so across the entire
+						// close half of a fight the box sat frozen at 36px
+						// while the target itself kept doubling in size -
+						// which reads exactly like the box shrinking.
+						//
+						// Logged distances from that session: 1.8m to
+						// 14.6m. So the cap was active for a good part of
+						// it, not an edge case.
+						//
+						// "Nearest is biggest" and "never bigger than the
+						// old fixed box" cannot both hold. Alexander has
+						// now asked for the first one explicitly - the box
+						// should behave like the NPC it frames - so the
+						// look ceiling goes. What remains is a pure sanity
+						// bound against a bad radius filling the screen,
+						// expressed relative to the display rather than as
+						// a chosen size, so it never silently becomes a
+						// look decision again.
+						halfH = std::clamp(scaled, 16.0f, io.DisplaySize.y * 0.45f);
 						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
 					}
 				}

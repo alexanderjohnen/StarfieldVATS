@@ -325,11 +325,14 @@ namespace VATS
 
 		// Target box size, as a fraction of the target's projected
 		// bounding-sphere radius. The sphere encloses the whole actor, so
-		// 1.0 would frame the entire body - far larger than intended. 0.2
-		// is calibrated to land on the old fixed 36px half-height at close
-		// range, which is the look Alexander asked for, and to shrink from
-		// there instead of staying put while the target recedes. Raise it
-		// for a box that hugs more of the body.
+		// 1.0 would frame the entire body - far larger than intended.
+		//
+		// Since 2026-08-26 this scales all the way in: nearest is biggest,
+		// strictly monotonic from there. It used to be capped at the old
+		// fixed 36px half-height, which froze the box from roughly 5-7m
+		// inward while the target kept growing - see Overlay.cpp for why
+		// that reads as the box shrinking up close. Raise this for a box
+		// that hugs more of the body.
 		float targetBoxScale{ 0.20f };
 
 		// Which side of the target box each bar sits on, independently.

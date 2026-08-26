@@ -99,7 +99,11 @@ and was stripped from history once already — never add it to a commit.
   strictly 1/depth) since 2026-08-26 — the earlier method of projecting a
   second point and measuring the pixel gap made the size depend on screen
   position and camera pitch, which showed up as the box growing before it
-  shrank when backing away. NOT yet re-confirmed in-game after that change.
+  shrank when backing away. The old cap at the previous fixed 36px size is
+  gone too: it bound from roughly 5-7m inward, freezing the box while the
+  target kept growing, which reads as the box shrinking up close. What is
+  left is a sanity bound relative to the display. NOT yet re-confirmed
+  in-game after either change.
 
 ## Open / unverified
 
