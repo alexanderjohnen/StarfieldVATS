@@ -623,7 +623,7 @@ namespace VATS::UI
 			                               ui->IsMenuOpen("PauseMenu") ||
 			                               ui->IsMenuOpen("FavoritesMenu");
 			if (blockingMenuOpen) {
-				Controller::Get().ForceOff();
+				Controller::Get().ForceOff("blocking menu open");
 				return;
 			}
 
@@ -786,7 +786,7 @@ namespace VATS::UI
 		// dead target, and the bar then refills while Off. Alexander's
 		// design, see VatsResource.h.
 		if (!VatsResource::Get().TickLocked(state.actor.get())) {
-			Controller::Get().ForceOff();
+			Controller::Get().ForceOff("VATS budget exhausted");
 			return;
 		}
 
@@ -823,11 +823,8 @@ namespace VATS::UI
 					return;
 				}
 
-				// Distinct from ForceOff()'s own generic line, which every
-				// trigger shares (blocking menu, transition, ...), so the
-				// log can still tell these apart.
 				REX::INFO("[VATS] target died (health={:.2f}), forcing lock off", hp.current);
-				Controller::Get().ForceOff();
+				Controller::Get().ForceOff("target died");
 				return;
 			}
 		}

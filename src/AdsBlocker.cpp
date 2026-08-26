@@ -54,7 +54,7 @@ namespace VATS
 					Controller::Get().GetMode() == VATSMode::kLocked &&
 					MatchesConfiguredButton(a_wParam, info, Settings::Get().adsButtonVK)) {
 					REX::INFO("[VATS] ADS button pressed while Locked, ending lock");
-					Controller::Get().ForceOff();
+					Controller::Get().ForceOff("player aimed down sights");
 				}
 			}
 			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);

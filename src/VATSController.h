@@ -51,7 +51,14 @@ namespace VATS
 		// detected (pause, star map, data menu, dialogue, a cell-transition
 		// loading screen, ...) — see the comment in Overlay.cpp. No-op if
 		// already Off.
-		void ForceOff();
+		// a_reason is logged verbatim. It is a parameter because the line
+		// used to be a hardcoded "forced - blocking menu or transition",
+		// which every caller shared: a combat run on 2026-08-26 ended 16
+		// locks and the log claimed that reason all 16 times, while 8 were
+		// kills and 3 were the VATS budget running dry. A diagnostic that
+		// names a cause it cannot know is worse than one that says nothing.
+		void ForceOff(const char* a_reason = "unspecified");
+
 
 		// Records the outcome of the most recent aim-assist roll (Alexander's
 		// request: visible feedback for the roll itself, not just the

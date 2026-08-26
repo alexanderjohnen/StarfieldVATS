@@ -134,51 +134,58 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
-- **Box centring — measured, and the aim-point model changed as a result
-  (2026-08-26). Untested in-game.** Two logging sessions, ~2000 `aimdiag`
-  samples, three pirates, targets moved across the full width of the
-  screen, plus two screenshots. What is now known rather than assumed:
+- **Box centring — three models tried, none right, and the reason is now
+  structural rather than a bad constant. READ THIS BEFORE TOUCHING IT
+  AGAIN.** A 17-actor dungeon run on 2026-08-26 refuted the model that had
+  just been built on a 3-actor sample:
 
-  - **The error is not horizontal.** `|sphere.x - feet.x|` averages 0.0068
-    normalized over 1004 samples spanning x = -0.109 to 0.978. The
-    "weapon or backpack drags the bounding sphere sideways" theory is dead
-    for humanoids.
-  - **The projection is sound near the screen centre.** Screenshots at 6m
-    and 7m: the `FEET` cross lands on the actor's boots, `SPHERE` and
-    `AIM` on the torso. The FOV *value* is right.
-  - **The spread was in the anchor, not the lift.** Three pirates:
+  - `centre/radius` across 17 actors spans **0.47 to 0.86** (plus one
+    corpse at -0.03). The three-actor reading of 0.741/0.778/0.778 that
+    the feet+radius anchor was chosen from was simply under-sampled.
+  - Consequence: the pose cap now fires on **10 of 17 actors**, so for the
+    majority the aim point is `1.5 x centreAboveFeet` — i.e. right back to
+    being driven by the sphere centre the change was meant to escape.
 
-    | actor | radius | centreAboveFeet | c/r | aim (old) |
-    |---|---|---|---|---|
-    | 0x0017E6A2 | 1.099 | 0.814 | 0.741 | 1.088 |
-    | 0x0017E6A1 | 1.173 | 0.913 | 0.778 | 1.207 |
-    | 0x0017E688 | 1.112 | 0.865 | 0.778 | 1.143 |
+  The structural problem, stated plainly so the next attempt does not
+  re-derive it: **the radius is pose-blind and the sphere centre is
+  character-noisy.** A crouching enemy keeps its radius but drops its
+  centre; two standing enemies share a pose but differ in centre. Any
+  model built from those two numbers alone must trade one against the
+  other, which is what all three attempts have done:
 
-    Two of three sit at 0.778 of their own radius, one at 0.741, and that
-    landed straight on the aim point: 12cm apart on three humans.
-    `GetAimPoint` now anchors at the FEET and scales by RADIUS
-    (`fAimPointHeightRadiusFactor`, 1.03) instead of lifting from the
-    sphere centre. 1.03 is where the three already agreed (aim/radius
-    0.990, 1.029, 1.028), so this pulls the outlier in without moving the
-    placement Alexander has been looking at.
-  - **Both pose safety paths fired on a real ragdoll** for the first time
-    (11 frames with on-screen body height < 0.05, lift ratios up to 0.61 —
-    only reachable through the `kMinAimPointAboveFeet` floor). The cap is
-    now applied unconditionally rather than only when the centre sits
-    above the feet.
+  1. centre x multiplier — pose-correct, amplified character spread.
+  2. centre + radius x lift — less spread, still centre-anchored.
+  3. feet + radius x factor — character-stable, pose-blind, so the cap has
+     to do the pose work and now dominates.
 
-  **Still open: the FOV axis.** Both screenshots had the target near x=0.5,
-  which is exactly where a wrong axis has zero error by construction —
-  flipping `bCameraFovIsHorizontal` scales both NDC axes by the aspect
-  ratio about the screen centre. One screenshot with the target at the far
-  left or right edge settles it. Treat horizontal as probable (a 89.6
-  *vertical* FOV would be an absurd fisheye) but unproven.
+  Some of the spread that was called error may not be: a crouching enemy's
+  chest really is lower.
 
-  Also open: the aim point sits at 64-68% of body height, measured off the
-  two screenshots. That is below a chest aim (~72-75%). Raising
-  `fAimPointHeightRadiusFactor` is the knob if Alexander wants it higher —
-  it is now a single, meaningful number rather than a lift on a moving
-  base.
+  **The way out is not a fourth factor — it is the skeleton.**
+  `BoneProbe` already walks the actor's node tree, but its guessed
+  candidate list (`COM`/`Spine`/`Chest`/...) has only ever matched
+  `HumanExportRoot`, which sits at the feet (`aboveFeet=0.00` in every
+  sample) and is useless as an aim point. Two explanations fit equally and
+  the old logging could not separate them: either the walk never descends
+  past the root (the `kNiNodeChildren` offset is a guess), or Starfield
+  does not name its bones the way Skyrim/FO4 did. **`bonedump` (new
+  2026-08-26, one-shot per actor, gated on `bDebugAimMarkers`) logs every
+  named node with its depth and settles that in one run**: only depth 0 =
+  the walk is stuck; deeper names = the naming assumption was wrong. A
+  real chest bone is pose-correct and creature-correct by construction and
+  would end this problem rather than improve it.
+
+  Confirmed sound and not worth re-testing: the projection near the screen
+  centre (screenshots at 6m and 7m put the `FEET` cross on the boots), and
+  the absence of horizontal error (`|sphere.x - feet.x|` averages 0.0068
+  normalized over 1004 samples spanning the full screen width). Both pose
+  safety paths were confirmed firing on a real ragdoll.
+
+  **Still open: the FOV axis.** Every screenshot so far had the target
+  near x=0.5, which is exactly where a wrong axis has zero error by
+  construction. One screenshot with the target at the far left or right
+  edge settles it. Treat `bCameraFovIsHorizontal` as probable but
+  unproven.
 - **Never tested against non-humanoid creatures at all.** The aim point is
   proportional specifically so it scales to any body shape, but no alien
   has been fought with it.

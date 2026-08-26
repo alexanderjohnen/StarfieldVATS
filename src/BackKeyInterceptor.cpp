@@ -72,7 +72,7 @@ namespace VATS
 							hasFocus, mode == VATSMode::kLocked ? "Locked" : "Off",
 							shouldSwallow ? "swallow+ForceOff" : "pass through");
 						if (shouldSwallow) {
-							Controller::Get().ForceOff();
+							Controller::Get().ForceOff("back key pressed");
 						}
 					}).detach();
 					if (shouldSwallow) {

@@ -146,7 +146,7 @@ namespace VATS
 		return state;
 	}
 
-	void Controller::ForceOff()
+	void Controller::ForceOff(const char* a_reason)
 	{
 		if (m_mode.load(std::memory_order_relaxed) == VATSMode::kOff) {
 			return;
@@ -178,7 +178,7 @@ namespace VATS
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
 		// been touched from the game thread so far in this project. File
 		// logging only until that's been verified safe cross-thread.
-		REX::INFO("[VATS] OFF (forced - blocking menu or transition)");
+		REX::INFO("[VATS] OFF (forced: {})", a_reason ? a_reason : "unspecified");
 	}
 
 	void Controller::RecordShotResult(bool a_hit)

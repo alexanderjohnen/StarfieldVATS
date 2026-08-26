@@ -2,6 +2,7 @@
 
 #include "GameOffsets.h"
 #include "SafeMem.h"
+#include "Settings.h"
 #include "WorldBoundProbe.h"
 
 #include <array>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace VATS
@@ -179,15 +181,47 @@ namespace VATS
 		std::vector<WorkItem> stack{ { root, 0 } };
 		int                   visited = 0;
 		int                   matches = 0;
+		int                   named = 0;
+
+		// One-shot per actor, and only while the aim diagnostics are on:
+		// dump EVERY named node the walk reaches, with its depth, instead
+		// of only the ones matching a guessed candidate list.
+		//
+		// The candidate list has now run for days and has only ever
+		// matched 'HumanExportRoot' - which sits at the feet
+		// (aboveFeet=0.00 in every sample) and is therefore useless as an
+		// aim point. Two explanations fit that equally well and the log
+		// cannot tell them apart: either the walk never descends past the
+		// root (the children offset is a documented guess, see
+		// kNiNodeChildren), or it descends fine and Starfield simply does
+		// not name its bones "COM"/"Spine"/"Chest". Dumping names with
+		// depths separates those in one run: depth 0 only means the walk
+		// is stuck, deeper names mean the naming assumption was wrong.
+		//
+		// This matters because a real chest bone would end the aim-point
+		// problem outright rather than improve it - it is pose-correct and
+		// creature-correct by construction, where every bounding-sphere
+		// model so far has had to trade the two off against each other.
+		static std::unordered_set<std::uint32_t> s_dumped;
+		const bool dumpNames = Settings::Get().debugAimMarkers && !s_dumped.contains(formID);
 
 		while (!stack.empty() && visited < kMaxNodesVisited) {
 			const WorkItem item = stack.back();
 			stack.pop_back();
 			++visited;
 
-			char name[kMaxNameLen];
-			if (ReadNodeName(reinterpret_cast<const void*>(item.node), name) && name[0] != '\0' &&
-				ContainsCandidate(name)) {
+			char       name[kMaxNameLen];
+			const bool haveName = ReadNodeName(reinterpret_cast<const void*>(item.node), name) && name[0] != '\0';
+
+			if (dumpNames && haveName) {
+				++named;
+				RE::NiPoint3 pos{};
+				const bool   havePos = ReadWorldPos(reinterpret_cast<const void*>(item.node), pos);
+				REX::INFO("[VATS] bonedump: formID=0x{:08X} depth={} name='{}' aboveFeet={:.3f}",
+					formID, item.depth, name, havePos ? pos.z - feet.z : -99.0f);
+			}
+
+			if (haveName && ContainsCandidate(name)) {
 				RE::NiPoint3 pos{};
 				if (ReadWorldPos(reinterpret_cast<const void*>(item.node), pos)) {
 					++matches;
@@ -223,7 +257,14 @@ namespace VATS
 			}
 		}
 
+		if (dumpNames) {
+			s_dumped.insert(formID);
+			REX::INFO("[VATS] bonedump: formID=0x{:08X} done - {} nodes visited, {} named (walk cap {} nodes / depth {})",
+				formID, visited, named, kMaxNodesVisited, kMaxDepth);
+		}
+
 		if (matches == 0) {
+
 			REX::INFO("[VATS] bone: formID=0x{:08X} no candidate name matched ({} nodes visited)", formID, visited);
 		}
 	}
