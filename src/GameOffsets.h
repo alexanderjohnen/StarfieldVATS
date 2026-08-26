@@ -102,6 +102,13 @@ namespace VATS::GameOffsets
 	// + kNiAVObjectWorldBound -> NiBound {NiPoint3 center; float radius}.
 	inline constexpr auto kActorLoadedData = offsetof(RE::TESObjectREFR, loadedData);
 	inline constexpr auto kLoadedRefData3D = offsetof(RE::LOADED_REF_DATA, data3D);
+	// NiAVObject::parent, header-documented at 0x038. Used only as a
+	// back-reference when probing for the children array offset
+	// (BoneProbe): a candidate array is accepted only if its first child
+	// points back at the node it came from. If this is wrong the probe
+	// finds nothing - it can never make it accept something bad.
+	inline constexpr std::size_t kNiAVObjectParent = 0x038;
+
 	inline constexpr auto kNiAVObjectWorldBound = offsetof(RE::NiAVObject, worldBound);
 
 	// Single aim point, world units above an actor's ref-origin (feet) —

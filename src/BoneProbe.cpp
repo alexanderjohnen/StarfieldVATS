@@ -6,6 +6,7 @@
 #include "WorldBoundProbe.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <string>
@@ -43,7 +44,28 @@ namespace VATS
 		// rather than assuming a non-faulting read means the offset was
 		// right - same discipline as every other guessed offset in this
 		// project (avStorage, cell references).
-		constexpr std::size_t kNiNodeChildren = sizeof(RE::NiAVObject);
+		// Starting guess only. sizeof(RE::NiAVObject) is 0x130 and the
+		// header static_asserts it - but a header assert proves what the
+		// header believes, not what the game's memory does, and this
+		// project has already been bitten by exactly that
+		// (TESObjectCELL::references was off by 8).
+		//
+		// It was wrong here too, and silently: the walk was rejecting the
+		// children array at this offset on every single actor, so it never
+		// descended past the root node and the only bone it ever found was
+		// 'HumanExportRoot' at the feet. That looked like "Starfield names
+		// its bones differently", which is why it went unexamined for
+		// days. Confirmed 2026-08-26 by the bonedump: "1 nodes visited".
+		constexpr std::size_t kNiNodeChildrenGuess = sizeof(RE::NiAVObject);
+
+		// Window searched when the guess does not hold, and the shape a
+		// candidate must have: BSTArray is {size@00, capacity@04,
+		// data@08} (BSTArrayBase is size/capacity, the allocator is empty,
+		// sizeof(BSTArray<void*>) == 0x10 - all header-asserted and
+		// consistent with what the old code read, so the triple layout was
+		// never the problem, only where it sits).
+		constexpr std::size_t kChildrenSearchBegin = 0x0F0;
+		constexpr std::size_t kChildrenSearchEnd = 0x1C0;
 
 		// BSStringPool::Entry (confirmed sizeof == 0x18): _left@00,
 		// {_length|_right} union@08, _refCount@10, _flags@14. String bytes
@@ -90,6 +112,88 @@ namespace VATS
 				}
 			}
 			return false;
+		}
+
+		// Reads the {size, capacity, data} triple at a_off and decides
+		// whether it is really a node's children array.
+		//
+		// The decisive test is not the shape of the triple - garbage
+		// passes a range check often enough - but a BACK-REFERENCE: every
+		// child's parent pointer (NiAVObject::parent @ 0x038) must point
+		// at the node we read the array from. A coincidence would have to
+		// produce a plausible array header, a readable pointer at the
+		// first slot, and that pointer's 0x38 field matching the node's
+		// own address. That is strong enough to accept without an eye on
+		// it, which is the point: this is meant to settle the offset, not
+		// add a fourth thing to eyeball in-game.
+		[[nodiscard]] bool TryReadChildren(std::uint64_t a_node, std::size_t a_off,
+			std::uint32_t& a_outSize, std::uint64_t& a_outData)
+		{
+			std::uint32_t size = 0;
+			std::uint32_t capacity = 0;
+			std::uint64_t data = 0;
+			if (!Read(reinterpret_cast<const void*>(a_node), a_off + 0x00, size) ||
+				!Read(reinterpret_cast<const void*>(a_node), a_off + 0x04, capacity) ||
+				!Read(reinterpret_cast<const void*>(a_node), a_off + 0x08, data)) {
+				return false;
+			}
+			if (size == 0 || size > 200 || capacity < size || capacity > 200) {
+				return false;
+			}
+			if (data < 0x10000 || (data & 0x7) != 0) {
+				return false;
+			}
+
+			std::uint64_t firstChild = 0;
+			if (!Read(reinterpret_cast<const void*>(data), 0, firstChild) ||
+				firstChild < 0x10000 || (firstChild & 0x7) != 0) {
+				return false;
+			}
+			std::uint64_t parent = 0;
+			if (!Read(reinterpret_cast<const void*>(firstChild), GameOffsets::kNiAVObjectParent, parent) ||
+				parent != a_node) {
+				return false;
+			}
+
+			a_outSize = size;
+			a_outData = data;
+			return true;
+		}
+
+		// Resolved once per session against a real actor's root node, then
+		// reused. Zero means "not resolved yet".
+		std::atomic<std::size_t> g_childrenOffset{ 0 };
+
+		[[nodiscard]] std::size_t ResolveChildrenOffset(std::uint64_t a_root)
+		{
+			if (const std::size_t known = g_childrenOffset.load(std::memory_order_relaxed); known != 0) {
+				return known;
+			}
+
+			std::uint32_t size = 0;
+			std::uint64_t data = 0;
+			if (TryReadChildren(a_root, kNiNodeChildrenGuess, size, data)) {
+				g_childrenOffset.store(kNiNodeChildrenGuess, std::memory_order_relaxed);
+				REX::INFO("[VATS] bone: children offset confirmed at the header's 0x{:X} ({} children)",
+					kNiNodeChildrenGuess, size);
+				return kNiNodeChildrenGuess;
+			}
+
+			for (std::size_t off = kChildrenSearchBegin; off < kChildrenSearchEnd; off += 0x08) {
+				if (off == kNiNodeChildrenGuess) {
+					continue;
+				}
+				if (TryReadChildren(a_root, off, size, data)) {
+					g_childrenOffset.store(off, std::memory_order_relaxed);
+					REX::INFO("[VATS] bone: children offset FOUND at 0x{:X} ({} children) - header said 0x{:X}",
+						off, size, kNiNodeChildrenGuess);
+					return off;
+				}
+			}
+
+			REX::INFO("[VATS] bone: children offset not found in 0x{:X}..0x{:X} - tree walk stays at the root",
+				kChildrenSearchBegin, kChildrenSearchEnd);
+			return 0;
 		}
 
 		// Follows BSStringPool::Entry::leaf() by hand (plain data, no
@@ -178,6 +282,8 @@ namespace VATS
 			std::uint64_t node;
 			int           depth;
 		};
+		const std::size_t childrenOffset = ResolveChildrenOffset(root);
+
 		std::vector<WorkItem> stack{ { root, 0 } };
 		int                   visited = 0;
 		int                   matches = 0;
@@ -241,13 +347,9 @@ namespace VATS
 			// necessarily a NiNode at all (leaf mesh objects have no
 			// children, and there's no cheap RTTI check available here).
 			std::uint32_t size = 0;
-			std::uint32_t capacity = 0;
 			std::uint64_t data = 0;
-			if (!Read(reinterpret_cast<const void*>(item.node), kNiNodeChildren + 0x00, size) ||
-				!Read(reinterpret_cast<const void*>(item.node), kNiNodeChildren + 0x04, capacity) ||
-				!Read(reinterpret_cast<const void*>(item.node), kNiNodeChildren + 0x08, data) ||
-				size > 200 || capacity < size || capacity > 200 || (size > 0 && data < 0x10000)) {
-				continue;  // doesn't look like a real array - treat as a leaf
+			if (childrenOffset == 0 || !TryReadChildren(item.node, childrenOffset, size, data)) {
+				continue;  // a leaf, or not a node with children - either way, nothing below it
 			}
 			for (std::uint32_t i = 0; i < size && visited + static_cast<int>(stack.size()) < kMaxNodesVisited; ++i) {
 				std::uint64_t child = 0;

@@ -162,18 +162,28 @@ and was stripped from history once already — never add it to a commit.
   chest really is lower.
 
   **The way out is not a fourth factor — it is the skeleton.**
-  `BoneProbe` already walks the actor's node tree, but its guessed
-  candidate list (`COM`/`Spine`/`Chest`/...) has only ever matched
-  `HumanExportRoot`, which sits at the feet (`aboveFeet=0.00` in every
-  sample) and is useless as an aim point. Two explanations fit equally and
-  the old logging could not separate them: either the walk never descends
-  past the root (the `kNiNodeChildren` offset is a guess), or Starfield
-  does not name its bones the way Skyrim/FO4 did. **`bonedump` (new
-  2026-08-26, one-shot per actor, gated on `bDebugAimMarkers`) logs every
-  named node with its depth and settles that in one run**: only depth 0 =
-  the walk is stuck; deeper names = the naming assumption was wrong. A
-  real chest bone is pose-correct and creature-correct by construction and
-  would end this problem rather than improve it.
+  `BoneProbe` walks the actor's node tree, and its guessed candidate list
+  (`COM`/`Spine`/`Chest`/...) had only ever matched `HumanExportRoot`,
+  which sits at the feet and is useless as an aim point. **`bonedump`
+  settled why on the first run (2026-08-26): "1 nodes visited".** The walk
+  never descended at all — so this was never a bone-naming problem, it was
+  the children-array offset being rejected on every actor.
+
+  `sizeof(RE::NiAVObject)` is 0x130 and the header static_asserts it, but
+  a header assert proves what the header believes, not what the game's
+  memory does — risk category 3, the same way `TESObjectCELL::references`
+  was off by 8. `BoneProbe` now **probes** for the offset (0x0F0..0x1C0)
+  and validates a candidate by BACK-REFERENCE: the first child's
+  `NiAVObject::parent` (0x038) must point at the node the array came from.
+  That is strong enough to trust without an eye on it. The resolved offset
+  is logged once (`bone: children offset FOUND at 0x...`). BUILT, NOT YET
+  DEPLOYED — Starfield was running.
+
+  If the walk now descends, a real chest bone is pose-correct and
+  creature-correct by construction and would end this problem rather than
+  improve it. If the probe reports nothing found, the children array is
+  not a plain BSTArray at any offset in that window and the bone route
+  needs rethinking.
 
   Confirmed sound and not worth re-testing: the projection near the screen
   centre (screenshots at 6m and 7m put the `FEET` cross on the boots), and
