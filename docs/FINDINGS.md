@@ -125,7 +125,52 @@ Force-writing this bool to `true` on the equipped weapon's live `BGSAimAssistMod
 
 **Confirmed via:** the write held across many subsequent reads (not silently reset by the engine), but produced zero observed change in shot behavior across repeated in-game tests.
 
+### Walking an actor's 3D node tree via `NiNode::children`
+
+Reaching an actor's skeleton joints — to read a real chest/spine bone instead of deriving an aim point from a bounding volume — was not achievable through the header's `NiNode` layout. Recorded as a **negative result with the easy explanations ruled out**, not as a proven header error.
+
+`NiAVObject` is `static_assert`ed at `sizeof == 0x130` and `NiNode::children` (a `BSTArray<NiPointer<NiAVObject>>`, layout `{size@00, capacity@04, data@08}`) follows immediately. Reading that triple off the actor's 3D root never yielded a plausible array on any actor.
+
+What makes this worth writing down is that the same pointer is demonstrably good, and the header layout is demonstrably right most of the way to that offset: `worldBound` at `NiAVObject + 0x100`, reached by the chain `Actor + loadedData → LoadedRefData + 3D → NiAVObject`, returns sane sphere centres and radii on every actor tested, humanoid and creature alike. So the object is a real `NiAVObject` and the header is not simply shifted.
+
+Ruled out:
+
+- **Bone naming.** The obvious suspicion — that Starfield does not name joints `COM`/`Spine`/`Chest` the way earlier titles did — is wrong, or at least untested, because the walk never descended at all. Dumping every visited node reported `1 nodes visited` on every actor: only the root, never a child. The root's own name reads fine (`HumanExportRoot`, `MantidA_mrRigRoot`, `HopperA_mrRigRoot`), so name reading through the `BSStringPool` chain works on these objects.
+- **A too-narrow search window.** Sweeping every 8-byte-aligned offset from `0x0F0` to `0x220` found no candidate either.
+- **A bad second guess in the validator.** The first version accepted a candidate only if the first child's `parent` (`NiAVObject + 0x038`) pointed back at the node — itself a header claim that could have rejected a correct hit. Replacing that with "the first child must resolve to a readable name" changed nothing.
+
+Anyone attempting this should treat the children array as unlocated for v1.16.244.0 and start from something other than the header offset. Note also that rig roots differ per creature family, so a named-bone lookup would never have been general anyway.
+
+## Bounding-volume behaviour, measured
+
+Not offset errors — these are properties of the data itself, recorded because anything positioning a HUD element or an aim point on an actor will run into them. Measured across humanoids and three creature types.
+
+`NiAVObject::worldBound` is a **sphere**, and there is no axis-aligned alternative reachable from it. `BSBound` exists in the RTTI tables but has no CommonLibSF binding and would sit behind `NiObjectNET + 0x020`, typed only as `void* // NiExtraDataContainer*`. That has two practical consequences.
+
+**The radius measures longest extent, not height.** It is a reasonable size proxy on a roughly upright humanoid and badly misleading on anything else:
+
+| Actor | radius | centre above ref origin |
+|---|---|---|
+| Human | 1.03–1.15 | 0.77–0.94 |
+| Mantid (tall, spidery) | 2.96 | 1.40 |
+| Hopper (low, sprawling) | 2.16 | 0.30 |
+
+A ground-hugging creature 30cm tall reads a radius of 2.16. Any aim point scaled from the radius aims metres into the air above it.
+
+**The sphere breathes with the animation, and on some creatures it does far more than breathe.** Sampled per frame on a locked target:
+
+| Actor | radius range | centre-height range |
+|---|---|---|
+| Human guard | 0.98–1.03 | 0.82–0.91 |
+| Ground-hugger | 2.08–2.20 | 0.19–0.53 |
+| **Flying creature** | **3.09–4.50** | **0.14–2.18** (5938 samples) |
+
+The flyer's centre height swings over two metres in time with its wingbeat. A HUD element placed from the raw value follows it. Low-pass filtering the offset from the actor's ref origin — rather than its world position, so real movement still tracks with zero lag — is what makes it usable.
+
+**The ref origin is not the lowest point.** `TESObjectREFR::data.location` is the reference's position, which coincides with a standing biped's feet only because that is where the model's origin sits. It does not track pose: a collapsing actor's sphere centre was measured *below* it (−0.008), and a flying creature's origin sat over two metres beneath its body.
+
 ## Observed correlation — mechanism unconfirmed
+
 
 > **Not a confirmed causal fact.** The offsets and the measured values below are hard data. That this specific byte is *what actually decides* hitscan-vs-real-projectile firing is a hypothesis with strong supporting correlation, not an independently proven mechanism.
 

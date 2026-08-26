@@ -52,7 +52,32 @@ He asked repeatedly whether the target box sat differently on different characte
 
 He then spotted that the target box appeared to grow with distance, asking whether it was really doing that or just looked that way. It was the latter: a fixed pixel size against a shrinking target. The first attempt to fix it overshot badly — the bounding sphere encloses the whole body, so using its radius directly produced a box several times too large — and he rejected it immediately and precisely, saying he wanted it to look the way it did up close in the previous version. That is what it now does, capped at the old size rather than approximately calibrated to it.
 
+### Seeing the size curve that the code was producing
+
+Over one afternoon he reported three separate things about the target marker's size, each precise enough to point straight at its cause, and none of them a matter of taste.
+
+First, that walking backwards made it grow before it shrank. The size was being derived by projecting a second point one bounding-sphere radius above the aim point and measuring the pixel gap — a method chosen so the box would inherit the projection's aspect handling for free. It also inherited a dependency on where on screen the target sat and on the camera's pitch, which suppresses the size at close range and releases it as you back off: exactly the shape he described. Computing the angular size directly removed it.
+
+Then, that it "got smaller again" right up close. It did not shrink; it stopped. The ceiling was the previous fixed size, and it bound from roughly 5–7m inward, so across the close half of a fight the marker sat frozen while the target itself kept doubling. He then chose the replacement by looking at a target and naming the size he wanted — which is why the cap became a distance rather than a pixel count, and so scales with the creature and the display.
+
+Finally, after watching Fallout 4 and 76 VATS footage, that those displays do not scale at all and never even read as changing size. That observation retired the whole scaling mechanism. The important half was his framing: their displays never claim to *enclose* the target, and a fixed size only looks wrong while something claims that. The marker was shrunk to match the claim rather than the other way round.
+
+### Spotting the aim-point spread from screenshots, before the numbers were looked at
+
+He reported that the marker sat at visibly different heights on two pirates in the same room, same pose, both male. The log agreed: their bounding-sphere radii differed by 1% while the heights of their sphere centres differed by 17%, and the factor applied to that centre turned a 13cm difference into 19.5cm on screen. Because the radii were identical, body size and pose were both ruled out — which is what isolated equipment inside the bounding sphere as the remaining suspect, and what settles that no factor applied to that centre can remove it.
+
+The same instinct produced the flying-creature finding. He locked one, noticed the marker moving with its wingbeat, and said to watch the log live rather than describing it. The sphere's centre height was swinging 2.04m in time with the wings across nearly six thousand samples, and the radius between 3.09 and 4.50. That is not a flying-creature special case — a human guard's centre swings 0.09 and the ground-huggers 0.32 — so it was a missing piece under every aim-point model the project had tried, not a patch for one creature.
+
+### Designing the HUD off the game's own scanner
+
+The target marker's current form is his: a thin ring like the scanner's inner circle, the distance set beside it the way the scanner sets its range rather than written across the target, and no caption at all — his observation that the word "TARGET" was carrying nothing. He also spotted, comparing the two side by side in a screenshot, that the hint text looked dingy and angular next to the game's own lettering, which turned out to be three compounding faults on our side: a bitmap font being upscaled rather than rendered at size, text dimmed by transparency over a dark shadow that then showed through it, and an eight-direction halo closing the counters of every glyph.
+
+### Calling time on per-body-part targeting
+
+Proposed twice by Claude, from the Fallout 76 framing, and closed by Alexander with the strongest kind of evidence: a three-slot version had already been built and played, and it was not fun. He then supplied the reason it could not have been — Starfield has no crippling, no dismemberment and no limb reactions, so a body part is a damage multiplier and nothing else. He also identified the one case worth keeping from it, shooting an enemy who is only partly behind cover, and correctly placed it elsewhere: that is the depth-buffer occlusion feature, where it needs no slots, no interface and no balancing.
+
 ### Catching the settings that could not be tuned
+
 
 After a fix appeared not to work, he asked whether the INI had been kept in sync. It had not: twelve settings the code reads had never been added to the template, so they ran on hardcoded defaults and were untunable by anyone — including one he needed at that moment. An earlier drift check existed but compared the deployed file against the template, and so was structurally incapable of noticing settings missing from the template itself. The check now runs against the code, and found a thirteenth on its first run. A warning that stays silent about the one thing going wrong is worse than no warning, and it took him asking to expose that.
 
@@ -150,7 +175,22 @@ The costliest error was not a regression but a misjudgment, and it ran for days 
 
 A quieter version of the same failure sat next to it. Ending the lock on a target's death was never called a dead end — it was assumed to be working, on the strength of the code existing, for three days. It had in fact never once fired, and nobody could have told from the log, because the only line it produced was one shared with every other trigger. Assuming an untested path works is not a smaller error than wrongly calling one impossible; it just takes longer to notice.
 
+### Four aim-point models, and what kept going wrong
+
+Worth recording as a unit, because the individual steps look reasonable and the pattern does not. The aim point on a target was rebuilt four times in two days: a multiplier on the bounding sphere's centre height, then a lift sized by its radius, then a height anchored at the actor's feet and scaled by radius, then back to a multiplier on the centre height. Each change was a real improvement on the case in front of it, and each was undone by the next case.
+
+Two errors ran underneath all four. The first was generalising from too small a sample: the feet-and-radius model was chosen from three humanoids whose centre-to-radius ratios read 0.741, 0.778 and 0.778, and a seventeen-actor dungeon run then measured that same ratio spanning 0.47 to 0.86 — with the pose cap firing on ten of the seventeen, meaning the safety net rather than the model was producing the aim point for most targets. The second was building on humanoids only. The first tests against creatures killed the radius outright: it measures longest extent rather than height, and a ground-hugger 30cm tall reads a radius of 2.16.
+
+What eventually helped was not a fifth model but two things that are not models at all — low-pass filtering the animation out of the sphere, and Alexander's diagnostic runs against varied body plans. The remaining ~20cm spread between characters is documented as accepted rather than solved.
+
+### Proposing a feature without checking the game underneath it
+
+Per-body-part targeting was recommended twice as the thing that would make the mod feel like Fallout 76's VATS, reasoning from that game's design rather than from Starfield's mechanics. Starfield has none of what makes body parts matter there. The proposal survived two rounds because it was never tested against the actual game — the same failure as the aim-point models in a different register: reasoning from a model instead of measuring the thing.
+
+Two smaller ones from the same stretch, recorded because they are the kind that quietly distort a collaboration. Alexander's inside/outside arrangement for the two gauges was argued against in terms that claimed the idea had been Claude's to begin with; he corrected it. And a proposal to separate the marker's position from the projectile aim point was put forward on reasoning alone — the arithmetic, done afterwards, showed the two would sit 43cm apart, roughly two and a half marker radii on screen at 6m, and killed it. Doing the arithmetic first was available at no cost.
+
 ### The render/UI overlay hook
+
 
 Ported the D3D12 present-hook chain (IAT hook on `CreateDXGIFactory2` → MinHook on `CreateSwapChainForHwnd` → hook `Present`/`ResizeBuffers`) from the public-domain Starfield-Console-Replacer project, adapting it from a menu-only overlay into an always-on HUD and stripping its input-handling entirely, which surfaced a load-bearing `ImGui_ImplWin32_Init` call that had been co-located with the removed code and needed to be re-homed. Spent roughly ten debugging rounds trying to locate the engine's own camera object in memory to reuse its real view-projection matrix, proved via vtable-identity matching that the method was sound but the object was genuinely unreachable within any practical search range, then abandoned that direction in favor of self-computing a standard pinhole projection from data the project already had reliably — the approach actually shipped.
 

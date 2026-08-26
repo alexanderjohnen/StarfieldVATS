@@ -1,4 +1,4 @@
-# StarfieldVATS — Handoff (2026-08-26)
+# StarfieldVATS — Handoff (2026-08-26, evening)
 
 Read this first in a new chat. Point-in-time snapshot — verify against the
 actual code and log before trusting anything here; offsets and "confirmed"
@@ -89,7 +89,7 @@ and was stripped from history once already — never add it to a commit.
   `ActorValueProbe.cpp` finds the sub-object at `Actor+0x070` by walking
   the MSVC RTTI class hierarchy (read from the base class descriptor's
   `mdisp`, not guessed) and re-verifies it on every call.
-- **Health bar** on the target box.
+- **Health bar** on the target marker, as an arc.
 - **Lock ends when the target dies** (`health <= 0`; overkill reads
   negative). Replaced a dead-bit check that had never once fired.
 - **Corpses are not targetable**, same root cause.
@@ -103,46 +103,21 @@ and was stripped from history once already — never add it to a commit.
   spelling — `_visible` is AS2 and was the entire earlier "unreachable
   path" saga). Restore is deferred until the indicator parks on its "End"
   frame, capped by `iHudRestoreDelayMs`.
-- **Target marker is a FIXED size** (`fTargetMarkerRadius`, 22px) since
-  2026-08-26. Distance scaling existed for one day and cost three rounds
-  of complaints, every one an artefact of the scaling rather than a bad
-  constant: too big up close, growing before shrinking when walking
-  backwards, frozen at a cap while the target kept growing. Fallout 4 and
-  76 both use fixed sizes and none of that is noticeable there.
-
-  **The condition for that working, and it is the whole point:** a fixed
-  size only looks wrong while the marker claims to ENCLOSE the target,
-  because only then is there something for its size to disagree with. At
-  22px it is a marker ON the target, not a box AROUND it. Raise the
-  setting much and it starts making that claim again - which is exactly
-  the 2026-08-25 complaint returning. `fTargetBoxScale`,
-  `fBoxMaxSizeDistanceMeters` and `fBoxMinSizeDistanceMeters` are gone,
-  along with `ProjectedRadiusPixels` and the last caller of
-  `WorldBoundProbe::GetBoundRadius`.
-- **HUD is a scanner-style ring** (2026-08-26, Alexander's design,
-  UNTESTED in-game): a thin circle instead of FO4 corner brackets, the
-  distance set beside it on a tick the way the scanner sets its range, and
-  no "TARGET" caption. The two gauges are arcs on that ring instead of
-  stacked bars - target health outside the bottom half, the player's VATS
-  budget inside the top half. Mine inside, theirs outside, which is what
-  keeps them apart now that neither carries a label.
-  `bHealthBarBelowBox`/`bResourceBarBelowBox` are gone with the stacked
-  layout that needed them.
-  Sized from the bounding sphere's angular size (`ProjectedRadiusPixels`,
-  strictly 1/depth) since 2026-08-26 — the earlier method of projecting a
-  second point and measuring the pixel gap made the size depend on screen
-  position and camera pitch, which showed up as the box growing before it
-  shrank when backing away. The old cap at the previous fixed 36px size is
-  gone too: it bound from roughly 5-7m inward, freezing the box while the
-  target kept growing, which reads as the box shrinking up close. The
-  size is now a bounded ramp between two DISTANCES rather than a pixel
-  range: `fBoxMaxSizeDistanceMeters` (8.0) and `fBoxMinSizeDistanceMeters`
-  (16.0), Alexander's design. Inside 8m it holds the size it has at 8m,
-  beyond 16m the size it has at 16m, plain 1/depth in between — so it
-  varies by exactly 2:1 and never inverts. Both old fixed pixel bounds
-  (36px ceiling, 16px floor) are gone; they meant a different thing on
-  every resolution and bit at whatever distance the maths produced. NOT
-  yet re-confirmed in-game.
+- **HUD: a scanner-style ring, Alexander's design.** A thin circle instead
+  of FO4 corner brackets, the distance set beside it on a tick the way the
+  scanner sets its range, and no "TARGET" caption. Both gauges are arcs
+  just OUTSIDE the ring, sharing a radius: target health below, the
+  player's VATS budget above. Nothing is drawn inside the ring — the
+  middle of the ring is where the target is, which is also why the
+  distance sits beside it.
+- **Marker size is FIXED** (`fTargetMarkerRadius`, 22px). See the note in
+  Settings.h before changing it: a fixed size only looks wrong while the
+  marker claims to ENCLOSE the target, so the size and the smallness are
+  one decision, not two.
+- **HUD text renders from a real TTF** (Bahnschrift → Segoe UI → ImGui's
+  bitmap default), atlas built at 20px rather than upscaled from 13px.
+  Text uses a 4-direction shadow and is dimmed by colour value, never by
+  alpha — alpha over the dark shadow reads as grey mud.
 
 ## Open / unverified
 
