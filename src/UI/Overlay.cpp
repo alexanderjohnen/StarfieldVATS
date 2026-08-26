@@ -146,18 +146,37 @@ namespace VATS::UI
 			}
 		}
 
-		// The two gauges are arcs on the ring rather than straight bars
-		// stacked above and below it (Alexander's design, 2026-08-26).
-		// They sit on opposite halves AND on opposite sides of the ring,
-		// which is what keeps them from being confused for one another
-		// now that neither has a caption: the target's health is the outer
-		// arc below, the player's own VATS budget the inner arc above.
-		// Mine inside, theirs outside.
+		// Both gauges are arcs sitting just OUTSIDE the ring, on opposite
+		// halves: the target's health below, the player's VATS budget
+		// above.
+		//
+		// The first version put the resource arc INSIDE the ring, so that
+		// "mine inside, theirs outside" would tell the two apart without
+		// captions. Dropped 2026-08-26 for the same reason the distance
+		// readout was moved out of the ring in the first place: the middle
+		// of the ring is where the TARGET is. Painting the player's own
+		// budget across an enemy's chest puts one of the two things that
+		// have nothing to do with each other on top of the other, and it
+		// costs the ring its one job - being a clean window onto the
+		// thing being aimed at. Starfield's own scanner reticle keeps its
+		// interior empty too.
+		//
+		// Nothing is lost in telling them apart, because inside/outside
+		// was the fourth cue and the other three still hold: opposite
+		// halves of the ring, red against the HUD's off-white, and one
+		// noticeably heavier than the other. Sharing a radius is what makes
+		// them read as a matched pair rather than two things that happened
+		// to land near the same circle.
 		//
 		// Angles: 0 is +x, and screen y grows downward, so PI/2 is the
 		// BOTTOM of the ring and 3*PI/2 the top. Each gauge is given its
 		// left-hand end first so both fill left-to-right.
 		constexpr float kPi = 3.14159265358979323846f;
+
+		[[nodiscard]] float GaugeRadius(float a_ringRadius, float a_scale)
+		{
+			return a_ringRadius + std::max(5.0f, 8.0f * a_scale);
+		}
 
 		// Plain health arc. The segmented boss/legendary variant (a row of
 		// pips marking reserve health pools) was removed 2026-08-25: it
@@ -169,9 +188,8 @@ namespace VATS::UI
 		void DrawHealthArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_current, float a_max, float a_scale)
 		{
 			const float frac = a_max > 0.0f ? std::clamp(a_current / a_max, 0.0f, 1.0f) : 0.0f;
-			const float radius = a_ringRadius + std::max(5.0f, 8.0f * a_scale);
 			const float thickness = std::max(3.0f, 5.0f * a_scale);
-			DrawArcGauge(a_dl, a_cx, a_cy, radius, kPi, 0.0f, frac,
+			DrawArcGauge(a_dl, a_cx, a_cy, GaugeRadius(a_ringRadius, a_scale), kPi, 0.0f, frac,
 				IM_COL32(50, 12, 12, 220), IM_COL32(210, 40, 40, 235), thickness);
 		}
 
@@ -183,10 +201,9 @@ namespace VATS::UI
 		void DrawResourceArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_current, float a_capacity, float a_scale)
 		{
 			const float frac = a_capacity > 0.0f ? std::clamp(a_current / a_capacity, 0.0f, 1.0f) : 0.0f;
-			const float radius = std::max(4.0f, a_ringRadius - std::max(5.0f, 7.0f * a_scale));
-			const float thickness = std::max(2.0f, 3.5f * a_scale);
+			const float thickness = std::max(2.0f, 3.0f * a_scale);
 			const ImU32 fill = frac < 0.25f ? IM_COL32(240, 170, 60, 240) : kLockedColor;
-			DrawArcGauge(a_dl, a_cx, a_cy, radius, kPi, 2.0f * kPi, frac,
+			DrawArcGauge(a_dl, a_cx, a_cy, GaugeRadius(a_ringRadius, a_scale), kPi, 2.0f * kPi, frac,
 				IM_COL32(18, 26, 28, 210), fill, thickness);
 		}
 
