@@ -32,7 +32,15 @@ namespace VATS::UI
 		// state it originally shared a look with, kept as-is since it's
 		// still the right dim/uncommitted tint for that hint.
 		constexpr ImU32 kLockedColor = IM_COL32(225, 238, 240, 235);
-		constexpr ImU32 kAimColor = IM_COL32(225, 238, 240, 140);
+		// Dimmed by VALUE, not by alpha. It used to be the locked colour
+		// at alpha 140, and against the dark halo underneath every glyph
+		// that reads as grey mud rather than as dim white - the halo shows
+		// straight through the semi-transparent strokes and eats the
+		// antialiased edges. Alexander, 2026-08-26: "sieht nicht richtig
+		// weiss aus". A darker opaque tone reads as "dimmer" without
+		// letting anything through it.
+		constexpr ImU32 kAimColor = IM_COL32(186, 202, 208, 245);
+
 		// Dark outline drawn under every white stroke. Without it the box
 		// reads fine against dark backdrops but vanishes completely against
 		// Starfield's bright station-interior surfaces (confirmed in-game
@@ -88,14 +96,17 @@ namespace VATS::UI
 		{
 			const auto   size = ImGui::CalcTextSize(a_text);
 			const ImVec2 pos{ a_centerX - size.x * 0.5f, a_y };
-			// Same outline treatment as the brackets: a 1px dark halo keeps
-			// the text readable over bright surfaces.
-			for (float ox = -1.0f; ox <= 1.0f; ox += 1.0f) {
-				for (float oy = -1.0f; oy <= 1.0f; oy += 1.0f) {
-					if (ox != 0.0f || oy != 0.0f) {
-						a_dl->AddText(ImVec2{ pos.x + ox, pos.y + oy }, kOutline, a_text);
-					}
-				}
+			// Four cardinal offsets, not all eight. A full ring of dark
+			// copies around small glyphs closes their counters and thickens
+			// every stroke, which is half of why the text read as blocky;
+			// the diagonals contribute almost nothing to legibility and
+			// most of the mud. Softer than the ring under the ring strokes
+			// for the same reason - a letter has far more edge per pixel
+			// than a line does.
+			constexpr ImU32 kTextShadow = IM_COL32(10, 14, 16, 165);
+			const ImVec2    kOffsets[4]{ { -1.0f, 0.0f }, { 1.0f, 0.0f }, { 0.0f, -1.0f }, { 0.0f, 1.0f } };
+			for (const auto& off : kOffsets) {
+				a_dl->AddText(ImVec2{ pos.x + off.x, pos.y + off.y }, kTextShadow, a_text);
 			}
 			a_dl->AddText(pos, a_color, a_text);
 		}
@@ -133,12 +144,10 @@ namespace VATS::UI
 				// two side by side, 2026-08-26). One text height up.
 				const auto   size = ImGui::CalcTextSize(a_value);
 				const ImVec2 pos{ a_px + tickOuter + 4.0f, a_py - size.y - 1.0f };
-				for (float ox = -1.0f; ox <= 1.0f; ox += 1.0f) {
-					for (float oy = -1.0f; oy <= 1.0f; oy += 1.0f) {
-						if (ox != 0.0f || oy != 0.0f) {
-							dl->AddText(ImVec2{ pos.x + ox, pos.y + oy }, kOutline, a_value);
-						}
-					}
+				constexpr ImU32 kTextShadow = IM_COL32(10, 14, 16, 165);
+				const ImVec2    kOffsets[4]{ { -1.0f, 0.0f }, { 1.0f, 0.0f }, { 0.0f, -1.0f }, { 0.0f, 1.0f } };
+				for (const auto& off : kOffsets) {
+					dl->AddText(ImVec2{ pos.x + off.x, pos.y + off.y }, kTextShadow, a_value);
 				}
 				dl->AddText(pos, a_color, a_value);
 			} else if (a_label) {
@@ -679,7 +688,11 @@ namespace VATS::UI
 				const auto& io = ImGui::GetIO();
 				auto*       dl = ImGui::GetForegroundDrawList();
 				auto*       font = ImGui::GetFont();
-				const float fontSize = ImGui::GetFontSize() * 1.6f;
+				// Native size. The 1.6x was there to make the 13px bitmap
+				// font big enough to sit beside the scanner's own "RANGE
+				// 100M", by scaling the atlas up - which is what made it
+				// blocky. The atlas is now built at 20px instead.
+				const float fontSize = ImGui::GetFontSize();
 				const ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, hint);
 				const float  rightEdgeX = io.DisplaySize.x * ((1280.0f + 463.0f - 11.0f) / 2560.0f);
 				// Treated as the vertical CENTER of the target point, not

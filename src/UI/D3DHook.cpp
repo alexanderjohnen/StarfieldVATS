@@ -36,6 +36,43 @@ namespace VATS::UI
 {
 	namespace
 	{
+		// ImGui's built-in font is ProggyClean, a BITMAP face designed for
+		// exactly 13px. The overlay was drawing the pre-lock hint at 1.6x
+		// that, which upscales the atlas rather than rendering larger
+		// glyphs - so it came out blocky next to the game's own HUD
+		// lettering, which is what Alexander saw (2026-08-26: "sieht etwas
+		// schaebig aus ... sehr kantig").
+		//
+		// Bahnschrift is the first choice because it is a condensed
+		// technical face that sits very close to Starfield's own HUD
+		// lettering, and it ships with Windows 10 and 11 so there is
+		// nothing to redistribute. Segoe UI is the fallback (present on
+		// every Windows), and ImGui's default is the last resort - the
+		// overlay must never fail to draw because a font file moved.
+		void LoadHudFont()
+		{
+			auto& io = ImGui::GetIO();
+
+			// 20px at 1440p is about the cap height of the scanner's own
+			// "RANGE 100M". Rendered at that size rather than scaled up to
+			// it, which is the entire point of this function.
+			constexpr float kFontSize = 20.0f;
+			constexpr const char* kCandidates[] = {
+				"C:\Windows\Fonts\bahnschrift.ttf",
+				"C:\Windows\Fonts\segoeui.ttf",
+			};
+
+			for (const char* path : kCandidates) {
+				if (io.Fonts->AddFontFromFileTTF(path, kFontSize) != nullptr) {
+					REX::INFO("[UI] HUD font: {} at {}px", path, kFontSize);
+					return;
+				}
+			}
+
+			io.Fonts->AddFontDefault();
+			REX::WARN("[UI] HUD font: no TTF found, falling back to the built-in bitmap font");
+		}
+
 		DrawCallback g_drawCallback = nullptr;
 
 		// Backbuffer size, written on swapchain create/resize, read from
@@ -334,10 +371,12 @@ namespace VATS::UI
 
 			if (ok) {
 				if (!g_imguiCreated) {
+
 					IMGUI_CHECKVERSION();
 					ImGui::CreateContext();
 					ImGui::GetIO().MouseDrawCursor = false;
 					ImGui::StyleColorsDark();
+					LoadHudFont();
 					g_imguiCreated = true;
 				}
 				// BUG FIXED 2026-08-22: this call was missing entirely. The
