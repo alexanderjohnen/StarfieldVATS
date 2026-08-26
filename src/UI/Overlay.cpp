@@ -127,8 +127,12 @@ namespace VATS::UI
 				dl->AddLine(ImVec2{ a_px + tickInner, a_py }, ImVec2{ a_px + tickOuter, a_py }, kOutline, 4.0f);
 				dl->AddLine(ImVec2{ a_px + tickInner, a_py }, ImVec2{ a_px + tickOuter, a_py }, a_color, 2.0f);
 
-				const auto  size = ImGui::CalcTextSize(a_value);
-				const ImVec2 pos{ a_px + tickOuter + 4.0f, a_py - size.y * 0.5f };
+				// Sitting ON the tick's height is not what the scanner
+				// does - its range number rests just ABOVE the horizontal
+				// line rather than straddling it (Alexander, comparing the
+				// two side by side, 2026-08-26). One text height up.
+				const auto   size = ImGui::CalcTextSize(a_value);
+				const ImVec2 pos{ a_px + tickOuter + 4.0f, a_py - size.y - 1.0f };
 				for (float ox = -1.0f; ox <= 1.0f; ox += 1.0f) {
 					for (float oy = -1.0f; oy <= 1.0f; oy += 1.0f) {
 						if (ox != 0.0f || oy != 0.0f) {

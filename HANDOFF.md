@@ -145,6 +145,34 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
+- **The centre-height model amplifies the per-character spread, measured
+  and confirmed in play 2026-08-26 — this is the cost that was accepted
+  when it was chosen, now visible.** Two male pirates, same room, same
+  pose, three seconds apart:
+
+  | actor | radius | centreAboveFeet | aim |
+  |---|---|---|---|
+  | 0x0017E688 | 1.114 | 0.898 | 1.347 |
+  | 0x0017E687 | 1.103 | 0.768 | 1.152 |
+
+  Their radii differ by **1%** while their sphere-centre heights differ by
+  **17%**, and the 1.5x factor turns a 13cm difference into **19.5cm** on
+  the aim point. Alexander spotted it from screenshots before the numbers
+  were looked at.
+
+  What that isolates: the variance is not body size (radius says they are
+  the same size) and not pose (both standing). The most likely remaining
+  cause is EQUIPMENT inside the bounding sphere — a rifle carried low
+  drags the centre down, a backpack or raised weapon pushes it up — which
+  no factor on that centre can ever remove.
+
+  This is the fourth time the same wall has been hit from a different
+  side, and every time the answer has been the same: the bounding sphere
+  does not know where a chest is. Do NOT build a fifth model. The options
+  are (a) accept ~20cm on humans, (b) lower `fAimPointCentreFactor` to
+  trade aim height for less spread (1.3 gives ~11cm and a slightly lower
+  aim), or (c) the skeleton attempt above.
+
 - **Aim point: settled on the sphere's CENTRE HEIGHT, plus smoothing
   (2026-08-26). Built, NOT yet deployed — Starfield was running.** The
   first non-humanoid tests decided it, after three models built on
@@ -198,7 +226,8 @@ and was stripped from history once already — never add it to a commit.
   shoulder offset applied outside `cameraRoot` would look exactly like
   that. One screenshot with the target at a screen edge settles the axis.
 
-- **The skeleton route is all but closed. One attempt left, then drop it.**
+- **The skeleton route: the one remaining attempt is BUILT, not yet
+  deployed (Starfield running). Run it, then decide.**
   The idea: read a real chest bone instead of deriving an aim point from
   the bounding sphere, which would be pose-correct and creature-correct by
   construction and would also serve per-body-part targeting later. Two
@@ -217,13 +246,14 @@ and was stripped from history once already — never add it to a commit.
   window. It requires the first child's `parent` at 0x038 to point back,
   and 0x038 is itself a header claim.
 
-  **The one attempt worth making:** validate by reading the first child's
-  NAME (`ReadNodeName` already works and is proven on the root) instead of
-  its parent pointer, log every shape-plausible candidate with that name
-  rather than auto-accepting, and widen to 0x0F0..0x220. That removes the
-  dependency on a second guessed offset. If no candidate in that range
-  yields a readable bone-ish name, **stop** — the skeleton is not
-  reachable this way, and centre-height plus smoothing is the answer.
+  **Now built:** the probe validates by reading the first child's NAME
+  (`ReadNodeName` is proven on these objects — it produced
+  `HumanExportRoot` and `MantidA_mrRigRoot`) instead of following its
+  parent pointer, logs every shape-plausible candidate with that name
+  rather than auto-accepting one, and searches 0x0F0..0x220. Watch for
+  `bone: children candidate at 0x... - N entries, first named '...'`. If
+  nothing in that range yields a readable name, **stop** — the skeleton is
+  not reachable this way, and centre-height plus smoothing is the answer.
 
   Note also that a named chest bone was never the right target anyway:
   the rig roots read `HumanExportRoot`, `MantidA_mrRigRoot`,

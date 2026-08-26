@@ -65,7 +65,7 @@ namespace VATS
 		// consistent with what the old code read, so the triple layout was
 		// never the problem, only where it sits).
 		constexpr std::size_t kChildrenSearchBegin = 0x0F0;
-		constexpr std::size_t kChildrenSearchEnd = 0x1C0;
+		constexpr std::size_t kChildrenSearchEnd = 0x220;
 
 		// BSStringPool::Entry (confirmed sizeof == 0x18): _left@00,
 		// {_length|_right} union@08, _refCount@10, _flags@14. String bytes
@@ -126,6 +126,8 @@ namespace VATS
 		// own address. That is strong enough to accept without an eye on
 		// it, which is the point: this is meant to settle the offset, not
 		// add a fourth thing to eyeball in-game.
+		[[nodiscard]] bool ReadNodeName(const void* a_node, char (&a_out)[kMaxNameLen]);
+
 		[[nodiscard]] bool TryReadChildren(std::uint64_t a_node, std::size_t a_off,
 			std::uint32_t& a_outSize, std::uint64_t& a_outData)
 		{
@@ -149,9 +151,29 @@ namespace VATS
 				firstChild < 0x10000 || (firstChild & 0x7) != 0) {
 				return false;
 			}
-			std::uint64_t parent = 0;
-			if (!Read(reinterpret_cast<const void*>(firstChild), GameOffsets::kNiAVObjectParent, parent) ||
-				parent != a_node) {
+
+			// Validate by reading the first child's NAME, not by following
+			// its parent pointer.
+			//
+			// The parent version (first child's NiAVObject::parent @ 0x038
+			// pointing back here) found nothing anywhere in 0xF0..0x1C0 on
+			// 2026-08-26, on a human and a mantid alike. But 0x038 is
+			// itself only a header claim, so a correct candidate could have
+			// been thrown away by a wrong second guess - and there was
+			// evidence for exactly that: worldBound at 0x100 off this same
+			// pointer reads sane radii on every actor, so the header layout
+			// IS right that far, which argues the array should have been
+			// where the header put it.
+			//
+			// A name is the better test because ReadNodeName is already
+			// PROVEN on these objects - it is what produced
+			// 'HumanExportRoot' and 'MantidA_mrRigRoot' - so a failure here
+			// means the candidate is not a node, not that another guess was
+			// wrong. Skeleton joints are always named; a random qword that
+			// happens to look like an array header will not resolve to a
+			// readable string through the BSStringPool chain.
+			char name[kMaxNameLen];
+			if (!ReadNodeName(reinterpret_cast<const void*>(firstChild), name) || name[0] == '\0') {
 				return false;
 			}
 
@@ -195,6 +217,18 @@ namespace VATS
 					continue;
 				}
 				if (TryReadChildren(a_root, off, size, data)) {
+					// Logged rather than silently accepted: the first
+					// candidate found is not necessarily the children
+					// array, and the name of its first entry is what says
+					// whether this is a skeleton or something else that
+					// happens to be shaped like an array of named objects.
+					char firstName[kMaxNameLen]{};
+					std::uint64_t firstChild = 0;
+					if (Read(reinterpret_cast<const void*>(data), 0, firstChild)) {
+						ReadNodeName(reinterpret_cast<const void*>(firstChild), firstName);
+					}
+					REX::INFO("[VATS] bone: children candidate at 0x{:X} - {} entries, first named '''{}'''",
+						off, size, firstName);
 					g_childrenOffset.store(off, std::memory_order_relaxed);
 					REX::INFO("[VATS] bone: children offset FOUND at 0x{:X} ({} children) - header said 0x{:X}",
 						off, size, kNiNodeChildrenGuess);
