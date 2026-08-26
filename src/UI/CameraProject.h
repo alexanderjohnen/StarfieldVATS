@@ -29,32 +29,4 @@ namespace VATS::UI
 	// camera (unlikely to matter for HUD box placement), but it will not
 	// silently fail to find anything the way the NiCamera hunt did.
 	[[nodiscard]] bool WorldToScreen(const RE::NiPoint3& a_worldPos, float& a_outX, float& a_outY);
-
-	// How many pixels one world-space radius at a_worldPos covers on
-	// screen. Used to size the target box.
-	//
-	// This replaced projecting a second point one radius above the aim
-	// point and measuring the pixel gap between the two. That method
-	// inherited the aspect handling for free, which was the reason for it,
-	// but it also inherited something unwanted: the gap between two
-	// projected points depends on WHERE on screen they sit and on the
-	// camera's pitch, not on distance alone. Alexander, 2026-08-26:
-	// backing away from a target made the box grow first and only then
-	// shrink. Expanding that gap for small radii gives
-	//
-	//   gap ~ (r / depth) * (cos(pitch) + (h / depth) * sin(pitch))
-	//
-	// where h is the aim point's offset from the view axis - a correction
-	// term that is strongest at close range and vanishes with distance,
-	// i.e. exactly a size that dips near and recovers as you back off.
-	//
-	// This computes the angular size directly instead: strictly 1/depth,
-	// with no dependence on screen position or pitch. Closest is largest,
-	// monotonically, the way the NPC itself behaves.
-	//
-	// a_outDepth, if given, receives the depth along the view axis that
-	// the size was computed from - so a caller that wants to cap the size
-	// can express that cap as a DISTANCE rather than as a pixel count.
-	[[nodiscard]] bool ProjectedRadiusPixels(const RE::NiPoint3& a_worldPos, float a_worldRadius, float& a_outPixels, float* a_outDepth = nullptr);
-
 }

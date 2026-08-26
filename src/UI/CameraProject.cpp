@@ -27,10 +27,10 @@ namespace VATS::UI
 		}
 
 		// Everything the projection needs, resolved once. Split out of
-		// WorldToScreen when ProjectedRadiusPixels became a second caller:
-		// both need the same camera basis, display size and FOV tangents,
-		// and having two copies of that resolution drift apart is exactly
-		// how the box size ended up disagreeing with the box position.
+		// WorldToScreen. Kept as a struct even with one caller left: it
+		// is the whole camera state in one place, which is what stopped
+		// the box size and the box position from drifting apart while
+		// both existed.
 		struct CameraFrame
 		{
 			RE::NiPoint3 pos;
@@ -129,34 +129,6 @@ namespace VATS::UI
 
 		a_outX = (ndcX + 1.0f) * 0.5f;
 		a_outY = (1.0f - ndcY) * 0.5f;
-		return true;
-	}
-
-	bool ProjectedRadiusPixels(const RE::NiPoint3& a_worldPos, float a_worldRadius, float& a_outPixels, float* a_outDepth)
-	{
-		if (!(a_worldRadius > 0.0f)) {
-			return false;
-		}
-
-		CameraFrame frame{};
-		if (!GetCameraFrame(frame)) {
-			return false;
-		}
-
-		const RE::NiPoint3 diff{ a_worldPos.x - frame.pos.x, a_worldPos.y - frame.pos.y, a_worldPos.z - frame.pos.z };
-		const float        fwdComp = Dot(diff, frame.fwd);
-		if (fwdComp <= 1.0f) {
-			return false;
-		}
-
-		// Depth along the view axis, not straight-line distance: that is
-		// the quantity a perspective divide actually uses, so this is
-		// strictly 1/depth and nothing else. Backing away from a target
-		// can only ever make it smaller.
-		a_outPixels = (a_worldRadius / fwdComp) / frame.tanHalfFovY * (frame.displayH * 0.5f);
-		if (a_outDepth) {
-			*a_outDepth = fwdComp;
-		}
 		return true;
 	}
 }

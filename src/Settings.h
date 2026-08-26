@@ -327,52 +327,24 @@ namespace VATS
 		// in the base game - which argues for cutting sooner.
 		std::uint32_t hudRestoreDelayMs{ 2500 };
 
-		// Target box size, as a fraction of the target's projected
-		// bounding-sphere radius. The sphere encloses the whole actor, so
-		// 1.0 would frame the entire body - far larger than intended.
+		// Radius of the target marker in pixels. FIXED - it does not
+		// scale with the target's distance or size.
 		//
-		// Since 2026-08-26 this scales all the way in: nearest is biggest,
-		// strictly monotonic from there. It used to be capped at the old
-		// fixed 36px half-height, which froze the box from roughly 5-7m
-		// inward while the target kept growing - see Overlay.cpp for why
-		// that reads as the box shrinking up close. Raise this for a box
-		// that hugs more of the body.
-		float targetBoxScale{ 0.20f };
-		// The distance at which the box reaches its maximum size, in
-		// metres. Closer than this the box holds that size instead of
-		// continuing to grow; further away it shrinks normally.
+		// Distance scaling was tried for a day (2026-08-25/26) and cost
+		// three separate rounds of complaints, every one of them an
+		// artefact of the scaling itself rather than a bad constant: too
+		// big up close, growing before shrinking when walking backwards,
+		// frozen at a cap while the target kept growing. Fallout 4 and 76
+		// both use a fixed size and none of that is noticeable there.
 		//
-		// This is the second cap on the box size, and it is worth being
-		// precise about why it is not the first one coming back. The old
-		// cap was a PIXEL count - the previous fixed 36px - which was an
-		// arbitrary number that happened to be the old look, bound at
-		// whatever distance the maths made it bind at (roughly 5-7m), and
-		// changed meaning with resolution and with the target's size. This
-		// one is a DISTANCE Alexander picked by looking at a target and
-		// saying "that size" (2026-08-26, at 8m). It scales with the
-		// actor's own bounding sphere and with the display, so the box
-		// stays framed on a larger or smaller creature and on any monitor.
-		//
-		// The trade-off is real and was accepted with the picture in hand:
-		// inside this distance the box again stops tracking the target's
-		// growth, which is the effect that read as "getting smaller up
-		// close". Set it to 0 to disable the cap and let the box scale all
-		// the way in.
-		float boxMaxSizeDistance{ 8.0f };
-		// The far end of the same idea: the distance beyond which the box
-		// stops shrinking. Further away it holds the size it had here.
-		//
-		// Together with boxMaxSizeDistance this turns the size into a
-		// bounded ramp rather than an open 1/distance curve - it varies by
-		// exactly the ratio between the two distances (2:1 at 8m and 16m)
-		// and holds flat outside them. That is Alexander's design,
-		// 2026-08-26: the size at 8m as the maximum, the size at 16m as the
-		// minimum, and smaller steps in between than an unbounded curve
-		// gives. It also retires the old fixed 16px floor, which had the
-		// same defect as the old fixed ceiling - an arbitrary pixel count
-		// that meant a different thing on every resolution and bit at
-		// whatever distance the maths happened to produce.
-		float boxMinSizeDistance{ 16.0f };
+		// The reason it works there, and the condition for it working
+		// here: a fixed size only looks wrong while the marker claims to
+		// ENCLOSE the target, because only then is there something for its
+		// size to disagree with. 22px is a marker ON the target rather
+		// than a box AROUND it - roughly 5% of a human's on-screen height
+		// at 3m, still inside the silhouette at 30m. Raise it and it
+		// starts making that claim again.
+		float targetMarkerRadius{ 22.0f };
 
 
 

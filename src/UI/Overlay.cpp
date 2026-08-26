@@ -472,82 +472,33 @@ namespace VATS::UI
 			const float px = sx * io.DisplaySize.x;
 			const float py = sy * io.DisplaySize.y;
 
-			// Size the box to the target rather than keeping a fixed pixel
-			// size at every distance. The old fixed box framed a target's
-			// torso at 5m and was larger than the whole actor at 15m, which
-			// reads as the box growing as the target shrinks away
-			// (Alexander, 2026-08-25 - it never actually changed size).
+			// FIXED size, not scaled to the target's projected size
+			// (2026-08-26). Fallout 4's and 76's VATS displays are both
+			// fixed, and Alexander's observation from watching them is the
+			// argument: not only does it never look wrong there, it never
+			// even reads as "bigger now, smaller now".
 			//
-			// Sized from the angular size of the bounding sphere
-			// (ProjectedRadiusPixels), which is strictly 1/depth. It used
-			// to project a second point one radius above the aim point and
-			// measure the pixel gap - that inherited the aspect handling
-			// for free, but it also made the size depend on where on screen
-			// the target sat and on the camera's pitch. Alexander,
-			// 2026-08-26: walking backwards made the box grow first and
-			// shrink only afterwards, which an NPC plainly does not do. See
-			// CameraProject.h for why that method did that.
-			float radius = kDefaultRadius;
-			float boundRadius = 0.0f;
-			if (WorldBoundProbe::GetBoundRadius(a_actor, boundRadius)) {
-				RE::NiPoint3 aimPoint{};
-				if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &aimPoint, sizeof(aimPoint))) {
-					aimPoint = WorldBoundProbe::GetAimPoint(a_actor, aimPoint);
-
-					float projectedRadiusPx = 0.0f;
-					float depth = 0.0f;
-					if (ProjectedRadiusPixels(aimPoint, boundRadius, projectedRadiusPx, &depth)) {
-						// Both ends of the size range are DISTANCES, not
-						// pixel counts: the box is sized as though the
-						// target were never closer than one and never
-						// further than the other. Alexander's design
-						// (2026-08-26) - the size at 8m as the maximum, the
-						// size at 16m as the minimum, holding flat outside
-						// both. Between them it is the plain 1/depth curve,
-						// so it still only ever gets smaller as the target
-						// recedes; bounding it to a 2:1 ratio is what makes
-						// the steps small.
-						//
-						// Expressing both ends as distances rather than
-						// pixels is the whole point. The previous ceiling
-						// (36px) and floor (16px) were arbitrary numbers
-						// that meant something different on every
-						// resolution and bit at whatever distance the maths
-						// happened to produce. Distances scale with the
-						// actor's own bounding sphere and with the display,
-						// so a larger creature stays framed and a 4K
-						// monitor behaves like this one.
-						const float nearDistance = std::max(0.0f, Settings::Get().boxMaxSizeDistance);
-						float       farDistance = Settings::Get().boxMinSizeDistance;
-						if (!(farDistance > 0.0f)) {
-							farDistance = depth;  // 0 disables the far end
-						}
-						// Guards a swapped or nonsensical pair in the INI:
-						// the ramp collapses to a single size rather than
-						// inverting.
-						farDistance = std::max(farDistance, nearDistance);
-
-						const float sizingDepth = std::clamp(depth, nearDistance, farDistance);
-						if (sizingDepth > 0.0f) {
-							projectedRadiusPx *= depth / sizingDepth;
-						}
-
-						// Scaled DOWN from the projected radius, not equal to
-						// it. The bounding sphere encloses the entire actor,
-						// so using the radius directly framed the whole body
-						// and produced a box roughly five times the intended
-						// size (2026-08-25, first attempt - the scaling was
-						// right, the scale was not).
-						const float scaled = projectedRadiusPx * Settings::Get().targetBoxScale;
-						// Pure sanity bounds - both ends of the LOOK are
-						// set by the two distances above. This used to
-						// clamp to a fixed 16px..36px, which is where the
-						// resolution dependence lived.
-						radius = std::clamp(scaled, 2.0f, io.DisplaySize.y * 0.45f);
-					}
-				}
-			}
-
+			// This reverses the distance scaling added on 2026-08-25, and
+			// it is worth being precise about why that scaling existed:
+			// the old fixed box framed a torso at 5m and was wider than
+			// the whole actor at 15m, which reads as the box growing while
+			// the target shrinks. That complaint was real - but it is a
+			// complaint about a FRAME. It only applies while the marker
+			// claims to enclose the target, because only then is there
+			// something for its size to disagree with.
+			//
+			// So the marker stops claiming it. At 22px it is a marker on
+			// the target rather than a box around it: about 5% of a human's
+			// on-screen height at 3m and still comfortably inside the
+			// silhouette at 30m. Nothing to mismatch, nothing to notice.
+			//
+			// Three settings die with the scaling - fTargetBoxScale,
+			// fBoxMaxSizeDistanceMeters, fBoxMinSizeDistanceMeters - and
+			// with them every complaint from today that was a scaling
+			// artefact: "too big up close", "grows before it shrinks",
+			// "frozen while the target keeps growing". A constant cannot
+			// have any of them.
+			const float radius = std::max(4.0f, Settings::Get().targetMarkerRadius);
 			DrawTargetMarker(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color, radius);
 
 			if (Settings::Get().debugAimMarkers) {
@@ -569,6 +520,8 @@ namespace VATS::UI
 			// only one sensible arrangement each (see DrawHealthArc), and
 			// a setting that can only hold one value is just a place for a
 			// wrong value to hide.
+			// Arcs follow the marker's configured size, so raising
+			// fTargetMarkerRadius keeps the cluster proportioned.
 			const float hudScale = radius / kDefaultRadius;
 
 			if (haveHealth) {

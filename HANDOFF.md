@@ -103,9 +103,22 @@ and was stripped from history once already — never add it to a commit.
   spelling — `_visible` is AS2 and was the entire earlier "unreachable
   path" saga). Restore is deferred until the indicator parks on its "End"
   frame, capped by `iHudRestoreDelayMs`.
-- **Target marker scales with distance**, bounded between the size it has
-  at `fBoxMaxSizeDistanceMeters` (8m) and at `fBoxMinSizeDistanceMeters`
-  (16m).
+- **Target marker is a FIXED size** (`fTargetMarkerRadius`, 22px) since
+  2026-08-26. Distance scaling existed for one day and cost three rounds
+  of complaints, every one an artefact of the scaling rather than a bad
+  constant: too big up close, growing before shrinking when walking
+  backwards, frozen at a cap while the target kept growing. Fallout 4 and
+  76 both use fixed sizes and none of that is noticeable there.
+
+  **The condition for that working, and it is the whole point:** a fixed
+  size only looks wrong while the marker claims to ENCLOSE the target,
+  because only then is there something for its size to disagree with. At
+  22px it is a marker ON the target, not a box AROUND it. Raise the
+  setting much and it starts making that claim again - which is exactly
+  the 2026-08-25 complaint returning. `fTargetBoxScale`,
+  `fBoxMaxSizeDistanceMeters` and `fBoxMinSizeDistanceMeters` are gone,
+  along with `ProjectedRadiusPixels` and the last caller of
+  `WorldBoundProbe::GetBoundRadius`.
 - **HUD is a scanner-style ring** (2026-08-26, Alexander's design,
   UNTESTED in-game): a thin circle instead of FO4 corner brackets, the
   distance set beside it on a tick the way the scanner sets its range, and
