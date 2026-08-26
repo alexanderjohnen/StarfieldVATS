@@ -134,65 +134,51 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
-- **Box centring — FIRST REAL MEASUREMENT TAKEN 2026-08-26.** 1052
-  `aimdiag` samples across two humanoids (`0x0017E6A1`, `0x0017E6A2`),
-  2560x1440, fov 89.6 horizontal, targets moved across the full width of
-  the screen (projected feet x from 0.016 to 0.969). What it settled:
+- **Box centring — measured, and the aim-point model changed as a result
+  (2026-08-26). Untested in-game.** Two logging sessions, ~2000 `aimdiag`
+  samples, three pirates, targets moved across the full width of the
+  screen, plus two screenshots. What is now known rather than assumed:
 
-  - **The error is not horizontal.** `|sphere.x - feet.x|` averages
-    0.0025 normalized — about 6 px at 2560 wide — with a worst single
-    frame of 0.034. The "bounding sphere pulled sideways by a weapon or
-    backpack" theory is dead for humanoids. Every remaining candidate is
-    vertical.
-  - **The per-character spread is in the sphere CENTRE, not in the lift.**
-    World-space, from the `aimpoint` lines: the two actors have nearly
-    identical radii (1.137 vs 1.117, 1.8% apart) and therefore nearly
-    identical lifts (0.284 vs 0.279) — the radius-based lift model is
-    doing its job. But their `centreAboveFeet` reads 0.940 vs 0.839, 12%
-    apart, and that difference passes straight through: aim points end up
-    1.224 vs 1.119 above the feet, **10 cm apart on two humans**.
-  - Consequence, if a fix is wanted: anchor the aim point at the FEET and
-    scale it by the radius (`feet.z + k * radius`, k ~1.05), rather than
-    anchoring at the sphere centre and lifting from there. Radius is the
-    stable quantity (1.8% spread), the sphere centre is not (12%). Keep a
-    pose cap for prone/ragdoll bodies, where the root stays on the ground
-    while the sphere drops. NOT yet done — see the open question below,
-    which may be the larger term.
+  - **The error is not horizontal.** `|sphere.x - feet.x|` averages 0.0068
+    normalized over 1004 samples spanning x = -0.109 to 0.978. The
+    "weapon or backpack drags the bounding sphere sideways" theory is dead
+    for humanoids.
+  - **The projection is sound near the screen centre.** Screenshots at 6m
+    and 7m: the `FEET` cross lands on the actor's boots, `SPHERE` and
+    `AIM` on the torso. The FOV *value* is right.
+  - **The spread was in the anchor, not the lift.** Three pirates:
 
-  **The projection is confirmed sound near the screen centre** (two
-  screenshots, 2026-08-26, targets at 6m and 7m at x≈0.5): the `FEET`
-  cross lands on the actor's boots in both, and `SPHERE`/`AIM` sit on the
-  torso. So the FOV *value* is right and the box position is not grossly
-  broken. **What the screenshots do NOT settle is the FOV axis**, because
-  both targets were near the centre — where a wrong axis has zero error by
-  construction. A shot with the target at the far left or right edge is
-  still the outstanding test; treat `bCameraFovIsHorizontal` as probable
-  but unproven.
+    | actor | radius | centreAboveFeet | c/r | aim (old) |
+    |---|---|---|---|---|
+    | 0x0017E6A2 | 1.099 | 0.814 | 0.741 | 1.088 |
+    | 0x0017E6A1 | 1.173 | 0.913 | 0.778 | 1.207 |
+    | 0x0017E688 | 1.112 | 0.865 | 0.778 | 1.143 |
 
-  Measured off those same two screenshots: the aim point sits at **64% of
-  body height on one pirate and 68% on the other** — the same ~10cm spread
-  the log showed, now visible. Both are lower than a chest aim (~72-75%).
-  That is the anchor problem above, and it is the next thing to fix. Every number in the
-  log is computed *through* the projection, so checking the projection
-  against the log is circular — the only ground truth is the rendered
-  image. Needs one screenshot with `bDebugAimMarkers=1` and the target
-  **near the left or right edge of the screen**, because that is where a
-  wrong FOV axis shows: flipping `bCameraFovIsHorizontal` scales both NDC
-  axes by the aspect ratio about the screen centre, so the error is zero
-  in the middle and grows to ~78% of the offset at the edge. A cross a
-  long way off the actor at the edge but correct in the middle = the axis.
-  Constant offset everywhere = the FOV value.
+    Two of three sit at 0.778 of their own radius, one at 0.741, and that
+    landed straight on the aim point: 12cm apart on three humans.
+    `GetAimPoint` now anchors at the FEET and scales by RADIUS
+    (`fAimPointHeightRadiusFactor`, 1.03) instead of lifting from the
+    sphere centre. 1.03 is where the three already agreed (aim/radius
+    0.990, 1.029, 1.028), so this pulls the outlier in without moving the
+    placement Alexander has been looking at.
+  - **Both pose safety paths fired on a real ragdoll** for the first time
+    (11 frames with on-screen body height < 0.05, lift ratios up to 0.61 —
+    only reachable through the `kMinAimPointAboveFeet` floor). The cap is
+    now applied unconditionally rather than only when the centre sits
+    above the feet.
 
-  Prior reasoning worth keeping: a *vertical* FOV of 89.6 would be an
-  absurd fisheye (equivalent to ~119 horizontal), so horizontal is very
-  likely already right — but "very likely" is what this project keeps
-  getting burned by, and the screenshot costs one shot.
+  **Still open: the FOV axis.** Both screenshots had the target near x=0.5,
+  which is exactly where a wrong axis has zero error by construction —
+  flipping `bCameraFovIsHorizontal` scales both NDC axes by the aspect
+  ratio about the screen centre. One screenshot with the target at the far
+  left or right edge settles it. Treat horizontal as probable (a 89.6
+  *vertical* FOV would be an absurd fisheye) but unproven.
 
-  For scale when judging: 10 cm of aim-point error at 8 m is about 16 px
-  at 1440p. If the box looks *clearly* off, something bigger than the
-  spread measured above is also at work.
-
-  Tunables meanwhile: `fAimPointRadiusFactor`, `fAimPointMaxLiftFraction`.
+  Also open: the aim point sits at 64-68% of body height, measured off the
+  two screenshots. That is below a chest aim (~72-75%). Raising
+  `fAimPointHeightRadiusFactor` is the knob if Alexander wants it higher —
+  it is now a single, meaningful number rather than a lift on a moving
+  base.
 - **Never tested against non-humanoid creatures at all.** The aim point is
   proportional specifically so it scales to any body shape, but no alien
   has been fought with it.

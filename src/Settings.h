@@ -277,27 +277,33 @@ namespace VATS
 		// humanoid, and visibly too low. 1.5 lands around chest height.
 		//
 		// Deliberately proportional rather than a fixed distance, because
-		// Starfield's non-humanoid creatures come in wildly different
-		// shapes: a factor scales with whatever body it is applied to,
-		// while a fixed "chest offset" assumes human proportions and would
-		// aim over a low, sprawling creature entirely. Also clamped to the
-		// top of the target's own bounding sphere. UNTESTED against
-		// non-humanoids as of 2026-08-25 - set this back to 1.0 in the INI
-		// to restore the exact previous behaviour without a rebuild if some
-		// creature reacts badly.
-		// How far above the bounding sphere's centre to aim, as a fraction
-		// of the sphere's RADIUS. Replaced a multiplier on the centre's
-		// height above the feet, which drifted visibly between characters -
-		// two standing humanoids measured 0.895 and 0.748, and a multiplier
-		// amplifies that spread while radius largely cancels it. See
-		// WorldBoundProbe::GetAimPoint for the numbers.
-		float aimPointRadiusFactor{ 0.25f };
+		// How high above the actor's own feet to aim, as a multiple of its
+		// bounding-sphere RADIUS. Replaced a lift added on top of the
+		// sphere's CENTRE, 2026-08-26, after measuring three pirates: the
+		// centre's height above the feet varies 12% between them while the
+		// radius varies far less, and that variance was landing directly on
+		// the aim point (12cm apart on three humans). See
+		// WorldBoundProbe::GetAimPoint for the table.
+		//
+		// A factor rather than a fixed chest offset because Starfield's
+		// non-humanoid creatures come in wildly different shapes: a factor
+		// scales with whatever body it is applied to, while a fixed offset
+		// assumes human proportions and would aim over a low, sprawling
+		// creature entirely. Still UNTESTED against non-humanoids.
+		//
+		// 1.03 is where the three measured humans already agreed under the
+		// old model (aim/radius of 0.990, 1.029, 1.028), so this reproduces
+		// the placement Alexander has been looking at rather than moving it
+		// - it removes the outlier, it does not re-aim the box. Raise it to
+		// aim higher up the body.
+		float aimPointHeightRadiusFactor{ 1.03f };
 
-		// Safety cap on that lift, as a fraction of the centre's height
-		// above the actor's own feet. Inactive for a standing target; it
-		// only bites for a downed or prone one, whose sphere stays large
-		// while its centre drops to near-floor, where an uncapped radius
-		// lift would aim above the body.
+		// Pose cap: how far above the sphere centre's own height the aim
+		// point may sit, as a fraction of that height. Inactive for a
+		// standing target; it only bites for a downed or prone one, whose
+		// sphere stays large while its centre drops to near-floor, where an
+		// uncapped radius-scaled height would aim well above the body.
+		// Confirmed firing on a real ragdoll 2026-08-26.
 		float aimPointMaxLiftFraction{ 0.5f };
 
 		// Starfield's hit and kill markers are hidden while Locked. That
