@@ -355,6 +355,21 @@ namespace VATS
 		// close". Set it to 0 to disable the cap and let the box scale all
 		// the way in.
 		float boxMaxSizeDistance{ 8.0f };
+		// The far end of the same idea: the distance beyond which the box
+		// stops shrinking. Further away it holds the size it had here.
+		//
+		// Together with boxMaxSizeDistance this turns the size into a
+		// bounded ramp rather than an open 1/distance curve - it varies by
+		// exactly the ratio between the two distances (2:1 at 8m and 16m)
+		// and holds flat outside them. That is Alexander's design,
+		// 2026-08-26: the size at 8m as the maximum, the size at 16m as the
+		// minimum, and smaller steps in between than an unbounded curve
+		// gives. It also retires the old fixed 16px floor, which had the
+		// same defect as the old fixed ceiling - an arbitrary pixel count
+		// that meant a different thing on every resolution and bit at
+		// whatever distance the maths happened to produce.
+		float boxMinSizeDistance{ 16.0f };
+
 
 
 		// Which side of the target box each bar sits on, independently.

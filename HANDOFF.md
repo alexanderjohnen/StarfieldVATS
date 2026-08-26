@@ -111,10 +111,14 @@ and was stripped from history once already — never add it to a commit.
   shrank when backing away. The old cap at the previous fixed 36px size is
   gone too: it bound from roughly 5-7m inward, freezing the box while the
   target kept growing, which reads as the box shrinking up close. The
-  ceiling is now `fBoxMaxSizeDistanceMeters` (8.0) — a DISTANCE Alexander
-  picked off a screenshot, not a pixel count, so it scales with the
-  creature and the display. Inside it the box holds that size. NOT yet
-  re-confirmed in-game.
+  size is now a bounded ramp between two DISTANCES rather than a pixel
+  range: `fBoxMaxSizeDistanceMeters` (8.0) and `fBoxMinSizeDistanceMeters`
+  (16.0), Alexander's design. Inside 8m it holds the size it has at 8m,
+  beyond 16m the size it has at 16m, plain 1/depth in between — so it
+  varies by exactly 2:1 and never inverts. Both old fixed pixel bounds
+  (36px ceiling, 16px floor) are gone; they meant a different thing on
+  every resolution and bit at whatever distance the maths produced. NOT
+  yet re-confirmed in-game.
 
 ## Open / unverified
 
@@ -155,8 +159,20 @@ and was stripped from history once already — never add it to a commit.
     while the sphere drops. NOT yet done — see the open question below,
     which may be the larger term.
 
-  **Still open, and it is the one thing the log cannot answer: does the
-  `FEET` cross actually land on the target's feet?** Every number in the
+  **The projection is confirmed sound near the screen centre** (two
+  screenshots, 2026-08-26, targets at 6m and 7m at x≈0.5): the `FEET`
+  cross lands on the actor's boots in both, and `SPHERE`/`AIM` sit on the
+  torso. So the FOV *value* is right and the box position is not grossly
+  broken. **What the screenshots do NOT settle is the FOV axis**, because
+  both targets were near the centre — where a wrong axis has zero error by
+  construction. A shot with the target at the far left or right edge is
+  still the outstanding test; treat `bCameraFovIsHorizontal` as probable
+  but unproven.
+
+  Measured off those same two screenshots: the aim point sits at **64% of
+  body height on one pirate and 68% on the other** — the same ~10cm spread
+  the log showed, now visible. Both are lower than a chest aim (~72-75%).
+  That is the anchor problem above, and it is the next thing to fix. Every number in the
   log is computed *through* the projection, so checking the projection
   against the log is circular — the only ground truth is the rendered
   image. Needs one screenshot with `bDebugAimMarkers=1` and the target

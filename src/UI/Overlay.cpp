@@ -469,18 +469,39 @@ namespace VATS::UI
 					float projectedRadiusPx = 0.0f;
 					float depth = 0.0f;
 					if (ProjectedRadiusPixels(aimPoint, radius, projectedRadiusPx, &depth)) {
-						// Cap the size by refusing to treat the target as
-						// any closer than a reference distance, rather than
-						// by clamping the resulting pixels. Same ceiling
-						// either way, but expressed in the units Alexander
-						// actually chose it in - he looked at a target at
-						// 8m and said that size - and it then scales with
-						// the actor's bounding sphere and with the display
-						// instead of being a fixed pixel count that means
-						// something different on every monitor.
-						const float maxSizeDistance = Settings::Get().boxMaxSizeDistance;
-						if (maxSizeDistance > 0.0f && depth < maxSizeDistance) {
-							projectedRadiusPx *= depth / maxSizeDistance;
+						// Both ends of the size range are DISTANCES, not
+						// pixel counts: the box is sized as though the
+						// target were never closer than one and never
+						// further than the other. Alexander's design
+						// (2026-08-26) - the size at 8m as the maximum, the
+						// size at 16m as the minimum, holding flat outside
+						// both. Between them it is the plain 1/depth curve,
+						// so it still only ever gets smaller as the target
+						// recedes; bounding it to a 2:1 ratio is what makes
+						// the steps small.
+						//
+						// Expressing both ends as distances rather than
+						// pixels is the whole point. The previous ceiling
+						// (36px) and floor (16px) were arbitrary numbers
+						// that meant something different on every
+						// resolution and bit at whatever distance the maths
+						// happened to produce. Distances scale with the
+						// actor's own bounding sphere and with the display,
+						// so a larger creature stays framed and a 4K
+						// monitor behaves like this one.
+						const float nearDistance = std::max(0.0f, Settings::Get().boxMaxSizeDistance);
+						float       farDistance = Settings::Get().boxMinSizeDistance;
+						if (!(farDistance > 0.0f)) {
+							farDistance = depth;  // 0 disables the far end
+						}
+						// Guards a swapped or nonsensical pair in the INI:
+						// the ramp collapses to a single size rather than
+						// inverting.
+						farDistance = std::max(farDistance, nearDistance);
+
+						const float sizingDepth = std::clamp(depth, nearDistance, farDistance);
+						if (sizingDepth > 0.0f) {
+							projectedRadiusPx *= depth / sizingDepth;
 						}
 
 						// Scaled DOWN from the projected radius, not equal to
@@ -490,13 +511,11 @@ namespace VATS::UI
 						// size (2026-08-25, first attempt - the scaling was
 						// right, the scale was not).
 						const float scaled = projectedRadiusPx * Settings::Get().targetBoxScale;
-						// Only a floor and a sanity bound remain here. The
-						// look ceiling lives in the distance cap above -
-						// this once clamped to the old fixed 36px, which
-						// bound at whatever distance the maths happened to
-						// produce (roughly 5-7m) and meant a different
-						// thing on every resolution.
-						halfH = std::clamp(scaled, 16.0f, io.DisplaySize.y * 0.45f);
+						// Pure sanity bounds - both ends of the LOOK are
+						// set by the two distances above. This used to
+						// clamp to a fixed 16px..36px, which is where the
+						// resolution dependence lived.
+						halfH = std::clamp(scaled, 2.0f, io.DisplaySize.y * 0.45f);
 						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
 					}
 				}
