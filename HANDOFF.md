@@ -238,7 +238,17 @@ and was stripped from history once already — never add it to a commit.
   real faction/relationship check is out of reach (`IsHostileToActor` is ID
   0, and reconstructing it means walking the actor's faction list, the
   player's, and the faction-reaction records).
-- **Crit markers still occasionally appear seconds after a kill.** The game
+- **Diagnostics need one INI switch before release.** Several log
+  unconditionally (`worldBound`, `BoneProbe`, health). A shipping mod
+  should be quiet, but "turn logging off" must mean flipping a setting,
+  not deleting or commenting out code - these diagnostics decided nearly
+  every question this week, and log volume has affected timing here
+  before, so a release build can behave differently from a test run and
+  you need to be able to switch them back on without a rebuild. Half an
+  hour of work, not a feature. (Alexander's point, 2026-08-26: the log
+  size itself is a non-issue - the file is truncated fresh every launch.)
+- **Crit markers still occasionally appear seconds after a kill.**
+ The game
   raises those events late; suppressing until they stop would mean
   suppressing indefinitely, which would break the base game's HUD. The
   2500ms ceiling is a deliberate compromise, not a fix.
@@ -288,7 +298,29 @@ already has. Estimated one to two sessions.
   and `currentLabel` was confirmed readable. Would need low-rate polling
   from the game thread — never per-frame from the render thread, which is
   the mechanism suspected in an earlier crash.
+- **Per-body-part targeting — DECIDED AGAINST, 2026-08-26. Do not propose
+  it again without new evidence.** Alexander's reasoning, and he has the
+  strongest kind: a three-slot version was built and played, and it was
+  not fun - nowhere near FO76's feel. On top of that, Starfield has none
+  of the mechanics that make body parts mean anything: no crippling, no
+  dismemberment, no limb reaction animations. A body part is a damage
+  multiplier and nothing else, so it is head or not-head. And creature
+  rigs differ completely from each other (`HumanExportRoot` vs
+  `MantidA_mrRigRoot` vs `HopperA_mrRigRoot`), so it could never have been
+  general.
+
+  The one case worth keeping from it - shooting an enemy who is only
+  partly behind cover - **is the occlusion feature, not this one**. A
+  depth-buffer test answers "which point on this target is exposed", so
+  the aim point can move onto the visible part silently: no slots, no UI,
+  no decision for the player to make, and nothing new to balance.
+
+  Claude proposed this feature twice from the FO76 framing without first
+  checking whether Starfield has the mechanics underneath it. That is the
+  same class of mistake as the three aim-point models: reasoning from a
+  model instead of measuring the thing.
 - **Ship-combat VATS** — see the `starfield-vats-mod-design` memory.
+
 
 ## Persistent memory
 
