@@ -78,11 +78,27 @@ namespace VATS::UI
 		}
 		const float aspect = displayW / displayH;
 
-		// Bethesda convention: the configured FOV is horizontal (matches
-		// Starfield's own "fFPGeometryFOV:Camera" setting).
-		const float fovXRad = static_cast<float>(Settings::Get().cameraFovDegrees) * kDegToRad;
-		const float tanHalfFovX = std::tan(fovXRad * 0.5f);
-		const float tanHalfFovY = tanHalfFovX / aspect;
+		// Which axis the configured FOV describes is a setting, not an
+		// assumption. It was assumed horizontal (Bethesda convention) from
+		// the day this was written and never checked, and the failure mode
+		// of getting it wrong is the exact symptom this project has been
+		// chasing: the error is zero at the screen centre and grows toward
+		// the edges, so a target being looked straight at looks fine while
+		// one off to the side does not.
+		//
+		// Note also which game setting to match: "fFPWorldFOV" in
+		// StarfieldPrefs.ini, NOT "fFPGeometryFOV" (the first-person
+		// viewmodel FOV), which is what an earlier comment here named. On
+		// Alexander's machine those read 89.6 and 90 respectively.
+		const float fovRad = Settings::Get().cameraFovDegrees * kDegToRad;
+		const float tanHalfFov = std::tan(fovRad * 0.5f);
+
+		float tanHalfFovX = tanHalfFov;
+		float tanHalfFovY = tanHalfFov / aspect;
+		if (!Settings::Get().cameraFovIsHorizontal) {
+			tanHalfFovY = tanHalfFov;
+			tanHalfFovX = tanHalfFov * aspect;
+		}
 
 		const float ndcX = (rightComp / fwdComp) / tanHalfFovX;
 		const float ndcY = (upComp / fwdComp) / tanHalfFovY;

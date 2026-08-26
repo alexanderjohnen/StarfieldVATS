@@ -32,6 +32,14 @@ namespace VATS
 		// as the target shrank away (Alexander, 2026-08-25). Returns false
 		// if the chain doesn't resolve, in which case the caller keeps its
 		// fixed fallback size.
+		// The bounding sphere's centre, raw - no lift, no clamping. Only
+		// the diagnostic overlay (Settings::debugAimMarkers) uses this:
+		// telling apart "the projection is off" from "the lift is off"
+		// needs the unmodified centre next to the lifted aim point, and
+		// GetAimPoint deliberately returns only the latter. Returns false
+		// if the offset chain doesn't resolve.
+		[[nodiscard]] static bool GetBoundCenter(RE::Actor* a_actor, RE::NiPoint3& a_out);
+
 		[[nodiscard]] static bool GetBoundRadius(RE::Actor* a_actor, float& a_out);
 
 		// Logs the locked target's worldBound.center/radius next to its

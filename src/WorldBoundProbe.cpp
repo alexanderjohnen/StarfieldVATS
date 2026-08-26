@@ -140,6 +140,16 @@ namespace VATS
 		return out;
 	}
 
+	bool WorldBoundProbe::GetBoundCenter(RE::Actor* a_actor, RE::NiPoint3& a_out)
+	{
+		RE::NiBound bound{};
+		if (!TryReadWorldBound(a_actor, bound)) {
+			return false;
+		}
+		a_out = bound.center;
+		return true;
+	}
+
 	bool WorldBoundProbe::GetBoundRadius(RE::Actor* a_actor, float& a_out)
 	{
 		RE::NiBound bound{};

@@ -49,12 +49,37 @@ namespace VATS
 		std::uint32_t targetConeDeg{ 35 };
 		std::uint32_t maxTargetRange{ 5000 };  // world units
 
-		// Horizontal FOV in degrees, matching Bethesda's own convention
-		// (Starfield's own "fFPGeometryFOV:Camera" setting is horizontal,
-		// default 90 — confirmed via Alexander's console output). Used to
-		// self-compute the HUD projection since locating the engine's own
-		// camera object in memory failed after three separate strategies.
-		std::uint32_t cameraFovDegrees{ 90 };
+		// FOV in degrees, used to self-compute the HUD projection since
+		// locating the engine's own camera object in memory failed after
+		// three separate strategies.
+		//
+		// Corrected 2026-08-26: this used to name "fFPGeometryFOV" as the
+		// setting to match. That one governs the first-person *viewmodel*
+		// (hands and weapon), not the world projection. The world FOV is
+		// "fFPWorldFOV" in StarfieldPrefs.ini, and on Alexander's machine
+		// the two do not agree - 90 vs 89.6. Small on its own, but it
+		// means every value ever set here was being matched against the
+		// wrong game setting.
+		//
+		// Float rather than int for exactly that reason: the game writes
+		// the world FOV with decimals, and 89.6 cannot be spelled as an
+		// int.
+		float cameraFovDegrees{ 90.0f };
+
+		// Whether the value above is the HORIZONTAL field of view (with
+		// the vertical one derived from the aspect ratio) or the vertical
+		// one. The projection has assumed horizontal since it was written
+		// and that assumption has never been tested.
+		//
+		// It matters, and it matters in a specific shape: get the axis
+		// wrong and the resulting error is ZERO at the screen centre and
+		// grows the further the target sits from it. That is exactly the
+		// "off on some characters, fine on others" pattern Alexander keeps
+		// reporting - a target he is looking straight at versus one off to
+		// the side. Hence an INI toggle: flipping it settles the question
+		// in one look, with no rebuild and no fourth guess at
+		// fAimPointRadiusFactor.
+		bool cameraFovIsHorizontal{ true };
 
 		// --- Aim assist (2026-08-22) ---
 		// Hit chance is a cone around the crosshair, Alexander's idea
@@ -313,6 +338,21 @@ namespace VATS
 		// confused for a property of the target, so it defaults below.
 		bool healthBarBelowBox{ false };
 		bool resourceBarBelowBox{ true };
+
+		// Draws a labelled cross at each of the three candidate anchor
+		// points - the actor's own origin (feet), the raw bounding-sphere
+		// centre, and the lifted aim point the box actually uses - and
+		// logs where each one lands on screen.
+		//
+		// This is the measurement the box-centring problem has been
+		// missing. If the FEET cross sits on the target's feet, the
+		// projection is correct and whatever error is left lives in the
+		// vertical lift alone. If the feet cross drifts too - and drifts
+		// further the further the target is from the screen centre - the
+		// projection is the cause, and no amount of aim-point tuning will
+		// ever fix it. Off by default; this is a diagnostic, not a
+		// feature.
+		bool debugAimMarkers{ false };
 
 		bool  moveCritMarker{ false };
 		float critMarkerOffsetX{ 0.0f };

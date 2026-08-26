@@ -16,6 +16,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <unordered_map>
 #include <cstdio>
@@ -299,6 +300,98 @@ namespace VATS::UI
 			return true;
 		}
 
+		// --- Box-centring diagnostic (Settings::debugAimMarkers) ---
+		//
+		// Three attempts to centre the target box have all adjusted the
+		// vertical aim point, and all three were guesses, because nobody
+		// had yet measured which of the two candidate causes is actually
+		// at work. This draws both candidates on screen at once so a
+		// single look settles it:
+		//
+		//   FEET   - the actor's own origin, projected. Nothing is added
+		//            to it, so if this cross does not sit on the target's
+		//            feet, the PROJECTION is wrong (FOV value or FOV axis)
+		//            and no aim-point tuning can ever fix the box.
+		//   SPHERE - the raw bounding-sphere centre. If FEET is right and
+		//            this one is not on the target's midriff, the sphere
+		//            itself is off-centre for that skeleton (a weapon or
+		//            backpack pulling it sideways would show here as a
+		//            HORIZONTAL offset, which every theory so far has
+		//            assumed away).
+		//   AIM    - the lifted point the box is actually drawn at. If
+		//            FEET and SPHERE are both right and only this one is
+		//            high or low, the lift is the whole problem and
+		//            fAimPointRadiusFactor is the right knob after all.
+		void DrawCross(ImDrawList* a_dl, float a_x, float a_y, ImU32 a_color, const char* a_label)
+		{
+			constexpr float kArm = 11.0f;
+			a_dl->AddLine(ImVec2{ a_x - kArm, a_y }, ImVec2{ a_x + kArm, a_y }, kOutline, 4.0f);
+			a_dl->AddLine(ImVec2{ a_x, a_y - kArm }, ImVec2{ a_x, a_y + kArm }, kOutline, 4.0f);
+			a_dl->AddLine(ImVec2{ a_x - kArm, a_y }, ImVec2{ a_x + kArm, a_y }, a_color, 2.0f);
+			a_dl->AddLine(ImVec2{ a_x, a_y - kArm }, ImVec2{ a_x, a_y + kArm }, a_color, 2.0f);
+			DrawCenteredText(a_dl, a_x, a_y + kArm + 2.0f, a_label, a_color);
+		}
+
+		void DrawAimDiagnostics(RE::Actor* a_actor)
+		{
+			RE::NiPoint3 feet{};
+			if (!SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &feet, sizeof(feet))) {
+				return;
+			}
+			RE::NiPoint3 centre{};
+			const bool   haveCentre = WorldBoundProbe::GetBoundCenter(a_actor, centre);
+			const RE::NiPoint3 aim = WorldBoundProbe::GetAimPoint(a_actor, feet);
+
+			float fx = 0.0f, fy = 0.0f, cx = 0.0f, cy = 0.0f, ax = 0.0f, ay = 0.0f;
+			const bool haveFeetScreen = WorldToScreen(feet, fx, fy);
+			const bool haveCentreScreen = haveCentre && WorldToScreen(centre, cx, cy);
+			const bool haveAimScreen = WorldToScreen(aim, ax, ay);
+
+			const auto& io = ImGui::GetIO();
+			auto*       dl = ImGui::GetForegroundDrawList();
+			if (haveFeetScreen) {
+				DrawCross(dl, fx * io.DisplaySize.x, fy * io.DisplaySize.y, IM_COL32(90, 240, 120, 240), "FEET");
+			}
+			if (haveCentreScreen) {
+				DrawCross(dl, cx * io.DisplaySize.x, cy * io.DisplaySize.y, IM_COL32(90, 180, 255, 240), "SPHERE");
+			}
+			if (haveAimScreen) {
+				DrawCross(dl, ax * io.DisplaySize.x, ay * io.DisplaySize.y, IM_COL32(255, 100, 215, 240), "AIM");
+			}
+
+			// Logged on movement rather than per frame - same reasoning as
+			// every other diagnostic here: log volume has affected timing
+			// in this project before. The offset from screen centre is
+			// logged alongside because it is the discriminator for the FOV
+			// axis: a wrong axis produces error proportional to it, a
+			// wrong aim point does not.
+			if (!haveFeetScreen) {
+				return;
+			}
+			struct LastLogged
+			{
+				float x;
+				float y;
+			};
+			static std::unordered_map<std::uint32_t, LastLogged> s_last;
+			const std::uint32_t                                  formID = a_actor->GetFormID();
+			const auto                                           it = s_last.find(formID);
+			if (it != s_last.end() &&
+				std::abs(it->second.x - fx) < 0.01f && std::abs(it->second.y - fy) < 0.01f) {
+				return;
+			}
+			s_last[formID] = LastLogged{ fx, fy };
+
+			const auto& settings = Settings::Get();
+			REX::INFO("[VATS] aimdiag: formID=0x{:08X} feet=({:.3f},{:.3f}) sphere=({:.3f},{:.3f}) aim=({:.3f},{:.3f}) offCentre=({:+.3f},{:+.3f}) display={:.0f}x{:.0f} fov={:.2f} horizontal={}",
+				formID, fx, fy,
+				haveCentreScreen ? cx : -1.0f, haveCentreScreen ? cy : -1.0f,
+				haveAimScreen ? ax : -1.0f, haveAimScreen ? ay : -1.0f,
+				fx - 0.5f, fy - 0.5f,
+				io.DisplaySize.x, io.DisplaySize.y,
+				settings.cameraFovDegrees, settings.cameraFovIsHorizontal);
+		}
+
 		// Draws the box for an already-resolved on-screen position (see
 		// ResolveOnScreen). Kept separate so the hint text and the box can
 		// share one resolution per frame instead of computing it twice.
@@ -409,6 +502,10 @@ namespace VATS::UI
 			}
 
 			DrawTargetBox(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color, halfW, halfH);
+
+			if (Settings::Get().debugAimMarkers) {
+				DrawAimDiagnostics(a_actor);
+			}
 
 			auto* dl = ImGui::GetForegroundDrawList();
 

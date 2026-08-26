@@ -1,4 +1,4 @@
-# StarfieldVATS — Handoff (2026-08-25)
+# StarfieldVATS — Handoff (2026-08-26)
 
 Read this first in a new chat. Point-in-time snapshot — verify against the
 actual code and log before trusting anything here; offsets and "confirmed"
@@ -110,33 +110,51 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
-- **The box still does not sit reliably centred on the target — pick this
-  up first.** Alexander's report after the radius change: better, but
-  still off on some characters. Switching the vertical lift from a
-  height-multiplier to a fraction of the bounding sphere's *radius*
-  (capped by pose) reduced the drift but did not remove it, so the
-  remaining error is probably not in the lift at all.
+- **The box still does not sit reliably centred on the target. The
+  measurement to settle it is now built and deployed, untested
+  (2026-08-26) — run it before touching any number.** Alexander's report
+  after the radius change: better, but still off on some characters.
 
-  What has *not* been checked, and should be before anything else is
-  adjusted:
-  - **Whether the error is vertical or horizontal.** Everything so far has
-    assumed vertical. `bound.center`'s x/y are used unmodified, so a
-    horizontal offset would have a completely different cause - and
-    `BoneProbe` did log small non-zero x/y deltas between the root bone
-    and the sphere centre.
-  - **Whether the projection is the culprit rather than the aim point.**
-    `CameraProject` self-computes a pinhole projection using
-    `iCameraFovDegrees`, which must match the game's actual FOV setting.
-    If Alexander's in-game FOV is not 90, every box is systematically off
-    and no aim-point tuning will ever fix it.
-  - **Whether `worldBound` is simply off-centre for some skeletons**, e.g.
-    when a weapon or backpack is enclosed in the sphere. That would
-    explain per-character variation better than any factor does.
+  Two findings from reading, before any in-game test:
 
-  The diagnostic already in place logs `feetZ / centreZ / centreAboveFeet
-  / radius / lift`. Extending it with the projected screen position and
-  the actor's x/y would settle direction and cause in one test. Do not
-  adjust `fAimPointRadiusFactor` again before that - it has now been
+  1. **The FOV setting was being matched against the wrong game setting.**
+     `CameraProject` documented itself as matching `fFPGeometryFOV`. That
+     one is the first-person *viewmodel* FOV (hands and weapon); the world
+     projection uses **`fFPWorldFOV`**. On Alexander's machine
+     `StarfieldCustom.ini` has `fFPGeometryFOV=90` while
+     `StarfieldPrefs.ini` has `fFPWorldFOV=89.6000`. The setting is now a
+     float (`fCameraFovDegrees`, was `iCameraFovDegrees` — 89.6 cannot be
+     spelled as an int) and both the deployed INI and the template are set
+     to 89.6. 0.4° is small; the point is that the reference was wrong.
+  2. **The FOV *axis* has never been tested.** The projection has assumed
+     Bethesda's value is horizontal since the day it was written. If it is
+     actually vertical, the resulting error is **zero at the screen centre
+     and grows toward the edges** — which is precisely the shape of "off
+     on some characters, fine on others" (a target being looked straight
+     at versus one off to the side). New INI toggle
+     `bCameraFovIsHorizontal` (default 1) flips it without a rebuild.
+
+  **The test to run: set `bDebugAimMarkers=1`, lock a target, look.** It
+  draws three labelled crosses and logs their screen positions
+  (`[VATS] aimdiag:` — includes the offset from screen centre, the
+  discriminator for the axis question):
+
+  - `FEET` — the actor's own origin, projected with nothing added. If this
+    is not on the target's feet, the **projection** is wrong and no
+    aim-point tuning can ever fix the box. Check it both with the target
+    centred and with the target off to the side of the screen: growing
+    error toward the edge means the FOV axis, constant error means the FOV
+    value.
+  - `SPHERE` — the raw bounding-sphere centre. If `FEET` is right and this
+    sits sideways off the body, the sphere is off-centre for that skeleton
+    (weapon/backpack), which would explain per-character variation better
+    than any factor. Note this is the first check that can see a
+    **horizontal** error at all — every theory so far assumed vertical.
+  - `AIM` — the lifted point the box is actually drawn at. If `FEET` and
+    `SPHERE` are both right and only this is high or low, the lift really
+    is the problem and `fAimPointRadiusFactor` is the right knob.
+
+  Do not adjust `fAimPointRadiusFactor` before that test — it has now been
   guessed at three times.
 
   Tunables meanwhile: `fAimPointRadiusFactor`, `fAimPointMaxLiftFraction`.
