@@ -130,52 +130,51 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
-- **The box still does not sit reliably centred on the target. The
-  measurement to settle it is now built and deployed, untested
-  (2026-08-26) — run it before touching any number.** Alexander's report
-  after the radius change: better, but still off on some characters.
+- **Box centring — FIRST REAL MEASUREMENT TAKEN 2026-08-26.** 1052
+  `aimdiag` samples across two humanoids (`0x0017E6A1`, `0x0017E6A2`),
+  2560x1440, fov 89.6 horizontal, targets moved across the full width of
+  the screen (projected feet x from 0.016 to 0.969). What it settled:
 
-  Two findings from reading, before any in-game test:
+  - **The error is not horizontal.** `|sphere.x - feet.x|` averages
+    0.0025 normalized — about 6 px at 2560 wide — with a worst single
+    frame of 0.034. The "bounding sphere pulled sideways by a weapon or
+    backpack" theory is dead for humanoids. Every remaining candidate is
+    vertical.
+  - **The per-character spread is in the sphere CENTRE, not in the lift.**
+    World-space, from the `aimpoint` lines: the two actors have nearly
+    identical radii (1.137 vs 1.117, 1.8% apart) and therefore nearly
+    identical lifts (0.284 vs 0.279) — the radius-based lift model is
+    doing its job. But their `centreAboveFeet` reads 0.940 vs 0.839, 12%
+    apart, and that difference passes straight through: aim points end up
+    1.224 vs 1.119 above the feet, **10 cm apart on two humans**.
+  - Consequence, if a fix is wanted: anchor the aim point at the FEET and
+    scale it by the radius (`feet.z + k * radius`, k ~1.05), rather than
+    anchoring at the sphere centre and lifting from there. Radius is the
+    stable quantity (1.8% spread), the sphere centre is not (12%). Keep a
+    pose cap for prone/ragdoll bodies, where the root stays on the ground
+    while the sphere drops. NOT yet done — see the open question below,
+    which may be the larger term.
 
-  1. **The FOV setting was being matched against the wrong game setting.**
-     `CameraProject` documented itself as matching `fFPGeometryFOV`. That
-     one is the first-person *viewmodel* FOV (hands and weapon); the world
-     projection uses **`fFPWorldFOV`**. On Alexander's machine
-     `StarfieldCustom.ini` has `fFPGeometryFOV=90` while
-     `StarfieldPrefs.ini` has `fFPWorldFOV=89.6000`. The setting is now a
-     float (`fCameraFovDegrees`, was `iCameraFovDegrees` — 89.6 cannot be
-     spelled as an int) and both the deployed INI and the template are set
-     to 89.6. 0.4° is small; the point is that the reference was wrong.
-  2. **The FOV *axis* has never been tested.** The projection has assumed
-     Bethesda's value is horizontal since the day it was written. If it is
-     actually vertical, the resulting error is **zero at the screen centre
-     and grows toward the edges** — which is precisely the shape of "off
-     on some characters, fine on others" (a target being looked straight
-     at versus one off to the side). New INI toggle
-     `bCameraFovIsHorizontal` (default 1) flips it without a rebuild.
+  **Still open, and it is the one thing the log cannot answer: does the
+  `FEET` cross actually land on the target's feet?** Every number in the
+  log is computed *through* the projection, so checking the projection
+  against the log is circular — the only ground truth is the rendered
+  image. Needs one screenshot with `bDebugAimMarkers=1` and the target
+  **near the left or right edge of the screen**, because that is where a
+  wrong FOV axis shows: flipping `bCameraFovIsHorizontal` scales both NDC
+  axes by the aspect ratio about the screen centre, so the error is zero
+  in the middle and grows to ~78% of the offset at the edge. A cross a
+  long way off the actor at the edge but correct in the middle = the axis.
+  Constant offset everywhere = the FOV value.
 
-  **The test to run: set `bDebugAimMarkers=1`, lock a target, look.** It
-  draws three labelled crosses and logs their screen positions
-  (`[VATS] aimdiag:` — includes the offset from screen centre, the
-  discriminator for the axis question):
+  Prior reasoning worth keeping: a *vertical* FOV of 89.6 would be an
+  absurd fisheye (equivalent to ~119 horizontal), so horizontal is very
+  likely already right — but "very likely" is what this project keeps
+  getting burned by, and the screenshot costs one shot.
 
-  - `FEET` — the actor's own origin, projected with nothing added. If this
-    is not on the target's feet, the **projection** is wrong and no
-    aim-point tuning can ever fix the box. Check it both with the target
-    centred and with the target off to the side of the screen: growing
-    error toward the edge means the FOV axis, constant error means the FOV
-    value.
-  - `SPHERE` — the raw bounding-sphere centre. If `FEET` is right and this
-    sits sideways off the body, the sphere is off-centre for that skeleton
-    (weapon/backpack), which would explain per-character variation better
-    than any factor. Note this is the first check that can see a
-    **horizontal** error at all — every theory so far assumed vertical.
-  - `AIM` — the lifted point the box is actually drawn at. If `FEET` and
-    `SPHERE` are both right and only this is high or low, the lift really
-    is the problem and `fAimPointRadiusFactor` is the right knob.
-
-  Do not adjust `fAimPointRadiusFactor` before that test — it has now been
-  guessed at three times.
+  For scale when judging: 10 cm of aim-point error at 8 m is about 16 px
+  at 1440p. If the box looks *clearly* off, something bigger than the
+  spread measured above is also at work.
 
   Tunables meanwhile: `fAimPointRadiusFactor`, `fAimPointMaxLiftFraction`.
 - **Never tested against non-humanoid creatures at all.** The aim point is
