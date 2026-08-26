@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <array>
+#include <chrono>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -69,7 +72,99 @@ namespace VATS
 		// fall - also observed in testing) is preserved.
 		constexpr float kMinAimPointAboveFeet = 0.1f;
 
+		// --- Aim-point smoothing ---
+		//
+		// The bounding sphere BREATHES with the animation, and on some
+		// creatures it does far more than breathe. Measured 2026-08-26 on
+		// a flying alien (0xFF098288, 5938 samples): its radius swings
+		// 3.09..4.50 and the height of its centre above its own root
+		// swings 0.14..2.18 - a two-metre range, which at the 1.5x factor
+		// would throw the aim point around by over three metres in time
+		// with the wingbeat. Alexander saw it immediately: "die Box bewegt
+		// sich mit dem Flügelschlagen mit".
+		//
+		// For comparison, a human guard's centre swings 0.09 and the
+		// ground-huggers about 0.32. So this is not a flying-creature
+		// special case, it is the same effect at every scale, and it is
+		// there in every model built on the bounding sphere. Smoothing is
+		// therefore not a patch over the current model - it is a missing
+		// piece that all three models needed.
+		//
+		// Smoothed in OFFSET-FROM-ROOT space, not in world space. The
+		// actor's ref origin already tracks its real movement exactly, so
+		// only the animation-driven part is filtered: a sprinting target
+		// stays pinned with zero lag while its wings stop mattering.
+		// Smoothing world position instead would make the box trail behind
+		// anything that moves.
+		constexpr std::size_t kSmoothSlots = 8;
+
+		struct SmoothSlot
+		{
+			std::uint32_t                         formID{ 0 };
+			RE::NiPoint3                          offset{};
+			std::chrono::steady_clock::time_point last{};
+		};
+
+		// GetAimPoint is called from the render thread (Overlay) AND from
+		// AimAssist's steering thread, so this state needs a lock. An
+		// unguarded map shared across those two threads is precisely the
+		// shape of the heap corruption this project already spent a day
+		// on. A fixed array rather than a map for the same reason: no
+		// allocation, no rehash, nothing to corrupt.
+		std::mutex                            g_smoothLock;
+		std::array<SmoothSlot, kSmoothSlots>  g_smooth{};
+
+		[[nodiscard]] RE::NiPoint3 SmoothOffset(std::uint32_t a_formID, const RE::NiPoint3& a_raw, float a_tau)
+		{
+			if (!(a_tau > 0.0f)) {
+				return a_raw;
+			}
+
+			const auto             now = std::chrono::steady_clock::now();
+			const std::scoped_lock lock(g_smoothLock);
+
+			SmoothSlot* slot = nullptr;
+			for (auto& candidate : g_smooth) {
+				if (candidate.formID == a_formID) {
+					slot = &candidate;
+					break;
+				}
+			}
+			if (!slot) {
+				// Reuse the slot untouched for longest - with 8 slots and
+				// one locked target at a time this effectively never
+				// evicts anything live.
+				slot = &g_smooth[0];
+				for (auto& candidate : g_smooth) {
+					if (candidate.formID == 0 || candidate.last < slot->last) {
+						slot = &candidate;
+					}
+				}
+				*slot = SmoothSlot{ a_formID, a_raw, now };
+				return a_raw;
+			}
+
+			const float dt = std::chrono::duration<float>(now - slot->last).count();
+			slot->last = now;
+
+			// Out of sight long enough that the old value means nothing -
+			// snap rather than gliding in from wherever the target used to
+			// be. Also covers a negative dt from a clock oddity.
+			constexpr float kStaleSeconds = 1.5f;
+			if (!(dt > 0.0f) || dt > kStaleSeconds) {
+				slot->offset = a_raw;
+				return a_raw;
+			}
+
+			const float alpha = 1.0f - std::exp(-dt / a_tau);
+			slot->offset.x += (a_raw.x - slot->offset.x) * alpha;
+			slot->offset.y += (a_raw.y - slot->offset.y) * alpha;
+			slot->offset.z += (a_raw.z - slot->offset.z) * alpha;
+			return slot->offset;
+		}
+
 		[[nodiscard]] float Distance(const RE::NiPoint3& a_a, const RE::NiPoint3& a_b)
+
 		{
 			const float dx = a_a.x - a_b.x;
 			const float dy = a_a.y - a_b.y;
@@ -92,61 +187,59 @@ namespace VATS
 
 		const auto& settings = Settings::Get();
 
-		// Anchor the aim point at the FEET and scale it by the bounding
-		// sphere's RADIUS, rather than starting at the sphere's centre and
-		// lifting from there.
+		// Aim at a fixed fraction above the bounding sphere's CENTRE
+		// HEIGHT, and use nothing else. The radius is no longer part of
+		// this calculation at all.
 		//
-		// Measured 2026-08-26 across three pirates, which is what finally
-		// separated the two candidates:
+		// Third model, and the first one chosen with non-humanoids in the
+		// sample - which is what changed the answer. Measured 2026-08-26:
 		//
-		//   actor       radius  centreAboveFeet  c/r    aim (old model)
-		//   0x0017E6A2  1.099   0.814            0.741  1.088
-		//   0x0017E6A1  1.173   0.913            0.778  1.207
-		//   0x0017E688  1.112   0.865            0.778  1.143
+		//   creature          radius  centreAboveFeet  centre/radius
+		//   human pirate      1.03    0.84             0.81
+		//   mantid (spidery)  2.96    1.40             0.47
+		//   hopper (low)      2.16    0.30             0.14
 		//
-		// The centre's height above the feet is the noisy quantity: two of
-		// the three sit at 0.778 of their own radius and the third at
-		// 0.741, and that difference passes straight through to the aim
-		// point. Old model spread: 12cm on three humans, which Alexander
-		// has been seeing since the beginning as "the box sits differently
-		// on different characters". Anchoring on the radius instead cuts
-		// it to about 8cm and, more to the point, pulls the outlier back in
-		// line rather than preserving it.
+		// The radius measures a creature's LONGEST EXTENT, not its height.
+		// A sprawling ground-hugger reads a radius of 2.16 with its body
+		// 30cm off the ground, so the feet+radius model wanted to aim
+		// 2.22m up - several body lengths above it. Every non-humanoid
+		// measured hit the pose cap, all four of them, which means the
+		// cap rather than the model was producing the aim point for an
+		// entire class of target. When the safety net carries the load,
+		// the net is the model and the model is noise. So the net became
+		// the model.
 		//
-		// Some spread is CORRECT - a taller pirate's chest really is
-		// higher - so the goal was never zero. It was to track actual body
-		// size rather than the sphere centre's own wobble, and radius is
-		// the quantity that does that: aim/radius reads 0.990, 1.029, 1.028
-		// under the old model, i.e. two of three already agree to within
-		// 0.1% once expressed this way.
+		// Centre height degrades gracefully across all of them because it
+		// is a height rather than a size. At 1.5x: 1.26m on a human (~70%
+		// of body height, i.e. the chest - and higher than the 64-68% the
+		// previous model measured on screenshots), 0.46m on the hopper,
+		// 2.10m on the mantid. It also absorbs pose for free, since a
+		// crouching enemy's centre drops and the aim point drops with it.
 		//
-		// x/y are still the sphere centre's, untouched. They were measured
-		// as sound: |sphere.x - feet.x| averages 0.0068 normalized across
-		// 1004 samples spanning the full width of the screen.
+		// This was the original 2026-08-25 model, dropped then because it
+		// "amplified the spread between characters". With creatures in the
+		// sample that objection reads differently: most of that spread is
+		// real - a crouching enemy's chest IS lower, a taller pirate's
+		// chest IS higher - and 3cm of spread between two pirates is a
+		// cheap price for not aiming two metres over an alien.
 		const float centreAboveFeet = out.z - a_feet.z;
-		float       aimZ = a_feet.z + settings.aimPointHeightRadiusFactor * bound.radius;
+		const float aimZ = a_feet.z + settings.aimPointCentreFactor * std::max(0.0f, centreAboveFeet);
 
-		// Pose cap, unchanged in spirit from the previous model and now
-		// applied unconditionally. A body on the ground keeps a large
-		// radius while its centre drops to near-floor, so an uncapped
-		// radius-scaled height would aim well above a corpse. Capping at a
-		// fraction above the centre's own height scales down with the pose
-		// exactly when it needs to, and is inactive for a standing target
-		// (0.913 * 1.5 = 1.370 against an aim of 1.206 on the tallest of
-		// the three above).
-		//
-		// Confirmed exercised in the same session: 11 frames of a
-		// collapsing actor logged an on-screen body height under 0.05, and
-		// the lift ratios there run up to 0.61 - only reachable via the
-		// kMinAimPointAboveFeet floor below, i.e. both safety paths fired
-		// on a real ragdoll for the first time.
-		const float capZ = a_feet.z + std::max(0.0f, centreAboveFeet) * (1.0f + settings.aimPointMaxLiftFraction);
-		if (aimZ > capZ) {
-			aimZ = capZ;
-		}
-
+		// Floor for a collapsed body, whose centre can read at or below
+		// its own feet for a frame - measured on a dead mantid at
+		// centreAboveFeet = -0.008. Never aim into the floor.
 		const float minZ = a_feet.z + kMinAimPointAboveFeet;
 		out.z = std::max(aimZ, minZ);
+
+		// Low-pass the whole offset from the actor's root, x/y included:
+		// the sprawling ground-huggers put their sphere centre 0.035 of
+		// screen width off their own root and it wanders there too.
+		const RE::NiPoint3 rawOffset{ out.x - a_feet.x, out.y - a_feet.y, out.z - a_feet.z };
+		const RE::NiPoint3 smoothed = SmoothOffset(a_actor->GetFormID(), rawOffset,
+			settings.aimPointSmoothingSeconds);
+		out.x = a_feet.x + smoothed.x;
+		out.y = a_feet.y + smoothed.y;
+		out.z = std::max(a_feet.z + smoothed.z, minZ);
 
 		// One-shot per actor. This is the measurement the model above was
 		// chosen from; keep logging it so a fourth pirate or a creature can
@@ -154,10 +247,10 @@ namespace VATS
 		{
 			static std::unordered_set<std::uint32_t> s_logged;
 			if (s_logged.insert(a_actor->GetFormID()).second) {
-				REX::INFO("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} centre/radius={:.3f} -> aimAboveFeet={:.3f} (cap={:.3f})",
+				REX::INFO("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} centre/radius={:.3f} -> aimAboveFeet={:.3f}",
 					a_actor->GetFormID(), a_feet.z, bound.center.z, centreAboveFeet, bound.radius,
 					bound.radius > 0.0f ? centreAboveFeet / bound.radius : 0.0f,
-					out.z - a_feet.z, capZ - a_feet.z);
+					out.z - a_feet.z);
 			}
 		}
 

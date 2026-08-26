@@ -277,34 +277,33 @@ namespace VATS
 		// humanoid, and visibly too low. 1.5 lands around chest height.
 		//
 		// Deliberately proportional rather than a fixed distance, because
-		// How high above the actor's own feet to aim, as a multiple of its
-		// bounding-sphere RADIUS. Replaced a lift added on top of the
-		// sphere's CENTRE, 2026-08-26, after measuring three pirates: the
-		// centre's height above the feet varies 12% between them while the
-		// radius varies far less, and that variance was landing directly on
-		// the aim point (12cm apart on three humans). See
-		// WorldBoundProbe::GetAimPoint for the table.
+		// Where to aim on the target, as a multiple of the height its
+		// bounding sphere's CENTRE already sits above its own feet. 1.0 is
+		// that centre itself - the geometric middle of the whole body,
+		// hip height on a standing human. 1.5 lands on the chest.
 		//
-		// A factor rather than a fixed chest offset because Starfield's
-		// non-humanoid creatures come in wildly different shapes: a factor
-		// scales with whatever body it is applied to, while a fixed offset
-		// assumes human proportions and would aim over a low, sprawling
-		// creature entirely. Still UNTESTED against non-humanoids.
+		// Chosen 2026-08-26 after the first non-humanoid tests, which
+		// killed the radius-based model outright: the radius measures a
+		// creature's longest extent, not its height, so a sprawling
+		// ground-hugger (radius 2.16, body 30cm up) wanted an aim point
+		// 2.22m in the air. Centre height is a height, so it degrades
+		// gracefully across body plans - and it tracks pose for free.
+		// See WorldBoundProbe::GetAimPoint for the measured table.
+		float aimPointCentreFactor{ 1.5f };
+		// Time constant of the low-pass on the aim point, in seconds. 0
+		// disables smoothing entirely.
 		//
-		// 1.03 is where the three measured humans already agreed under the
-		// old model (aim/radius of 0.990, 1.029, 1.028), so this reproduces
-		// the placement Alexander has been looking at rather than moving it
-		// - it removes the outlier, it does not re-aim the box. Raise it to
-		// aim higher up the body.
-		float aimPointHeightRadiusFactor{ 1.03f };
+		// The bounding sphere moves with the animation on every creature,
+		// and on a flying one it is violent: a measured 2.04m swing in the
+		// centre's height in time with the wingbeat, which the box
+		// followed. Only the offset from the actor's root is filtered, so
+		// a moving target still tracks with zero lag.
+		//
+		// 0.35s is chosen against what has to survive it: a wingbeat is a
+		// few hertz and disappears, while a crouch or a collapse takes
+		// several tenths of a second and comes through nearly intact.
+		float aimPointSmoothingSeconds{ 0.35f };
 
-		// Pose cap: how far above the sphere centre's own height the aim
-		// point may sit, as a fraction of that height. Inactive for a
-		// standing target; it only bites for a downed or prone one, whose
-		// sphere stays large while its centre drops to near-floor, where an
-		// uncapped radius-scaled height would aim well above the body.
-		// Confirmed firing on a real ragdoll 2026-08-26.
-		float aimPointMaxLiftFraction{ 0.5f };
 
 		// Starfield's hit and kill markers are hidden while Locked. That
 		// hide holds for ordinary hits but not for critical ones, which

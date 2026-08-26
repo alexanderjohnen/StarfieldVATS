@@ -134,71 +134,59 @@ and was stripped from history once already — never add it to a commit.
   liveness, friendly filtering, 60° cone, on-screen check) is in place and
   correct — **re-enabling is one INI line once the depth-buffer occlusion
   below exists.** That is now this feature's blocking dependency.
-- **Box centring — three models tried, none right, and the reason is now
-  structural rather than a bad constant. READ THIS BEFORE TOUCHING IT
-  AGAIN.** A 17-actor dungeon run on 2026-08-26 refuted the model that had
-  just been built on a 3-actor sample:
+- **Aim point: settled on the sphere's CENTRE HEIGHT, plus smoothing
+  (2026-08-26). Built, NOT yet deployed — Starfield was running.** The
+  first non-humanoid tests decided it, after three models built on
+  humanoids alone. Measured:
 
-  - `centre/radius` across 17 actors spans **0.47 to 0.86** (plus one
-    corpse at -0.03). The three-actor reading of 0.741/0.778/0.778 that
-    the feet+radius anchor was chosen from was simply under-sampled.
-  - Consequence: the pose cap now fires on **10 of 17 actors**, so for the
-    majority the aim point is `1.5 x centreAboveFeet` — i.e. right back to
-    being driven by the sphere centre the change was meant to escape.
+  | creature | radius | centreAboveFeet | centre/radius |
+  |---|---|---|---|
+  | human pirate | 1.03 | 0.84 | 0.81 |
+  | mantid (spidery) | 2.96 | 1.40 | 0.47 |
+  | hopper (ground-hugging) | 2.16 | 0.30 | 0.14 |
+  | flyer | 3.09–4.50 | 0.14–2.18 | — |
 
-  The structural problem, stated plainly so the next attempt does not
-  re-derive it: **the radius is pose-blind and the sphere centre is
-  character-noisy.** A crouching enemy keeps its radius but drops its
-  centre; two standing enemies share a pose but differ in centre. Any
-  model built from those two numbers alone must trade one against the
-  other, which is what all three attempts have done:
+  **The radius measures longest extent, not height.** A hopper reads a
+  radius of 2.16 with its body 30cm off the ground, so the feet+radius
+  model wanted to aim 2.22m up. All four non-humanoids hit the pose cap —
+  i.e. the cap, not the model, was producing the aim point for the entire
+  creature class. So the cap became the model:
+  `aim = feet + fAimPointCentreFactor (1.5) x centreAboveFeet`, floor for
+  collapsed bodies, nothing else. That lands at ~70% of body height on a
+  human (the chest, up from the 64-68% measured before), 0.46m on a
+  hopper, 2.10m on a mantid, and it tracks pose for free.
 
-  1. centre x multiplier — pose-correct, amplified character spread.
-  2. centre + radius x lift — less spread, still centre-anchored.
-  3. feet + radius x factor — character-stable, pose-blind, so the cap has
-     to do the pose work and now dominates.
+  This is the 2026-08-25 model returning, which was dropped for
+  "amplifying the spread between characters". With creatures in the sample
+  that objection is wrong: most of that spread is real, and 3cm between
+  two pirates is a cheap price for not aiming two metres over an alien.
 
-  Some of the spread that was called error may not be: a crouching enemy's
-  chest really is lower.
+  **Smoothing (`fAimPointSmoothingSeconds`, 0.35) is new and was the
+  missing piece under all three models.** The bounding sphere moves with
+  the animation on everything — a guard's centre swings 0.09, the
+  ground-huggers 0.32 — and on the flying alien it swings **2.04m in time
+  with the wingbeat** (5938 samples), which the box followed. Only the
+  offset from the actor's root is filtered, so a moving target still
+  tracks with zero lag. State lives in a fixed 8-slot array under a mutex:
+  `GetAimPoint` runs on both the render thread and AimAssist's steering
+  thread, and an unguarded shared map there is the exact shape of the heap
+  corruption this project already lost a day to.
 
-  **The way out is not a fourth factor — it is the skeleton.**
-  `BoneProbe` walks the actor's node tree, and its guessed candidate list
-  (`COM`/`Spine`/`Chest`/...) had only ever matched `HumanExportRoot`,
-  which sits at the feet and is useless as an aim point. **`bonedump`
-  settled why on the first run (2026-08-26): "1 nodes visited".** The walk
-  never descended at all — so this was never a bone-naming problem, it was
-  the children-array offset being rejected on every actor.
-
-  `sizeof(RE::NiAVObject)` is 0x130 and the header static_asserts it, but
-  a header assert proves what the header believes, not what the game's
-  memory does — risk category 3, the same way `TESObjectCELL::references`
-  was off by 8. `BoneProbe` now **probes** for the offset (0x0F0..0x1C0)
-  and validates a candidate by BACK-REFERENCE: the first child's
-  `NiAVObject::parent` (0x038) must point at the node the array came from.
-  That is strong enough to trust without an eye on it. The resolved offset
-  is logged once (`bone: children offset FOUND at 0x...`). BUILT, NOT YET
-  DEPLOYED — Starfield was running.
-
-  If the walk now descends, a real chest bone is pose-correct and
-  creature-correct by construction and would end this problem rather than
-  improve it. If the probe reports nothing found, the children array is
-  not a plain BSTArray at any offset in that window and the bone route
-  needs rethinking.
-
-  Confirmed sound and not worth re-testing: the projection near the screen
-  centre (screenshots at 6m and 7m put the `FEET` cross on the boots), and
-  the absence of horizontal error (`|sphere.x - feet.x|` averages 0.0068
-  normalized over 1004 samples spanning the full screen width). Both pose
-  safety paths were confirmed firing on a real ragdoll.
+  Also measured, and NOT yet acted on: **the horizontal offset theory is
+  dead for humanoids but alive for sprawling creatures.**
+  `|sphere.x - feet.x|` is 0.0013–0.0068 normalized on humans and
+  **0.035** on the ground-huggers — their bounding sphere genuinely does
+  not sit above their root. Which of the two is the better anchor for such
+  a body is untested. Smoothing now filters x/y as well, so at least it
+  no longer wanders.
 
   **Still open: the FOV axis.** Every screenshot so far had the target
-  near x=0.5, which is exactly where a wrong axis has zero error by
-  construction. One screenshot with the target at the far left or right
-  edge settles it. Treat `bCameraFovIsHorizontal` as probable but
-  unproven.
-- **Never tested against non-humanoid creatures at all.** The aim point is
-  proportional specifically so it scales to any body shape, but no alien
-  has been fought with it.
+  near x=0.5, where a wrong axis has zero error by construction. Both
+  creature screenshots were third-person and the box looked left of the
+  target — worth a first-person comparison shot, since a third-person
+  shoulder offset applied outside `cameraRoot` would look exactly like
+  that. One screenshot with the target at a screen edge settles the axis.
+
 - **Neutral civilians remain targetable.** Only companions are filtered. A
   real faction/relationship check is out of reach (`IsHostileToActor` is ID
   0, and reconstructing it means walking the actor's faction list, the
