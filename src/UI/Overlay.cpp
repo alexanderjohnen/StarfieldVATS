@@ -449,11 +449,15 @@ namespace VATS::UI
 			// reads as the box growing as the target shrinks away
 			// (Alexander, 2026-08-25 - it never actually changed size).
 			//
-			// Derived by projecting a second point one bounding-sphere
-			// radius above the aim point and measuring the pixel gap, rather
-			// than computing it from FOV and aspect: the projection is
-			// already proven, and this way the box inherits whatever it does
-			// about aspect ratio for free.
+			// Sized from the angular size of the bounding sphere
+			// (ProjectedRadiusPixels), which is strictly 1/depth. It used
+			// to project a second point one radius above the aim point and
+			// measure the pixel gap - that inherited the aspect handling
+			// for free, but it also made the size depend on where on screen
+			// the target sat and on the camera's pitch. Alexander,
+			// 2026-08-26: walking backwards made the box grow first and
+			// shrink only afterwards, which an NPC plainly does not do. See
+			// CameraProject.h for why that method did that.
 			float halfW = kDefaultHalfW;
 			float halfH = kDefaultHalfH;
 			float radius = 0.0f;
@@ -461,40 +465,21 @@ namespace VATS::UI
 				RE::NiPoint3 aimPoint{};
 				if (SafeRead(reinterpret_cast<const std::byte*>(a_actor) + GameOffsets::kLocation, &aimPoint, sizeof(aimPoint))) {
 					aimPoint = WorldBoundProbe::GetAimPoint(a_actor, aimPoint);
-					RE::NiPoint3 above = aimPoint;
-					above.z += radius;
 
-					float ax = 0.0f;
-					float ay = 0.0f;
-					if (WorldToScreen(above, ax, ay)) {
+					float projectedRadiusPx = 0.0f;
+					if (ProjectedRadiusPixels(aimPoint, radius, projectedRadiusPx)) {
 						// Scaled DOWN from the projected radius, not equal to
 						// it. The bounding sphere encloses the entire actor,
 						// so using the radius directly framed the whole body
 						// and produced a box roughly five times the intended
 						// size (2026-08-25, first attempt - the scaling was
 						// right, the scale was not).
-						//
-						// The fraction is calibrated so that at close range
-						// this lands on the old fixed 36px half-height, i.e.
-						// the look Alexander asked for - the box framing a
-						// torso the way it did when standing in front of a
-						// target - and shrinks from there rather than staying
-						// put while the target recedes.
-						const float projectedRadiusPx = std::abs(ay - sy) * io.DisplaySize.y;
 						const float scaled = projectedRadiusPx * Settings::Get().targetBoxScale;
-						// Clamped at both ends: a bad radius must not fill
-						// the screen, and a distant target must not shrink
-						// the box into an invisible speck.
 						// Capped at the old fixed size, not at an arbitrary
-						// ceiling. The first calibration claimed 0.20 landed
-						// on the old 36px up close and it did not - at 3m it
-						// produced nearly double, so the box grew as the
-						// player closed in, exactly the behaviour this was
-						// meant to remove. A cap makes it exact instead of
-						// approximately right: never larger than the version
-						// Alexander liked, only smaller as the target
-						// recedes. The floor keeps a distant target from
-						// shrinking into an invisible speck.
+						// ceiling: never larger than the version Alexander
+						// liked, only smaller as the target recedes. The
+						// floor keeps a distant target from shrinking into
+						// an invisible speck.
 						halfH = std::clamp(scaled, 16.0f, kDefaultHalfH);
 						halfW = halfH * (kDefaultHalfW / kDefaultHalfH);
 					}
