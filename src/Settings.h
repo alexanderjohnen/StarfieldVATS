@@ -390,5 +390,14 @@ namespace VATS
 		// application on the machine. Turn it off if the back key is not
 		// wanted for VATS - the mod is otherwise unaffected.
 		bool interceptBackKey{ true };
+
+		// Bisect switch for the memory-growth hunt of 2026-08-27, not a
+		// feature: turns the Present hook into a pure pass-through, so the
+		// per-frame ImGui + D3D11-on-12 render path does not run at all.
+		// The HUD disappears completely. Everything else about the mod
+		// (targeting, projectile redirect, input hooks) keeps working, so a
+		// run with this on says whether the growth follows the renderer or
+		// the rest of the mod. See D3DHook.cpp FakePresent.
+		bool disableOverlay{ false };
 	};
 }

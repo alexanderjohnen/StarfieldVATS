@@ -11,6 +11,8 @@
 
 #include "MinHook.h"
 
+#include "Settings.h"
+
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
@@ -536,7 +538,22 @@ namespace VATS::UI
 					lastSwapChain = a_this;
 					ReleaseIfInitialized();
 				}
-				InitializeOrRender(a_this, commandQueue);
+				// Bisect switch ([Debug] bDisableOverlay), 2026-08-27. When
+				// set, this hook becomes a pure pass-through: no ImGui
+				// frame, no D3D11-on-12 acquire/render/release, no Flush -
+				// the swapchain call below is all that happens.
+				//
+				// This exists to split one question in two. Everything
+				// under InitializeOrRender runs on EVERY presented frame no
+				// matter what the mod is doing, because Overlay::Draw is
+				// only a callback inside it - so when the player is sitting
+				// in a menu and Draw() returns immediately, this is still
+				// the mod code left running. With the switch on, a run that
+				// still leaks rules the render path out; a run that goes
+				// flat pins the leak to it.
+				if (!Settings::Get().disableOverlay) {
+					InitializeOrRender(a_this, commandQueue);
+				}
 			}
 
 			return g_oldPresent(a_this, a_syncInterval, a_flags);
