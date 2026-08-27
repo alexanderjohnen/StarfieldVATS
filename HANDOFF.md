@@ -347,3 +347,57 @@ already has. Estimated one to two sessions.
 `feedback-commit-every-vats-build`, `feedback-model-tier-recommendations`.
 `docs/CONTRIBUTIONS.md` has the detailed, honest attribution writeup —
 including the misjudgments — if asked who contributed what.
+
+## Speicherleck im Overlay — eingegrenzt auf eine Zeile (2026-08-27)
+
+Alexander meldete, dass sein ganzer PC nach einigen Minuten zäh wird,
+auch wenn Starfield nur im Hintergrund liegt, und sofort wieder normal,
+sobald er das Spiel beendet. Gemessen mit `tools/Watch-StarfieldMemory.ps1`,
+jedes Mal dieselbe Szene und Tätigkeit (in der Starmap sitzen, OBS
+aufnehmen). Entscheidend ist die Spalte `PrivateMB` — der Task-Manager
+zeigt den Working Set, den Windows eigenständig kürzt, und der verbirgt
+das Leck.
+
+| Bedingung | Dauer | Starfield (Private) |
+|---|---|---|
+| DLL wegbenannt | 6,2 min | −0,9 MB |
+| `iOverlayStage=0` (Present reicht durch) | 2,8 min | −0,1 MB |
+| `iOverlayStage=1` (+ ImGui NewFrame/Draw/Render) | 2,2 min | −9,7 MB |
+| `iOverlayStage=2` (+ 11on12-Wrap, `OMSetRenderTargets`, `Flush`) | 6,5 min | −16,8 MB |
+| `iOverlayStage=3` (+ `RenderDrawData`, normal) | 4 min | **+8.545 MB** |
+
+Handles und Threads blieben in allen Läufen unverändert — reines
+Speicherwachstum, kein Handle- oder Thread-Leck. Die Rate ist streng
+linear: ~518 MB je 15 s, also rund 2 GB/min bzw. grob ein halbes
+Megabyte pro dargestelltem Bild.
+
+**Damit steckt das Leck in genau einem Aufruf**, dem einzigen
+Unterschied zwischen Stufe 2 und 3:
+
+```cpp
+ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+```
+
+Ausgeschlossen und nicht erneut zu prüfen:
+- `Overlay::Draw` — alle Messungen liefen in der Starmap, wo es sofort
+  zurückkehrt. Es ist nur ein Callback in `FakePresent`.
+- `Initialize` — steht genau einmal im Log, baut sich nicht neu auf.
+- Der fehlschlagende HUD-Font. `ImGui_ImplDX11_NewFrame` legt die Textur
+  nur an, solange `pFontSampler` leer ist, und ruft beim Wiederholen
+  vorher `InvalidateDeviceObjects()`. Kann nicht pro Bild allokieren.
+  **Bleibt ein eigener, offener Fehler** (Log sagt weiterhin
+  „no TTF found", obwohl beide Pfade existieren und stimmen).
+
+### Nächster Schritt
+
+Erste Spur: `RenderDrawData` mappt Vertex- und Index-Puffer in jedem
+Bild mit `D3D11_MAP_WRITE_DISCARD` (~100 KB + ~20 KB). DISCARD heißt
+für den Treiber „gib mir einen frischen Puffer" — normalerweise
+recycelt die Laufzeit die alten, sobald die GPU fertig ist. Auf einem
+11on12-Gerät, das pro Bild `Flush()` bekommt und nie auf eine Fence
+wartet, könnten sie sich stapeln. Passt zur Größenordnung, ist aber
+unbestätigt.
+
+Wichtig für den Test: In der Starmap ist `TotalVtxCount` null, es wird
+also nichts gezeichnet — und es leckt trotzdem. Was auch immer es ist,
+es hängt nicht an der Menge der Zeichenbefehle.
