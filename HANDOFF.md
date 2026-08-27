@@ -401,3 +401,30 @@ unbestätigt.
 Wichtig für den Test: In der Starmap ist `TotalVtxCount` null, es wird
 also nichts gezeichnet — und es leckt trotzdem. Was auch immer es ist,
 es hängt nicht an der Menge der Zeichenbefehle.
+
+### Nachtrag: der HUD-Font (behoben 2026-08-27)
+
+`AddFontFromFileTTF` schlug seit dem ersten Tag fehl, das Log meldete
+durchgehend „no TTF found". Ursache war **nicht** der Pfad, sondern
+`lib/imgui/imconfig.h`:
+
+```c
+#define IMGUI_DISABLE_FILE_FUNCTIONS
+```
+
+Wortgleich von BetterConsole übernommen. Das Define ersetzt `ImFileOpen`
+durch eine Attrappe, die bedingungslos `NULL` liefert — und
+`AddFontFromFileTTF` geht über `ImFileLoadToMemory`. Die Funktion konnte
+also nie erfolgreich sein. Für BetterConsole ist das folgerichtig, es
+benutzt ImGuis eingebaute Bitmap-Schrift und liest keine Dateien.
+
+Es waren **zwei unabhängige Fehler in denselben drei Zeilen**: zusätzlich
+waren die Pfade mit einfachen Backslashes geschrieben (`\W`, `\F`
+unbekannte Escapes, `\b` ein echtes Backspace). Der Backslash-Fix allein
+änderte nichts, weil das Define darunter lag — deshalb blieb die Meldung
+nach dem vermeintlichen Fix bestehen. Beides musste weg.
+
+Nebenwirkung, gleich mitbehandelt: mit aktivierten Dateifunktionen legt
+ImGui von sich aus `imgui.ini` und `imgui_log.txt` an. In einem
+Spielverzeichnis hat eine Mod das nicht zu tun, also setzt `D3DHook.cpp`
+direkt nach `CreateContext` beide auf `nullptr`.

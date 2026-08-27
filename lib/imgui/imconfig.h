@@ -46,7 +46,24 @@
 //#define IMGUI_ENABLE_OSX_DEFAULT_CLIPBOARD_FUNCTIONS      // [OSX] Implement default OSX clipboard handler (need to link with '-framework ApplicationServices', this is why this is not the default).
 //#define IMGUI_DISABLE_DEFAULT_FORMAT_FUNCTIONS            // Don't implement ImFormatString/ImFormatStringV so you can implement them yourself (e.g. if you don't want to link with vsnprintf)
 //#define IMGUI_DISABLE_DEFAULT_MATH_FUNCTIONS              // Don't implement ImFabs/ImSqrt/ImPow/ImFmod/ImCos/ImSin/ImAcos/ImAtan2 so you can implement them yourself.
-#define IMGUI_DISABLE_FILE_FUNCTIONS                      // Don't implement ImFileOpen/ImFileClose/ImFileRead/ImFileWrite and ImFileHandle at all (replace them with dummies)
+// IMGUI_DISABLE_FILE_FUNCTIONS was defined here, inherited verbatim from
+// BetterConsole (2026-08-22). It replaces ImFileOpen and friends with
+// dummies that unconditionally return NULL, which is a fine trade for a
+// mod that never touches a file - and BetterConsole does not, it uses
+// ImGui built-in bitmap font.
+//
+// This project does. AddFontFromFileTTF goes through ImFileLoadToMemory,
+// so with that define set it can NEVER succeed, whatever the path says.
+// That is the real reason the HUD font never once loaded and the log has
+// been reporting "no TTF found" since the font work landed on 2026-08-26
+// - the broken backslash escapes fixed on 2026-08-27 were a second,
+// independent bug in the same three lines, and fixing them alone changed
+// nothing. Both had to go.
+//
+// Enabling the default file functions also re-enables ImGui own
+// imgui.ini and imgui_log.txt, which an overlay has no business writing
+// into the game folder - D3DHook.cpp turns both off right after
+// CreateContext.
 //#define IMGUI_DISABLE_DEFAULT_FILE_FUNCTIONS              // Don't implement ImFileOpen/ImFileClose/ImFileRead/ImFileWrite and ImFileHandle so you can implement them yourself if you don't want to link with fopen/fclose/fread/fwrite. This will also disable the LogToTTY() function.
 //#define IMGUI_DISABLE_DEFAULT_ALLOCATORS                  // Don't implement default allocators calling malloc()/free() to avoid linking with them. You will need to call ImGui::SetAllocatorFunctions().
 //#define IMGUI_DISABLE_SSE                                 // Disable use of SSE intrinsics even if available

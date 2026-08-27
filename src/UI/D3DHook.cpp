@@ -390,7 +390,17 @@ namespace VATS::UI
 
 					IMGUI_CHECKVERSION();
 					ImGui::CreateContext();
-					ImGui::GetIO().MouseDrawCursor = false;
+					auto& io = ImGui::GetIO();
+					io.MouseDrawCursor = false;
+					// ImGui writes imgui.ini next to the executable by
+					// default, and imgui_log.txt on demand. Harmless for an
+					// app that owns its folder; not for a mod dropping files
+					// into a game directory. Only reachable at all since
+					// IMGUI_DISABLE_FILE_FUNCTIONS came out of imconfig.h to
+					// let the HUD font load, so it is turned off in the same
+					// breath.
+					io.IniFilename = nullptr;
+					io.LogFilename = nullptr;
 					ImGui::StyleColorsDark();
 					LoadHudFont();
 					g_imguiCreated = true;
