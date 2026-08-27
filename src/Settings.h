@@ -391,13 +391,19 @@ namespace VATS
 		// wanted for VATS - the mod is otherwise unaffected.
 		bool interceptBackKey{ true };
 
-		// Bisect switch for the memory-growth hunt of 2026-08-27, not a
-		// feature: turns the Present hook into a pure pass-through, so the
-		// per-frame ImGui + D3D11-on-12 render path does not run at all.
-		// The HUD disappears completely. Everything else about the mod
-		// (targeting, projectile redirect, input hooks) keeps working, so a
-		// run with this on says whether the growth follows the renderer or
-		// the rest of the mod. See D3DHook.cpp FakePresent.
-		bool disableOverlay{ false };
+		// How much of the per-frame overlay path runs. A bisect control
+		// for the memory-growth hunt of 2026-08-27, not a feature.
+		//   0 nothing - the Present hook just passes through, no HUD at all
+		//   1 the ImGui half only (NewFrame, Draw, Render), no D3D work
+		//   2 everything, the normal HUD (default)
+		// Everything else about the mod - targeting, projectile redirect,
+		// input hooks - keeps working at every stage.
+		//
+		// Measured so far: stage 0 holds flat within half a megabyte over
+		// two minutes, stage 2 adds about 2GB a minute (~518MB per 15s,
+		// roughly half a megabyte per presented frame) with handles and
+		// threads unmoved. Stage 1 is what separates the ImGui half from
+		// the D3D11-on-12 half. See D3DHook.cpp InitializeOrRender.
+		int overlayStage{ 2 };
 	};
 }

@@ -444,6 +444,19 @@ namespace VATS::UI
 
 			auto* buf = &g_buffers[index];
 
+			// Staged for the leak hunt of 2026-08-27 ([Debug] iOverlayStage).
+			// Measured: with this whole function skipped the process is flat
+			// to within half a megabyte over two minutes; with it running it
+			// grows ~518MB per 15s, about half a megabyte per presented
+			// frame, while handles and threads stay put. So the leak is in
+			// here, and these two lines are where it gets split further -
+			// stage 1 runs the ImGui half and stops before the D3D half.
+			//
+			// Overlay::Draw is NOT the suspect: the measurements were taken
+			// sitting in the star map, where it returns almost immediately.
+			// Everything below runs regardless of what it decides.
+			const int stage = Settings::Get().overlayStage;
+
 			ImGui_ImplDX11_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
@@ -452,7 +465,15 @@ namespace VATS::UI
 				g_drawCallback();
 			}
 
+			// Always paired with NewFrame, including in stage 1: leaving a
+			// frame open would grow ImGui's own state every frame and
+			// manufacture a second leak on top of the one being measured.
 			ImGui::Render();
+
+			if (stage < 2) {
+				return;
+			}
+
 			g_d3d11On12Device->AcquireWrappedResources(&buf->d3d11WrappedBackBuffer, 1);
 			g_d3d11Context->OMSetRenderTargets(1, &buf->d3d11RenderTargetView, nullptr);
 			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -538,10 +559,13 @@ namespace VATS::UI
 					lastSwapChain = a_this;
 					ReleaseIfInitialized();
 				}
-				// Bisect switch ([Debug] bDisableOverlay), 2026-08-27. When
-				// set, this hook becomes a pure pass-through: no ImGui
+				// Bisect switch ([Debug] iOverlayStage), 2026-08-27.
+				// At stage 0 this hook is a pure pass-through: no ImGui
 				// frame, no D3D11-on-12 acquire/render/release, no Flush -
-				// the swapchain call below is all that happens.
+				// the swapchain call below is all that happens. Measured
+				// flat that way; stage 2 (the normal HUD) grows ~2GB a
+				// minute. Stage 1 splits the difference, see
+				// InitializeOrRender.
 				//
 				// This exists to split one question in two. Everything
 				// under InitializeOrRender runs on EVERY presented frame no
@@ -551,7 +575,7 @@ namespace VATS::UI
 				// the mod code left running. With the switch on, a run that
 				// still leaks rules the render path out; a run that goes
 				// flat pins the leak to it.
-				if (!Settings::Get().disableOverlay) {
+				if (Settings::Get().overlayStage > 0) {
 					InitializeOrRender(a_this, commandQueue);
 				}
 			}
