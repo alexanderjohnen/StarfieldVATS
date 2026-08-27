@@ -474,31 +474,44 @@ namespace VATS::UI
 				return;
 			}
 
+			// MITIGATION, not the cure (2026-08-27). The leak is inside
+			// ImGui_ImplDX11_RenderDrawData - bisected there by measurement,
+			// see HANDOFF.md - and the mechanism looks like this: that
+			// function Maps its vertex, index and constant buffers with
+			// D3D11_MAP_WRITE_DISCARD on EVERY call. DISCARD asks the driver
+			// to hand back a freshly renamed allocation, which it is
+			// supposed to reclaim once the GPU is done with the old one. On
+			// this D3D11-on-12 device it evidently never reclaims them:
+			// ~100KB + ~20KB + 64B, rounded up to 64KB pages, is about
+			// 256KB a frame, which lands squarely on the measured ~518MB per
+			// 15 seconds.
+			//
+			// The decisive detail is that it leaked at the SAME rate while
+			// sitting in the star map, where Overlay::Draw returns before
+			// emitting a single vertex. All three Maps happened anyway, for
+			// a draw call list that was empty. So skipping the whole block
+			// when there is nothing to draw removes the leak outright
+			// everywhere the HUD is not actually on screen - menus, the star
+			// map, and all normal play with no lock - at zero cost, because
+			// the work being skipped could never have put a pixel anywhere.
+			//
+			// It does NOT fix the frames that do draw. While the HUD is
+			// visible the same ~2GB/minute applies, so this buys back normal
+			// play rather than closing the hole. The real fix has to happen
+			// inside the vendored backend (a persistent buffer instead of
+			// per-frame renaming) or by moving off D3D11-on-12 to a native
+			// D3D12 backend - next session, see HANDOFF.md.
+			ImDrawData* drawData = ImGui::GetDrawData();
+			const bool  haveGeometry = drawData && drawData->CmdListsCount > 0 && drawData->TotalVtxCount > 0;
+			if (stage >= 3 && !haveGeometry) {
+				return;
+			}
+
 			g_d3d11On12Device->AcquireWrappedResources(&buf->d3d11WrappedBackBuffer, 1);
 			g_d3d11Context->OMSetRenderTargets(1, &buf->d3d11RenderTargetView, nullptr);
 
-			// The two remaining suspects, separated (2026-08-27). Stage 1
-			// proved the ImGui half innocent - flat to within 10MB over
-			// 2.2 minutes - so the growth is below this line, and these are
-			// the only two independent things left:
-			//
-			//   RenderDrawData - ImGui's DX11 backend. Backs up and restores
-			//     the entire device context around the draw, which means ~20
-			//     XXGet* calls that each AddRef a COM object. Balanced in
-			//     ImGui's own code, but this is an 11on12 context, not a
-			//     plain D3D11 one.
-			//
-			//   the wrap + Flush pair - every Flush hands a command list to
-			//     the game's D3D12 queue, and the 11on12 runtime only
-			//     recycles the allocator behind it once it observes the GPU
-			//     get that far. Half a megabyte per frame is the right order
-			//     of magnitude for allocators piling up.
-			//
-			// Stage 2 runs the wrap and the Flush WITHOUT the draw. If it
-			// grows, the 11on12 plumbing is at fault; if it stays flat, the
-			// backend draw is.
 			if (stage >= 3) {
-				ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+				ImGui_ImplDX11_RenderDrawData(drawData);
 			}
 
 			g_d3d11On12Device->ReleaseWrappedResources(&buf->d3d11WrappedBackBuffer, 1);
