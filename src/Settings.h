@@ -395,15 +395,18 @@ namespace VATS
 		// for the memory-growth hunt of 2026-08-27, not a feature.
 		//   0 nothing - the Present hook just passes through, no HUD at all
 		//   1 the ImGui half only (NewFrame, Draw, Render), no D3D work
-		//   2 everything, the normal HUD (default)
+		//   2 + the 11on12 wrap and Flush, but not the backend draw
+		//   3 everything, the normal HUD (default)
 		// Everything else about the mod - targeting, projectile redirect,
 		// input hooks - keeps working at every stage.
 		//
 		// Measured so far: stage 0 holds flat within half a megabyte over
 		// two minutes, stage 2 adds about 2GB a minute (~518MB per 15s,
 		// roughly half a megabyte per presented frame) with handles and
-		// threads unmoved. Stage 1 is what separates the ImGui half from
-		// the D3D11-on-12 half. See D3DHook.cpp InitializeOrRender.
-		int overlayStage{ 2 };
+		// threads unmoved. Stage 1 came out flat too (-9.7MB over 2.2
+		// minutes), which clears ImGui itself and leaves only the five D3D
+		// lines below it - stage 2 splits those. See D3DHook.cpp
+		// InitializeOrRender.
+		int overlayStage{ 3 };
 	};
 }
