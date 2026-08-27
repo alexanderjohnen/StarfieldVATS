@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Samples Starfield's memory, handle and thread usage over time into a CSV.
+    Samples memory, handle and thread usage of one or more processes into a CSV.
 
 .DESCRIPTION
     Answers one question before any mod gets blamed for anything: is
@@ -10,11 +10,10 @@
     That distinction is the whole point. Starfield legitimately uses a lot
     of memory, and "a lot" is not a leak - a leak is memory that keeps
     climbing while you do nothing new. Leave this running for 20-30 minutes
-    with the game idle (paused, or standing still in an interior) and the
-    shape of the Private column tells you which one you have.
+    and the shape of the Private column tells you which one you have.
 
-    Four numbers are recorded per sample, because "leak" covers more than
-    one failure and they are not interchangeable:
+    Four numbers are recorded per process per sample, because "leak" covers
+    more than one failure and they are not interchangeable:
 
       WorkingSetMB - RAM currently resident. Goes UP and DOWN on its own as
                      Windows trims it under pressure, so it is the WORST
@@ -30,42 +29,80 @@
                      pressure, and shows up here long before it shows up in
                      PrivateMB.
 
-    Also records system-wide free RAM, since the mechanism that makes the
-    WHOLE PC slow (rather than just the game) is the machine running out
-    and paging everything else out to disk.
+    Several processes are watched from ONE window on purpose. Watching the
+    game alone cannot tell "the game is leaking" apart from "something else
+    on the machine is leaking and the game is merely present", and running
+    a second copy of this script for the second process left a window
+    behind every time (the run ends when its process exits, and OBS does
+    not exit when the game does - found the annoying way, 2026-08-27).
+
+    The run ends when the FIRST process in -ProcessName exits. The others
+    are only along for comparison and do not keep the measurement alive.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\Watch-StarfieldMemory.ps1
 
 .EXAMPLE
-    .\Watch-StarfieldMemory.ps1 -IntervalSeconds 30 -OutFile C:\temp\run2.csv
+    .\Watch-StarfieldMemory.ps1 -ProcessName Starfield,obs64 -IntervalSeconds 30
 #>
 [CmdletBinding()]
 param(
-    [int]    $IntervalSeconds = 15,
-    [string] $ProcessName     = 'Starfield',
-    [string] $OutFile
+    [int]      $IntervalSeconds = 15,
+    # Accepts either a real array or one comma-separated string, and is
+    # split again below, because array arguments do not survive
+    # "powershell -File": "-ProcessName Starfield,obs64" arrives there as
+    # the single literal name "Starfield,obs64", which matches no process
+    # at all - so the script sits there waiting, writing nothing, looking
+    # exactly like a broken measurement rather than a bad argument
+    # (2026-08-27, three restarts before this was spotted). Passing them as
+    # two words is no better: the second binds to $IntervalSeconds.
+    [string[]] $ProcessName     = @('Starfield', 'obs64'),
+    [string]   $OutFile
 )
 
 $ErrorActionPreference = 'Stop'
 
 if (-not $OutFile) {
     $stamp   = Get-Date -Format 'yyyy-MM-dd_HHmmss'
-    $OutFile = Join-Path $env:USERPROFILE "Desktop\starfield-memory_$stamp.csv"
+    $OutFile = Join-Path $env:USERPROFILE "Desktop\memory_$stamp.csv"
 }
 
-Write-Host "Schreibe nach: $OutFile"
-Write-Host "Warte auf Prozess '$ProcessName'... (Strg+C beendet die Messung)"
+$names   = @($ProcessName -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$primary = $names[0]
+
+Write-Host "Beobachte: $($names -join ", ")   (Lauf endet, wenn '$primary' beendet wird)"
+Write-Host "CSV: $OutFile"
+Write-Host "Warte auf '$primary'...  (Strg+C bricht ab)"
 Write-Host ""
 
-$samples   = @()
-$firstPriv = $null
-$seen      = $false
+$first     = @{}   # Prozessname -> erster PrivateMB-Wert
+$firstRow  = @{}
+$lastRow   = @{}
+$ticks     = 0
+$seenPrimary = $false
+$session   = 1
+
+function Write-Summary {
+    if ($script:ticks -lt 2) { return }
+    $mins = [math]::Max(1, $script:ticks * $IntervalSeconds / 60)
+    Write-Host ""
+    Write-Host "--- Sitzung $script:session: $script:ticks Messpunkte, rund $([math]::Round($mins,1)) min ---"
+    foreach ($n in $script:names) {
+        if (-not $script:lastRow.ContainsKey($n)) { continue }
+        $a = $script:firstRow[$n]
+        $b = $script:lastRow[$n]
+        $delta = [math]::Round($b.PrivateMB - $a.PrivateMB, 1)
+        Write-Host ("{0,-12} Private {1} -> {2} MB   ({3} MB, rund {4} MB/Stunde)   Handles {5} -> {6}   Threads {7} -> {8}" -f `
+            $n, $a.PrivateMB, $b.PrivateMB, $delta,
+            [math]::Round($delta / $mins * 60, 1),
+            $a.Handles, $b.Handles, $a.Threads, $b.Threads)
+    }
+}
 
 # Deliberately NOT Get-Counter: performance counter PATHS ARE LOCALISED
 # ("\Memory\Available MBytes" does not exist on a German Windows, it is
 # "\Arbeitsspeicher\Verfugbare MB"), so a counter-based script silently
-# fails on exactly this machine. The CIM class properties below are
+# fails on exactly this machine. The CIM class property below is
 # language-independent.
 function Get-SystemFreeMB {
     $os = Get-CimInstance Win32_OperatingSystem
@@ -74,67 +111,88 @@ function Get-SystemFreeMB {
 
 try {
     while ($true) {
-        $proc = $null
-        try { $proc = Get-Process -Name $ProcessName -ErrorAction Stop } catch { }
+        $freeMB  = Get-SystemFreeMB
+        $stamp   = Get-Date -Format 'HH:mm:ss'
+        $line    = "$stamp  "
+        $anyRow  = $false
 
-        if ($null -eq $proc) {
-            if ($seen) {
-                Write-Host "Prozess beendet - Messung fertig."
-                break
+        foreach ($name in $names) {
+            $proc = $null
+            try { $proc = Get-Process -Name $name -ErrorAction Stop } catch { }
+
+            if ($null -eq $proc) {
+                # The primary going away ends the SESSION, not the run: the
+                # summary is printed and the counters reset, then this keeps
+                # waiting for the next launch. A/B testing a setting means
+                # restarting the game between runs, and having to relaunch
+                # the watcher each time was how three stray windows piled up
+                # earlier today. Ctrl+C is what ends it for good.
+                if ($name -eq $primary -and $seenPrimary) {
+                    Write-Summary
+                    $script:first = @{}; $script:firstRow = @{}; $script:lastRow = @{}
+                    $script:ticks = 0
+                    $script:seenPrimary = $false
+                    $script:session++
+                    Write-Host ""
+                    Write-Host "Warte auf den naechsten Start von '$primary' (Sitzung $script:session)..."
+                }
+                continue
             }
-            Start-Sleep -Seconds $IntervalSeconds
-            continue
+
+            if ($name -eq $primary) { $seenPrimary = $true }
+
+            # A process can legitimately appear more than once; sum so the
+            # numbers stay meaningful instead of silently picking one.
+            $ws   = ($proc | Measure-Object -Property WorkingSet64        -Sum).Sum
+            $priv = ($proc | Measure-Object -Property PrivateMemorySize64 -Sum).Sum
+            $hnd  = ($proc | Measure-Object -Property HandleCount         -Sum).Sum
+            $thr  = ($proc | ForEach-Object { $_.Threads.Count } | Measure-Object -Sum).Sum
+
+            $privMB = [math]::Round($priv / 1MB, 1)
+            if (-not $first.ContainsKey($name)) { $first[$name] = $privMB }
+
+            $row = [pscustomobject]@{
+                Time         = $stamp
+                Process      = $name
+                WorkingSetMB = [math]::Round($ws / 1MB, 1)
+                PrivateMB    = $privMB
+                GrowthMB     = [math]::Round($privMB - $first[$name], 1)
+                Handles      = $hnd
+                Threads      = $thr
+                SysFreeMB    = $freeMB
+            }
+
+            $row | Export-Csv -Path $OutFile -NoTypeInformation -Append -Encoding utf8
+            if (-not $firstRow.ContainsKey($name)) { $firstRow[$name] = $row }
+            $lastRow[$name] = $row
+            $anyRow = $true
+
+            $sign = '+'
+            if ($row.GrowthMB -lt 0) { $sign = '' }
+            $line += ("{0}: {1} MB ({2}{3})  H{4} T{5}   " -f `
+                $name, $row.PrivateMB, $sign, $row.GrowthMB, $row.Handles, $row.Threads)
         }
 
-        # A process can legitimately appear more than once; sum so the
-        # numbers stay meaningful instead of silently picking one.
-        $ws   = ($proc | Measure-Object -Property WorkingSet64        -Sum).Sum
-        $priv = ($proc | Measure-Object -Property PrivateMemorySize64 -Sum).Sum
-        $hnd  = ($proc | Measure-Object -Property HandleCount         -Sum).Sum
-        $thr  = ($proc | ForEach-Object { $_.Threads.Count } | Measure-Object -Sum).Sum
-
-        $privMB = [math]::Round($priv / 1MB, 1)
-        if ($null -eq $firstPriv) { $firstPriv = $privMB }
-        $seen = $true
-
-        $row = [pscustomobject]@{
-            Time         = (Get-Date -Format 'HH:mm:ss')
-            WorkingSetMB = [math]::Round($ws / 1MB, 1)
-            PrivateMB    = $privMB
-            GrowthMB     = [math]::Round($privMB - $firstPriv, 1)
-            Handles      = $hnd
-            Threads      = $thr
-            SysFreeMB    = Get-SystemFreeMB
+        if ($anyRow) {
+            $ticks++
+            Write-Host ($line + "| frei $freeMB MB")
         }
-
-        $samples += $row
-        $row | Export-Csv -Path $OutFile -NoTypeInformation -Append -Encoding utf8
-
-        $growth = $row.GrowthMB
-        $sign = '+'
-        if ($growth -lt 0) { $sign = '' }
-        Write-Host ("{0}  Private {1,8} MB  ({2}{3} MB)   Handles {4,6}   Threads {5,4}   frei {6,6} MB" -f `
-            $row.Time, $row.PrivateMB, $sign, $growth, $row.Handles, $row.Threads, $row.SysFreeMB)
 
         Start-Sleep -Seconds $IntervalSeconds
     }
 }
+catch [System.OperationCanceledException] { }
 finally {
-    if ($samples.Count -ge 2) {
-        $first = $samples[0]
-        $last  = $samples[-1]
-        $mins  = [math]::Max(1, $samples.Count * $IntervalSeconds / 60)
-
-        Write-Host ""
-        Write-Host "--- Zusammenfassung ($($samples.Count) Messpunkte) ---"
-        Write-Host ("Private:  {0} MB -> {1} MB   ({2} MB, rund {3} MB/Stunde)" -f `
-            $first.PrivateMB, $last.PrivateMB,
-            [math]::Round($last.PrivateMB - $first.PrivateMB, 1),
-            [math]::Round(($last.PrivateMB - $first.PrivateMB) / $mins * 60, 1))
-        Write-Host ("Handles:  {0} -> {1}" -f $first.Handles, $last.Handles)
-        Write-Host ("Threads:  {0} -> {1}" -f $first.Threads, $last.Threads)
-        Write-Host ("Frei RAM: {0} MB -> {1} MB" -f $first.SysFreeMB, $last.SysFreeMB)
+    if ($ticks -ge 2) {
+        Write-Summary
         Write-Host ""
         Write-Host "CSV: $OutFile"
+        # Only when a human is actually looking at a console window.
+        # Unguarded this blocks forever in a background job or a redirected
+        # shell, which is how the smoke test hung (2026-08-27).
+        if ($Host.Name -eq 'ConsoleHost' -and [Environment]::UserInteractive) {
+            Write-Host "Fenster bleibt offen - mit Enter schliessen."
+            [void](Read-Host)
+        }
     }
 }
