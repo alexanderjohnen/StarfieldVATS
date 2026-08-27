@@ -159,7 +159,15 @@ namespace VATS
 				// hitscan raycast-redirect problem separately? Logs the
 				// equipped weapon's ammo/projectile flags only - no write
 				// yet. See ProjectileFlagProbe.h for the full chain.
-				ProjectileFlagProbe::LogCurrentWeaponProjectileFlags(player);
+				//
+				// Skipped entirely below iLogLevel=3 (2026-08-27), not just
+				// silenced: this walks weapon -> WeaponAmmoData -> ammo ->
+				// projectile with a dozen guarded reads and builds two hex
+				// dump strings, on EVERY trigger pull, purely to produce log
+				// lines. Nothing downstream reads its result.
+				if (Log::Verbose()) {
+					ProjectileFlagProbe::LogCurrentWeaponProjectileFlags(player);
+				}
 			}
 
 			// Chance (and therefore the hit/miss roll) is based on distance
@@ -168,7 +176,7 @@ namespace VATS
 			// simplification as before.
 			float initialDist = 0.0f;
 			if (!ResolveTargetScreen(state.actor.get(), initialDist)) {
-				REX::INFO("[VATS] aim-assist: target not resolvable/in view at hold start, no assist this hold");
+				VATS_TRACE("[VATS] aim-assist: target not resolvable/in view at hold start, no assist this hold");
 				// Still record a (guaranteed-miss) result - the real trigger
 				// was pulled and a real round left the gun, so the HUD
 				// should say something rather than nothing. Found
@@ -191,7 +199,7 @@ namespace VATS
 			// left in Settings/Targeting.h - Overlay.cpp's HUD readout and
 			// other callers still use HasDetectionLOS independently.
 			constexpr bool hit = true;
-			REX::INFO("[VATS] aim-assist: hold started, chance=100% (fixed) -> HIT");
+			VATS_TRACE("[VATS] aim-assist: hold started, chance=100% (fixed) -> HIT");
 			Controller::Get().RecordShotResult(hit);
 
 			// Fast-poll right after the click, falling back to a slower
@@ -238,7 +246,7 @@ namespace VATS
 			while (Controller::Get().GetMode() == VATSMode::kLocked) {
 				const auto elapsed = std::chrono::steady_clock::now() - start;
 				if (elapsed > kMaxHoldDuration) {
-					REX::WARN("[VATS] aim-assist: hold exceeded safety timeout, stopping redirect scan");
+					VATS_WARN("[VATS] aim-assist: hold exceeded safety timeout, stopping redirect scan");
 					break;
 				}
 
@@ -263,7 +271,7 @@ namespace VATS
 
 				std::this_thread::sleep_for(elapsed < kFastPollWindow ? kFastPollInterval : kSlowPollInterval);
 			}
-			REX::INFO("[VATS] aim-assist: hold ended");
+			VATS_TRACE("[VATS] aim-assist: hold ended");
 		}
 
 		LRESULT CALLBACK HookProc(int a_code, WPARAM a_wParam, LPARAM a_lParam)
@@ -335,10 +343,10 @@ namespace VATS
 	{
 		s_hook = ::SetWindowsHookExW(WH_MOUSE_LL, HookProc, nullptr, 0);
 		if (!s_hook) {
-			REX::ERROR("failed to install aim-assist mouse hook, GetLastError={}", ::GetLastError());
+			VATS_ERROR("failed to install aim-assist mouse hook, GetLastError={}", ::GetLastError());
 			return;
 		}
-		REX::INFO("aim-assist started");
+		VATS_LOG("aim-assist started");
 
 		while (!a_stop.stop_requested()) {
 			MSG msg;

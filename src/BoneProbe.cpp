@@ -207,7 +207,7 @@ namespace VATS
 			std::uint64_t data = 0;
 			if (TryReadChildren(a_root, kNiNodeChildrenGuess, size, data)) {
 				g_childrenOffset.store(kNiNodeChildrenGuess, std::memory_order_relaxed);
-				REX::INFO("[VATS] bone: children offset confirmed at the header's 0x{:X} ({} children)",
+				VATS_TRACE("[VATS] bone: children offset confirmed at the header's 0x{:X} ({} children)",
 					kNiNodeChildrenGuess, size);
 				return kNiNodeChildrenGuess;
 			}
@@ -227,17 +227,17 @@ namespace VATS
 					if (Read(reinterpret_cast<const void*>(data), 0, firstChild)) {
 						ReadNodeName(reinterpret_cast<const void*>(firstChild), firstName);
 					}
-					REX::INFO("[VATS] bone: children candidate at 0x{:X} - {} entries, first named '''{}'''",
+					VATS_TRACE("[VATS] bone: children candidate at 0x{:X} - {} entries, first named '''{}'''",
 						off, size, firstName);
 					g_childrenOffset.store(off, std::memory_order_relaxed);
-					REX::INFO("[VATS] bone: children offset FOUND at 0x{:X} ({} children) - header said 0x{:X}",
+					VATS_TRACE("[VATS] bone: children offset FOUND at 0x{:X} ({} children) - header said 0x{:X}",
 						off, size, kNiNodeChildrenGuess);
 					return off;
 				}
 			}
 
 			g_childrenProbeFailed.store(true, std::memory_order_relaxed);
-			REX::INFO("[VATS] bone: children offset not found in 0x{:X}..0x{:X} - tree walk stays at the root, bone route closed for this session",
+			VATS_TRACE("[VATS] bone: children offset not found in 0x{:X}..0x{:X} - tree walk stays at the root, bone route closed for this session",
 				kChildrenSearchBegin, kChildrenSearchEnd);
 			return 0;
 		}
@@ -307,6 +307,7 @@ namespace VATS
 			return;
 		}
 		s_lastLogged[formID] = now;
+		Log::Cap(s_lastLogged);
 
 		std::uint64_t loadedData = 0;
 		if (!Read(a_actor, GameOffsets::kActorLoadedData, loadedData) || !loadedData) {
@@ -369,7 +370,7 @@ namespace VATS
 				++named;
 				RE::NiPoint3 pos{};
 				const bool   havePos = ReadWorldPos(reinterpret_cast<const void*>(item.node), pos);
-				REX::INFO("[VATS] bonedump: formID=0x{:08X} depth={} name='{}' aboveFeet={:.3f}",
+				VATS_TRACE("[VATS] bonedump: formID=0x{:08X} depth={} name='{}' aboveFeet={:.3f}",
 					formID, item.depth, name, havePos ? pos.z - feet.z : -99.0f);
 			}
 
@@ -377,7 +378,7 @@ namespace VATS
 				RE::NiPoint3 pos{};
 				if (ReadWorldPos(reinterpret_cast<const void*>(item.node), pos)) {
 					++matches;
-					REX::INFO("[VATS] bone: formID=0x{:08X} name='{}' pos=({:.2f},{:.2f},{:.2f}) aboveFeet={:.2f} vsWorldBound=({:.2f},{:.2f},{:.2f})",
+					VATS_TRACE("[VATS] bone: formID=0x{:08X} name='{}' pos=({:.2f},{:.2f},{:.2f}) aboveFeet={:.2f} vsWorldBound=({:.2f},{:.2f},{:.2f})",
 						formID, name, pos.x, pos.y, pos.z, pos.z - feet.z,
 						pos.x - worldBoundRef.x, pos.y - worldBoundRef.y, pos.z - worldBoundRef.z);
 				}
@@ -407,13 +408,14 @@ namespace VATS
 
 		if (dumpNames) {
 			s_dumped.insert(formID);
-			REX::INFO("[VATS] bonedump: formID=0x{:08X} done - {} nodes visited, {} named (walk cap {} nodes / depth {})",
+			Log::Cap(s_dumped);
+			VATS_TRACE("[VATS] bonedump: formID=0x{:08X} done - {} nodes visited, {} named (walk cap {} nodes / depth {})",
 				formID, visited, named, kMaxNodesVisited, kMaxDepth);
 		}
 
 		if (matches == 0) {
 
-			REX::INFO("[VATS] bone: formID=0x{:08X} no candidate name matched ({} nodes visited)", formID, visited);
+			VATS_TRACE("[VATS] bone: formID=0x{:08X} no candidate name matched ({} nodes visited)", formID, visited);
 		}
 	}
 }

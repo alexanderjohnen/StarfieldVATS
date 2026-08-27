@@ -33,7 +33,7 @@ namespace VATS
 					distanceToLockedTarget = impactPos.GetDistance(lockedActor->GetPosition());
 				}
 
-				REX::INFO(
+				VATS_LOG(
 					"[VATS] hitevent: target=0x{:08X}{} cause=0x{:08X} limb={} material='{}' usesHitData={} "
 					"projectileFormID=0x{:08X} impactPos=({:.1f},{:.1f},{:.1f}) distToLockedTarget={:.2f}",
 					targetFormID, isLockedTarget ? " (LOCKED)" : "",
@@ -56,10 +56,10 @@ namespace VATS
 	{
 		auto* source = RE::TESHitEvent::GetEventSource();
 		if (!source) {
-			REX::WARN("[VATS] hit-event logger: GetEventSource() returned null, not registered");
+			VATS_WARN("[VATS] hit-event logger: GetEventSource() returned null, not registered");
 			return;
 		}
 		source->RegisterSink(&s_sink);
-		REX::INFO("[VATS] hit-event logger registered");
+		VATS_LOG("[VATS] hit-event logger registered");
 	}
 }

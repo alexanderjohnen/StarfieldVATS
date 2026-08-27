@@ -212,7 +212,7 @@ namespace VATS
 			}
 
 			it = s_refCounts.emplace(projectile, st).first;
-			REX::INFO("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}, speed {:.1f} -> {:.1f} (overridden={})",
+			VATS_LOG("[VATS] projtype: engaged, projectile=0x{:X} type 0x{:02X} -> 0x{:02X}, speed {:.1f} -> {:.1f} (overridden={})",
 				projectile, currentType, kRealProjectileTypeValue, st.originalSpeed, desiredSpeed, st.speedOverridden);
 		}
 
@@ -243,7 +243,7 @@ namespace VATS
 		if (st.speedOverridden) {
 			speedRestored = Write(reinterpret_cast<void*>(a_token.projectile), kProjectileData + kProjectileDataSpeed, st.originalSpeed);
 		}
-		REX::INFO("[VATS] projtype: disengaged, projectile=0x{:X} type -> 0x{:02X} (ok={}), speed -> {:.1f} (restored={})",
+		VATS_LOG("[VATS] projtype: disengaged, projectile=0x{:X} type -> 0x{:02X} (ok={}), speed -> {:.1f} (restored={})",
 			a_token.projectile, st.originalType, wrote, st.originalSpeed, speedRestored);
 	}
 }

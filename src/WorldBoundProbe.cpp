@@ -246,8 +246,9 @@ namespace VATS
 		// be checked against the same three numbers.
 		{
 			static std::unordered_set<std::uint32_t> s_logged;
+			Log::Cap(s_logged);
 			if (s_logged.insert(a_actor->GetFormID()).second) {
-				REX::INFO("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} centre/radius={:.3f} -> aimAboveFeet={:.3f}",
+				VATS_TRACE("[VATS] aimpoint: formID=0x{:08X} feetZ={:.3f} centreZ={:.3f} centreAboveFeet={:.3f} radius={:.3f} centre/radius={:.3f} -> aimAboveFeet={:.3f}",
 					a_actor->GetFormID(), a_feet.z, bound.center.z, centreAboveFeet, bound.radius,
 					bound.radius > 0.0f ? centreAboveFeet / bound.radius : 0.0f,
 					out.z - a_feet.z);
@@ -302,8 +303,9 @@ namespace VATS
 			return;
 		}
 		s_lastLogged[formID] = bound.center;
+		Log::Cap(s_lastLogged);
 
-		REX::INFO("[VATS] worldBound: formID=0x{:08X} feet=({:.2f},{:.2f},{:.2f}) oldAimPoint=({:.2f},{:.2f},{:.2f}) center=({:.2f},{:.2f},{:.2f}) radius={:.2f} centerAboveFeet={:.2f}",
+		VATS_TRACE("[VATS] worldBound: formID=0x{:08X} feet=({:.2f},{:.2f},{:.2f}) oldAimPoint=({:.2f},{:.2f},{:.2f}) center=({:.2f},{:.2f},{:.2f}) radius={:.2f} centerAboveFeet={:.2f}",
 			formID, feet.x, feet.y, feet.z,
 			oldAimPoint.x, oldAimPoint.y, oldAimPoint.z,
 			bound.center.x, bound.center.y, bound.center.z, bound.radius,

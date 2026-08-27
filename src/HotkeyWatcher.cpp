@@ -31,7 +31,7 @@ namespace VATS
 		}
 
 		m_thread = std::jthread(&HotkeyWatcher::ThreadProc);
-		REX::INFO("hotkey watcher started");
+		VATS_LOG("hotkey watcher started");
 	}
 
 	void HotkeyWatcher::Stop()

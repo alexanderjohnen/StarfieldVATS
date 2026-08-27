@@ -207,7 +207,7 @@ namespace VATS
 				const float         drift = dirRead ?
 					std::sqrt((curDir.x - w.x) * (curDir.x - w.x) + (curDir.y - w.y) * (curDir.y - w.y) + (curDir.z - w.z) * (curDir.z - w.z)) :
 					-1.0f;
-				REX::INFO("[VATS] redirect readback: entry=0x{:X} age={:.3f} wroteDir=({:.3f},{:.3f},{:.3f}) nowDir=({:.3f},{:.3f},{:.3f}) drift={:.3f} -> {} | vel=({:.1f},{:.1f},{:.1f})",
+				VATS_TRACE("[VATS] redirect readback: entry=0x{:X} age={:.3f} wroteDir=({:.3f},{:.3f},{:.3f}) nowDir=({:.3f},{:.3f},{:.3f}) drift={:.3f} -> {} | vel=({:.1f},{:.1f},{:.1f})",
 					a_entry, curAge, w.x, w.y, w.z, curDir.x, curDir.y, curDir.z, drift,
 					drift >= 0.0f && drift < 0.01f ? "WRITE STUCK" : "OVERWRITTEN BY ENGINE",
 					oldVelocity.x, oldVelocity.y, oldVelocity.z);
@@ -376,7 +376,7 @@ namespace VATS
 			if (!shooterHandleRead || shooterHandle != kShooterIsPlayer) {
 				continue;
 			}
-			REX::INFO("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
+			VATS_TRACE("[VATS] projectile candidate: entry=0x{:X} formType=0x{:02X} shooterHandle={} (read={}) age={:.3f} (read={})",
 				entry, formType, shooterHandle, shooterHandleRead, age, ageRead);
 
 			if (!ageRead || age < 0.0f || age > kMaxRedirectAgeSeconds) {
@@ -419,7 +419,7 @@ namespace VATS
 				(aimPoint.x - projPos.x) * (aimPoint.x - projPos.x) +
 				(aimPoint.y - projPos.y) * (aimPoint.y - projPos.y) +
 				(aimPoint.z - projPos.z) * (aimPoint.z - projPos.z));
-			REX::INFO("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f} distToAim={:.1f} phase={}",
+			VATS_TRACE("[VATS] projectile redirect: {} entry=0x{:X} age={:.3f} speed={:.1f} distToAim={:.1f} phase={}",
 				a_hit ? "HIT" : "MISS", entry, age, speed, toTarget,
 				speed < 1.0e-3f ? "tracked-prelaunch (no write yet)" : "in-flight");
 		}

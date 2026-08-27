@@ -268,7 +268,7 @@ namespace VATS::UI
 			}
 			s_lastOutcome = a_outcome;
 			s_lastFormID = a_formID;
-			REX::INFO("[overlay] formID=0x{:08X} {}", a_formID, a_detail);
+			VATS_TRACE("[overlay] formID=0x{:08X} {}", a_formID, a_detail);
 		}
 
 		// Dead-check + position read + projection, shared by the Aiming
@@ -419,9 +419,10 @@ namespace VATS::UI
 				return;
 			}
 			s_last[formID] = LastLogged{ fx, fy };
+			Log::Cap(s_last);
 
 			const auto& settings = Settings::Get();
-			REX::INFO("[VATS] aimdiag: formID=0x{:08X} feet=({:.3f},{:.3f}) sphere=({:.3f},{:.3f}) aim=({:.3f},{:.3f}) offCentre=({:+.3f},{:+.3f}) display={:.0f}x{:.0f} fov={:.2f} horizontal={}",
+			VATS_TRACE("[VATS] aimdiag: formID=0x{:08X} feet=({:.3f},{:.3f}) sphere=({:.3f},{:.3f}) aim=({:.3f},{:.3f}) offCentre=({:+.3f},{:+.3f}) display={:.0f}x{:.0f} fov={:.2f} horizontal={}",
 				formID, fx, fy,
 				haveCentreScreen ? cx : -1.0f, haveCentreScreen ? cy : -1.0f,
 				haveAimScreen ? ax : -1.0f, haveAimScreen ? ay : -1.0f,
@@ -788,7 +789,7 @@ namespace VATS::UI
 					return;
 				}
 
-				REX::INFO("[VATS] target died (health={:.2f}), forcing lock off", hp.current);
+				VATS_LOG("[VATS] target died (health={:.2f}), forcing lock off", hp.current);
 				Controller::Get().ForceOff("target died");
 				return;
 			}
@@ -814,8 +815,19 @@ namespace VATS::UI
 		// worldBound alone turned out insufficient - screenshot-confirmed
 		// too low on a wide/crouching pose (see BoneProbe.h) - so a named-
 		// bone candidate is now probed alongside it for comparison.
-		WorldBoundProbe::LogIfChanged(state.actor.get());
-		BoneProbe::LogIfChanged(state.actor.get());
+		//
+		// Skipped entirely below iLogLevel=3 (2026-08-27). These were the
+		// two most expensive things Draw() did, and both exist only to
+		// write log lines: WorldBoundProbe re-reads the bounding sphere the
+		// draw path already resolved, and BoneProbe walks the whole NiNode
+		// graph of the target (heap vector, up to kMaxNodesVisited nodes)
+		// once a second, forever, to report that no candidate bone name
+		// matched - which it has now reported for days. Both also fed a
+		// permanently-growing per-formID throttle map.
+		if (Log::Verbose()) {
+			WorldBoundProbe::LogIfChanged(state.actor.get());
+			BoneProbe::LogIfChanged(state.actor.get());
+		}
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a
 		// possible live "can the player currently see this target" signal

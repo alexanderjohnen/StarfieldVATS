@@ -366,5 +366,29 @@ namespace VATS
 		bool  moveCritMarker{ false };
 		float critMarkerOffsetX{ 0.0f };
 		float critMarkerOffsetY{ -180.0f };
+
+		// How much this mod writes to
+		// Documents\My Games\Starfield\SFSE\Logs\StarfieldVATS.log.
+		//   0 nothing at all, not even errors
+		//   1 warnings and errors only
+		//   2 + state transitions and one-time findings (default)
+		//   3 + per-shot and per-frame diagnostics
+		//
+		// Applied at Load() to Log::g_level, which VATS_LOG/VATS_TRACE
+		// check BEFORE formatting their arguments (see Log.h - REX formats
+		// unconditionally, so a level check inside the logger would not
+		// have saved anything). Level 3 additionally re-enables two probes
+		// that are otherwise skipped outright rather than merely silenced:
+		// BoneProbe/WorldBoundProbe per frame in Overlay::Draw, and
+		// ProjectileFlagProbe per shot in AimAssist.
+		int logLevel{ 2 };
+
+		// Whether to install the system-wide WH_KEYBOARD_LL hook that makes
+		// iBackKey end a VATS lock instead of opening the character menu.
+		// Worth its own switch because the cost is not confined to this
+		// game: a low-level keyboard hook sits in the input path of every
+		// application on the machine. Turn it off if the back key is not
+		// wanted for VATS - the mod is otherwise unaffected.
+		bool interceptBackKey{ true };
 	};
 }

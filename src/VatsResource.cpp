@@ -31,7 +31,7 @@ namespace VATS
 			// spend; the caller degrades to "resource system off" rather
 			// than to a bar that is silently always empty.
 			m_valid = false;
-			REX::WARN("[VATS] resource: could not read the player's full health - resource bar disabled this session");
+			VATS_WARN("[VATS] resource: could not read the player's full health - resource bar disabled this session");
 			return;
 		}
 
@@ -53,7 +53,7 @@ namespace VATS
 		m_current = m_capacity * fraction;
 		m_valid = true;
 
-		REX::INFO("[VATS] resource: capacity={:.0f} (full health {:.0f} x {:.2f}), refill={:.1f}/s (full oxygen {:.0f} x {:.2f}), current={:.0f}",
+		VATS_LOG("[VATS] resource: capacity={:.0f} (full health {:.0f} x {:.2f}), refill={:.1f}/s (full oxygen {:.0f} x {:.2f}), current={:.0f}",
 			m_capacity, fullHealth, settings.vatsCapacityPerHealth, m_refillPerSecond, fullOxygen, settings.vatsRefillPerOxygen, m_current);
 	}
 
@@ -92,7 +92,7 @@ namespace VATS
 		}
 
 		if (m_current <= 0.0f) {
-			REX::INFO("[VATS] resource: budget exhausted (capacity={:.0f}) - ending lock", m_capacity);
+			VATS_LOG("[VATS] resource: budget exhausted (capacity={:.0f}) - ending lock", m_capacity);
 			return false;
 		}
 		return true;

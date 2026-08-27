@@ -79,11 +79,11 @@ namespace VATS
 			tasks->AddTask([a_attempt]() {
 				auto* ui = RE::UI::GetSingleton();
 				if (!ui || !ui->IsMenuOpen("MonocleMenu")) {
-					REX::INFO("[VATS] scanner closed after {} attempt(s)", a_attempt);
+					VATS_LOG("[VATS] scanner closed after {} attempt(s)", a_attempt);
 					return;
 				}
 				if (a_attempt >= kMaxScannerCloseAttempts) {
-					REX::INFO("[VATS] scanner still open after {} attempts, giving up", kMaxScannerCloseAttempts);
+					VATS_LOG("[VATS] scanner still open after {} attempts, giving up", kMaxScannerCloseAttempts);
 					return;
 				}
 				CloseScannerIfOpen(a_attempt + 1);
@@ -124,7 +124,7 @@ namespace VATS
 		void CloseScannerIfOpen(int a_attempt)
 		{
 			const std::uint32_t vk = Settings::Get().scannerToggleKeyVK;
-			REX::INFO("[VATS] scanner-close attempt {}/{}, vk=0x{:X}", a_attempt, kMaxScannerCloseAttempts, vk);
+			VATS_LOG("[VATS] scanner-close attempt {}/{}, vk=0x{:X}", a_attempt, kMaxScannerCloseAttempts, vk);
 			std::thread(ScannerCloseAttemptWorker, a_attempt, vk).detach();
 		}
 	}
@@ -178,7 +178,7 @@ namespace VATS
 		// render thread via Overlay::Draw(), and ConsoleLog has only ever
 		// been touched from the game thread so far in this project. File
 		// logging only until that's been verified safe cross-thread.
-		REX::INFO("[VATS] OFF (forced: {})", a_reason ? a_reason : "unspecified");
+		VATS_LOG("[VATS] OFF (forced: {})", a_reason ? a_reason : "unspecified");
 	}
 
 	void Controller::RecordShotResult(bool a_hit)
@@ -221,7 +221,7 @@ namespace VATS
 	{
 		const auto* tasks = SFSE::GetTaskInterface();
 		if (!tasks) {
-			REX::ERROR("task interface unavailable, cannot advance VATS state");
+			VATS_ERROR("task interface unavailable, cannot advance VATS state");
 			return;
 		}
 
@@ -229,7 +229,7 @@ namespace VATS
 		// once Advance() actually runs on the game thread — see
 		// starfield-vats-ui-hook memory for why this exists (ruled out SFSE
 		// task-queue delay as a suspect during the OFF/ON investigation).
-		REX::INFO("[hotkey] advance requested (queued to game thread)");
+		VATS_LOG("[hotkey] advance requested (queued to game thread)");
 
 		tasks->AddTask([]() {
 			Controller::Get().Advance();
@@ -315,7 +315,7 @@ namespace VATS
 			const std::scoped_lock lock(m_targetLock);
 			m_target = next;
 		}
-		REX::INFO("[VATS] auto-advance: new target formID=0x{:08X} (source={}, dist={:.1f}m, angle={:.1f}deg)",
+		VATS_LOG("[VATS] auto-advance: new target formID=0x{:08X} (source={}, dist={:.1f}m, angle={:.1f}deg)",
 			next->GetFormID(), reportedDistance < 0.0f ? "crosshair" : "cone-scan", reportedDistance, reportedAngle);
 		return true;
 	}
@@ -371,13 +371,13 @@ namespace VATS
 			// blind), see starfield-vats-ui-hook memory, 2026-08-22.
 			auto* ui = RE::UI::GetSingleton();
 			if (!ui || !ui->IsMenuOpen("MonocleMenu")) {
-				REX::INFO("[VATS] ignored (scanner not open)");
+				VATS_LOG("[VATS] ignored (scanner not open)");
 				return;
 			}
 
 			RE::NiPointer<RE::Actor> lockTarget = GetCrosshairActivationTarget();
 			if (!lockTarget) {
-				REX::INFO("[VATS] ignored (nothing under crosshair)");
+				VATS_LOG("[VATS] ignored (nothing under crosshair)");
 				return;
 			}
 
@@ -387,7 +387,7 @@ namespace VATS
 				m_target = lockTarget;
 			}
 			m_mode.store(VATSMode::kLocked, std::memory_order_relaxed);
-			REX::INFO("[VATS] LOCKED | target formID=0x{:08X}", formID);
+			VATS_LOG("[VATS] LOCKED | target formID=0x{:08X}", formID);
 			if (console) {
 				console->Log("[VATS] LOCKED | target formID=0x{:08X}", formID);
 			}
@@ -471,17 +471,17 @@ namespace VATS
 			// what it does and does not gate.
 			switch (Settings::Get().scannerCloseMode) {
 			case 1:
-				REX::INFO("[VATS] closing scanner via simulated key press");
+				VATS_LOG("[VATS] closing scanner via simulated key press");
 				CloseScannerIfOpen(1);
 				break;
 			case 2:
-				REX::INFO("[VATS] closing scanner via UIMessageQueue kHide");
+				VATS_LOG("[VATS] closing scanner via UIMessageQueue kHide");
 				if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
 					queue->AddMessage("MonocleMenu", RE::UI_MESSAGE_TYPE::kHide);
 				}
 				break;
 			default:
-				REX::INFO("[VATS] leaving scanner open (iScannerCloseMode=0)");
+				VATS_LOG("[VATS] leaving scanner open (iScannerCloseMode=0)");
 				break;
 			}
 			return;
@@ -507,7 +507,7 @@ namespace VATS
 			m_projectileOverride = {};
 			m_projectileOverrideTarget = 0;
 		}
-		REX::INFO("[VATS] OFF");
+		VATS_LOG("[VATS] OFF");
 		if (console) {
 			console->Log("[VATS] OFF");
 		}

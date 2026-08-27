@@ -61,7 +61,7 @@ namespace VATS
 
 		auto* avList = RE::ActorValue::GetSingleton();
 		if (!avList || !avList->health) {
-			REX::ERROR("[VATS] health: ActorValue singleton or ->health ActorValueInfo unavailable");
+			VATS_ERROR("[VATS] health: ActorValue singleton or ->health ActorValueInfo unavailable");
 			return false;
 		}
 		const RE::ActorValueInfo* healthInfo = avList->health;
@@ -75,8 +75,9 @@ namespace VATS
 		float current = 0.0f;
 		if (!FindByAvPointer(a_actor->avStorage.baseValues, healthInfo, kBaseValueStride, current)) {
 			static std::unordered_set<std::uint32_t> s_logged;
+			Log::Cap(s_logged);
 			if (s_logged.insert(a_actor->GetFormID()).second) {
-				REX::WARN("[VATS] health: no baseValues entry for healthInfo={} on formID=0x{:08X}, size={}",
+				VATS_WARN("[VATS] health: no baseValues entry for healthInfo={} on formID=0x{:08X}, size={}",
 					static_cast<const void*>(healthInfo), a_actor->GetFormID(), a_actor->avStorage.baseValues.size());
 			}
 			return false;
@@ -89,7 +90,10 @@ namespace VATS
 		// real fight with confirmed hits landing. The running-highest guard
 		// stays anyway, so a temporary buff can only ever grow the scale.
 		static std::unordered_map<std::uint32_t, float> s_maxSeen;
-		float&                                          maxSeen = s_maxSeen[formID];
+		// Capped BEFORE taking the reference below, never after - clearing
+		// the map invalidates it.
+		Log::Cap(s_maxSeen);
+		float& maxSeen = s_maxSeen[formID];
 		if (current > maxSeen) {
 			maxSeen = current;
 		}
@@ -118,8 +122,9 @@ namespace VATS
 		static std::unordered_map<std::uint32_t, float> s_lastLoggedCurrent;
 		const auto                                      it = s_lastLoggedCurrent.find(formID);
 		if (it == s_lastLoggedCurrent.end() || it->second != current) {
-			REX::INFO("[VATS] health: formID=0x{:08X} current={:.2f} max={:.1f} (live={})", formID, current, maxSeen, haveLive);
+			VATS_TRACE("[VATS] health: formID=0x{:08X} current={:.2f} max={:.1f} (live={})", formID, current, maxSeen, haveLive);
 			s_lastLoggedCurrent[formID] = current;
+			Log::Cap(s_lastLoggedCurrent);
 		}
 
 		a_out.current = current;

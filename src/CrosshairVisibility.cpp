@@ -51,12 +51,12 @@ namespace VATS
 			for (const char* name : kBoolCandidates) {
 				if (auto* s = TryFind(gameSettings, name)) {
 					s_boolSetting = s;
-					REX::INFO("[VATS] crosshair: found bool setting '{}' via GameSettingCollection", name);
+					VATS_LOG("[VATS] crosshair: found bool setting '{}' via GameSettingCollection", name);
 					return;
 				}
 				if (auto* s = TryFind(iniPrefs, name)) {
 					s_boolSetting = s;
-					REX::INFO("[VATS] crosshair: found bool setting '{}' via INIPrefSettingCollection", name);
+					VATS_LOG("[VATS] crosshair: found bool setting '{}' via INIPrefSettingCollection", name);
 					return;
 				}
 			}
@@ -64,17 +64,17 @@ namespace VATS
 			for (const char* name : kFloatCandidates) {
 				if (auto* s = TryFind(gameSettings, name)) {
 					s_floatSetting = s;
-					REX::INFO("[VATS] crosshair: found float setting '{}' via GameSettingCollection", name);
+					VATS_LOG("[VATS] crosshair: found float setting '{}' via GameSettingCollection", name);
 					return;
 				}
 				if (auto* s = TryFind(iniPrefs, name)) {
 					s_floatSetting = s;
-					REX::INFO("[VATS] crosshair: found float setting '{}' via INIPrefSettingCollection", name);
+					VATS_LOG("[VATS] crosshair: found float setting '{}' via INIPrefSettingCollection", name);
 					return;
 				}
 			}
 
-			REX::WARN("[VATS] crosshair: none of the candidate settings resolved in either collection, hide/restore is a no-op");
+			VATS_WARN("[VATS] crosshair: none of the candidate settings resolved in either collection, hide/restore is a no-op");
 		}
 	}
 
@@ -86,11 +86,11 @@ namespace VATS
 		if (s_boolSetting) {
 			s_originalBool = s_boolSetting->GetBool();
 			s_boolSetting->SetBool(false);
-			REX::INFO("[VATS] crosshair: hidden via bool setting (was {})", s_originalBool);
+			VATS_LOG("[VATS] crosshair: hidden via bool setting (was {})", s_originalBool);
 		} else if (s_floatSetting) {
 			s_originalFloat = s_floatSetting->GetFloat();
 			s_floatSetting->SetFloat(0.0f);
-			REX::INFO("[VATS] crosshair: hidden via alpha=0 (was {})", s_originalFloat);
+			VATS_LOG("[VATS] crosshair: hidden via alpha=0 (was {})", s_originalFloat);
 		}
 	}
 
@@ -98,10 +98,10 @@ namespace VATS
 	{
 		if (s_boolSetting) {
 			s_boolSetting->SetBool(s_originalBool);
-			REX::INFO("[VATS] crosshair: restored bool to {}", s_originalBool);
+			VATS_LOG("[VATS] crosshair: restored bool to {}", s_originalBool);
 		} else if (s_floatSetting) {
 			s_floatSetting->SetFloat(s_originalFloat);
-			REX::INFO("[VATS] crosshair: restored alpha to {}", s_originalFloat);
+			VATS_LOG("[VATS] crosshair: restored alpha to {}", s_originalFloat);
 		}
 	}
 }

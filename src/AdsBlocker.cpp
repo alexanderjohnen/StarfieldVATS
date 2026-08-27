@@ -3,6 +3,7 @@
 #include "Settings.h"
 #include "VATSController.h"
 
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -15,7 +16,8 @@ namespace VATS
 {
 	namespace
 	{
-		HHOOK s_hook = nullptr;
+		HHOOK             s_hook = nullptr;
+		std::atomic<bool> s_pendingEndLock{ false };
 
 		// Matches a WM_*BUTTONDOWN message against Settings::adsButtonVK.
 		// XBUTTON1/2 share one message (WM_XBUTTONDOWN) and are told apart
@@ -53,8 +55,18 @@ namespace VATS
 				if (!injected && Settings::Get().endLockOnAds &&
 					Controller::Get().GetMode() == VATSMode::kLocked &&
 					MatchesConfiguredButton(a_wParam, info, Settings::Get().adsButtonVK)) {
-					REX::INFO("[VATS] ADS button pressed while Locked, ending lock");
-					Controller::Get().ForceOff("player aimed down sights");
+					// Signal only. Everything this used to do inline - a
+					// VATS_LOG (blocking file I/O) and ForceOff (which
+					// unwinds the whole lock: HUD restore, projectile-type
+					// override release, combat-target thread join) - ran
+					// inside a WH_MOUSE_LL callback, i.e. in the SYSTEM-WIDE
+					// input delivery path, where Windows stops delivering
+					// events to a hook that overruns its time budget and
+					// every other application waits behind it. This is the
+					// same mistake AimAssist.cpp already documents twice
+					// (see its HookProc). The pump loop below picks the flag
+					// up within 5ms and does the work on its own thread.
+					s_pendingEndLock.store(true, std::memory_order_relaxed);
 				}
 			}
 			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
@@ -63,12 +75,24 @@ namespace VATS
 
 	void AdsBlocker::ThreadProc(const std::stop_token& a_stop)
 	{
-		s_hook = ::SetWindowsHookExW(WH_MOUSE_LL, HookProc, nullptr, 0);
-		if (!s_hook) {
-			REX::ERROR("failed to install ADS-watch mouse hook, GetLastError={}", ::GetLastError());
+		// A WH_MOUSE_LL hook is a SYSTEM-WIDE cost: once installed, every
+		// mouse event on the whole desktop - in every application, whether
+		// Starfield is even running in the foreground - is routed through
+		// this process before it reaches its real target. Installing one
+		// for a feature the user has switched off is pure overhead, so
+		// honour bEndLockOnAds here and not only inside the callback
+		// (2026-08-27). The hook used to go in unconditionally.
+		if (!Settings::Get().endLockOnAds) {
+			VATS_LOG("[VATS] ADS watcher: bEndLockOnAds=0, mouse hook not installed");
 			return;
 		}
-		REX::INFO("[VATS] ADS watcher started (ends lock on button 0x{:X})", Settings::Get().adsButtonVK);
+
+		s_hook = ::SetWindowsHookExW(WH_MOUSE_LL, HookProc, nullptr, 0);
+		if (!s_hook) {
+			VATS_ERROR("failed to install ADS-watch mouse hook, GetLastError={}", ::GetLastError());
+			return;
+		}
+		VATS_LOG("[VATS] ADS watcher started (ends lock on button 0x{:X})", Settings::Get().adsButtonVK);
 
 		// A low-level hook only fires while its installing thread pumps
 		// messages. PeekMessage (not blocking GetMessage) so the loop can
@@ -80,6 +104,15 @@ namespace VATS
 				::TranslateMessage(&msg);
 				::DispatchMessageW(&msg);
 			}
+
+			// The work the callback deliberately did not do. Running it
+			// here costs at most one pump interval of latency and takes
+			// it out of the system-wide input path entirely.
+			if (s_pendingEndLock.exchange(false, std::memory_order_relaxed)) {
+				VATS_LOG("[VATS] ADS button pressed while Locked, ending lock");
+				Controller::Get().ForceOff("player aimed down sights");
+			}
+
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		}
 

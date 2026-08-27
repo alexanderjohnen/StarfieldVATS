@@ -110,7 +110,7 @@ namespace VATS
 		if (!Read(reinterpret_cast<const void*>(weaponDataAim), kWeaponDataAimAimModel, aimModel) || !aimModel ||
 			!Read(reinterpret_cast<const void*>(aimModel), GameOffsets::kFormType, aimModelFormType) ||
 			aimModelFormType != kFormTypeAMDL) {
-			REX::WARN("[VATS] aimassist: cross-check field aimModel no longer matches kAMDL, chain may have shifted - not touching aim-assist");
+			VATS_WARN("[VATS] aimassist: cross-check field aimModel no longer matches kAMDL, chain may have shifted - not touching aim-assist");
 			return;
 		}
 
@@ -119,7 +119,7 @@ namespace VATS
 		if (!Read(reinterpret_cast<const void*>(weaponDataAim), kWeaponDataAimAimAssistModel, aimAssistModel) || !aimAssistModel ||
 			!Read(reinterpret_cast<const void*>(aimAssistModel), GameOffsets::kFormType, aimAssistFormType) ||
 			aimAssistFormType != kFormTypeAAMD) {
-			REX::INFO("[VATS] aimassist: no BGSAimAssistModel found at the expected offset (formType=0x{:02X}, expect 0x{:02X})",
+			VATS_LOG("[VATS] aimassist: no BGSAimAssistModel found at the expected offset (formType=0x{:02X}, expect 0x{:02X})",
 				aimAssistFormType, kFormTypeAAMD);
 			return;
 		}
@@ -133,7 +133,7 @@ namespace VATS
 		float bulletBendingConeAngle = 0.0f;
 		(void)Read(reinterpret_cast<const void*>(aimAssistModel), kBaseFormTData + kAimAssistBulletBendingConeAngle, bulletBendingConeAngle);
 
-		REX::INFO("[VATS] aimassist: model=0x{:X} wasEnabled={} wrote=true (ok={}) bulletBendingConeAngle={:.3f}",
+		VATS_LOG("[VATS] aimassist: model=0x{:X} wasEnabled={} wrote=true (ok={}) bulletBendingConeAngle={:.3f}",
 			aimAssistModel, wasEnabled, wrote, bulletBendingConeAngle);
 	}
 }

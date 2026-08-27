@@ -57,7 +57,7 @@ namespace VATS
 			auto                     menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
 			if (menu) {
 				if (const char* realRoot = menu->GetRootPath(); realRoot && realRoot[0] != '\0') {
-					REX::INFO("[VATS] combat-hud: HUDMenu root path = '{}'", realRoot);
+					VATS_LOG("[VATS] combat-hud: HUDMenu root path = '{}'", realRoot);
 					s_realRoot = realRoot;
 					parents.push_back(realRoot);
 					parents.push_back(std::string(realRoot) + ".HUDMovieBaseInstance");
@@ -224,7 +224,7 @@ namespace VATS
 			// properties - that distinction is what finally localized this
 			// bug, so keep it visible for the next one.
 			const bool objectAvailable = a_root->IsAvailable(a_objectPath.c_str());
-			REX::INFO("[VATS] combat-hud: object '{}' available={}", a_objectPath, objectAvailable);
+			VATS_LOG("[VATS] combat-hud: object '{}' available={}", a_objectPath, objectAvailable);
 			if (!objectAvailable) {
 				return false;
 			}
@@ -241,11 +241,11 @@ namespace VATS
 					a_root->SetVariable(path.c_str(), falseVal);
 				}
 				s_touched.push_back(Touched{ path, true, wasVisible, 0.0f });
-				REX::INFO("[VATS] combat-hud: hid '{}' (was visible={})", path, wasVisible);
+				VATS_LOG("[VATS] combat-hud: hid '{}' (was visible={})", path, wasVisible);
 				return true;
 			}
 
-			REX::WARN("[VATS] combat-hud: '{}' resolves but neither 'visible' nor '_visible' read as a boolean on it", a_objectPath);
+			VATS_WARN("[VATS] combat-hud: '{}' resolves but neither 'visible' nor '_visible' read as a boolean on it", a_objectPath);
 			return false;
 		}
 
@@ -281,20 +281,20 @@ namespace VATS
 			const std::string paths[] = { a_hitIndicatorPath, a_hitIndicatorPath + ".CritBanner_mc" };
 			for (const auto& objectPath : paths) {
 				if (!a_root->IsAvailable(objectPath.c_str())) {
-					REX::INFO("[VATS] combat-hud: inspect '{}' not available", objectPath);
+					VATS_TRACE("[VATS] combat-hud: inspect '{}' not available", objectPath);
 					continue;
 				}
 				for (const char* property : { "x", "y", "width", "height", "currentFrame", "totalFrames", "currentLabel" }) {
 					const std::string         path = objectPath + "." + property;
 					RE::Scaleform::GFx::Value value;
 					if (!a_root->GetVariable(&value, path.c_str())) {
-						REX::INFO("[VATS] combat-hud: inspect {} unreadable", path);
+						VATS_TRACE("[VATS] combat-hud: inspect {} unreadable", path);
 					} else if (value.IsNumber()) {
-						REX::INFO("[VATS] combat-hud: inspect {} = {:.1f}", path, value.GetNumber());
+						VATS_TRACE("[VATS] combat-hud: inspect {} = {:.1f}", path, value.GetNumber());
 					} else if (value.IsString()) {
-						REX::INFO("[VATS] combat-hud: inspect {} = '{}'", path, value.GetString());
+						VATS_TRACE("[VATS] combat-hud: inspect {} = '{}'", path, value.GetString());
 					} else {
-						REX::INFO("[VATS] combat-hud: inspect {} present but neither number nor string", path);
+						VATS_TRACE("[VATS] combat-hud: inspect {} present but neither number nor string", path);
 					}
 				}
 			}
@@ -302,7 +302,7 @@ namespace VATS
 			for (const char* stagePath : { "root1.stage.stageWidth", "root1.stage.stageHeight" }) {
 				RE::Scaleform::GFx::Value value;
 				if (a_root->GetVariable(&value, stagePath) && value.IsNumber()) {
-					REX::INFO("[VATS] combat-hud: inspect {} = {:.1f}", stagePath, value.GetNumber());
+					VATS_TRACE("[VATS] combat-hud: inspect {} = {:.1f}", stagePath, value.GetNumber());
 				}
 			}
 		}
@@ -334,7 +334,7 @@ namespace VATS
 				// original alongside the new value - one real session's
 				// numbers make the INI offsets calibratable instead of
 				// guessed.
-				REX::INFO("[VATS] combat-hud: moved '{}' {:.1f} -> {:.1f}", path, original, original + delta);
+				VATS_LOG("[VATS] combat-hud: moved '{}' {:.1f} -> {:.1f}", path, original, original + delta);
 				movedAny = true;
 			}
 			return movedAny;
@@ -367,7 +367,7 @@ namespace VATS
 		if (root && !s_realRoot.empty()) {
 			RE::Scaleform::GFx::Value rootVal;
 			const bool                gotRoot = root->GetVariable(&rootVal, s_realRoot.c_str());
-			REX::INFO("[VATS] combat-hud: baseline GetVariable('{}') ok={} isObject={} isDisplayObject={} isUndefined={}",
+			VATS_LOG("[VATS] combat-hud: baseline GetVariable('{}') ok={} isObject={} isDisplayObject={} isUndefined={}",
 				s_realRoot, gotRoot, gotRoot && rootVal.IsObject(), gotRoot && rootVal.IsDisplayObject(), gotRoot && rootVal.IsUndefined());
 		}
 
@@ -386,7 +386,7 @@ namespace VATS
 			// logs exactly which level (container itself vs. its
 			// children) is the one that doesn't resolve.
 			const bool containerAvailable = root->IsAvailable(container.c_str());
-			REX::INFO("[VATS] combat-hud: container '{}' available={}", container, containerAvailable);
+			VATS_LOG("[VATS] combat-hud: container '{}' available={}", container, containerAvailable);
 
 			if (!containerAvailable) {
 				continue;
@@ -425,7 +425,7 @@ namespace VATS
 			}
 		}
 
-		REX::WARN("[VATS] combat-hud: none of the candidate HitKillIndicator paths resolved - see kContainerNames/kFallbackParents in CombatHudVisibility.cpp, or the logged HUDMenu root path above for a better guess");
+		VATS_WARN("[VATS] combat-hud: none of the candidate HitKillIndicator paths resolved - see kContainerNames/kFallbackParents in CombatHudVisibility.cpp, or the logged HUDMenu root path above for a better guess");
 	}
 
 	void CombatHudVisibility::Restore()
@@ -480,7 +480,7 @@ namespace VATS
 						return;
 					}
 					if (!idle) {
-						REX::INFO("[VATS] combat-hud: indicator still animating at the ceiling, restoring anyway (iHudRestoreDelayMs)");
+						VATS_LOG("[VATS] combat-hud: indicator still animating at the ceiling, restoring anyway (iHudRestoreDelayMs)");
 					}
 					RestoreNow(root, work);
 					done->set_value(true);

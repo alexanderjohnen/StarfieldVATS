@@ -1,5 +1,7 @@
 #include "Settings.h"
 
+#include <algorithm>
+
 namespace VATS
 {
 	namespace
@@ -31,6 +33,12 @@ namespace VATS
 
 	void Settings::Load()
 	{
+		// Read and applied FIRST, before any other key and before the
+		// summary line at the bottom of this function - otherwise the very
+		// act of loading the settings would always log at the old level.
+		logLevel = std::clamp(static_cast<int>(REX::W32::GetPrivateProfileIntA("Debug", "iLogLevel", 2, INI_PATH)), 0, 3);
+		Log::g_level.store(logLevel, std::memory_order_relaxed);
+
 		enabled = REX::W32::GetPrivateProfileIntA("General", "bEnabled", 1, INI_PATH) != 0;
 		activationKeyVK = REX::W32::GetPrivateProfileIntA("Controls", "iActivationKey", 0x51, INI_PATH);
 		scannerToggleKeyVK = REX::W32::GetPrivateProfileIntA("Controls", "iScannerToggleKey", 0x51, INI_PATH);
@@ -68,8 +76,9 @@ namespace VATS
 		critMarkerOffsetX = GetPrivateProfileFloatA("HUD", "fCritMarkerOffsetX", 0.0f, INI_PATH);
 		critMarkerOffsetY = GetPrivateProfileFloatA("HUD", "fCritMarkerOffsetY", -180.0f, INI_PATH);
 		debugAimMarkers = REX::W32::GetPrivateProfileIntA("HUD", "bDebugAimMarkers", 0, INI_PATH) != 0;
+		interceptBackKey = REX::W32::GetPrivateProfileIntA("Controls", "bInterceptBackKey", 1, INI_PATH) != 0;
 
-		REX::INFO("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, fCameraFovDegrees={}, bCameraFovIsHorizontal={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}, fCostPerDamage={}, bAutoAdvanceOnKill={}, fAutoAdvanceRangeMeters={}, bAutoAdvanceRequireCrosshair={}, bAutoAdvanceRequireEngaged={}, iAutoAdvanceConeDegrees={}, iAutoAdvanceGraceMs={}, iHudRestoreDelayMs={}, fTargetMarkerRadius={}, fAimPointCentreFactor={}, fAimPointSmoothingSeconds={}, bIgnoreFriendlyActors={}, bRequireHostileTarget={}, bMoveCritMarker={}, fCritMarkerOffsetX={}, fCritMarkerOffsetY={}, bDebugAimMarkers={}",
-			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, cameraFovIsHorizontal, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen, vatsCostPerDamage, autoAdvanceOnKill, autoAdvanceRangeMeters, autoAdvanceRequireCrosshair, autoAdvanceRequireEngaged, autoAdvanceConeDeg, autoAdvanceGraceMs, hudRestoreDelayMs, targetMarkerRadius, aimPointCentreFactor, aimPointSmoothingSeconds, ignoreFriendlyActors, requireHostileTarget, moveCritMarker, critMarkerOffsetX, critMarkerOffsetY, debugAimMarkers);
+		VATS_LOG("settings: bEnabled={}, iActivationKey=0x{:X}, iScannerToggleKey=0x{:X}, iBackKey=0x{:X}, iScannerCloseMode={}, iConeDegrees={}, iMaxRange={}, fCameraFovDegrees={}, bCameraFovIsHorizontal={}, iCenterHitChancePercent={}, fFullChanceRangeMeters={}, fMaxEffectiveRangeMeters={}, bEndLockOnAds={}, iAdsButton=0x{:X}, bHideCrosshairWhileLocked={}, bShowTargetHealth={}, fLockedProjectileSpeed={}, [Resource] bEnabled={}, fCapacityPerHealth={}, fRefillPerOxygen={}, fCostPerDamage={}, bAutoAdvanceOnKill={}, fAutoAdvanceRangeMeters={}, bAutoAdvanceRequireCrosshair={}, bAutoAdvanceRequireEngaged={}, iAutoAdvanceConeDegrees={}, iAutoAdvanceGraceMs={}, iHudRestoreDelayMs={}, fTargetMarkerRadius={}, fAimPointCentreFactor={}, fAimPointSmoothingSeconds={}, bIgnoreFriendlyActors={}, bRequireHostileTarget={}, bMoveCritMarker={}, fCritMarkerOffsetX={}, fCritMarkerOffsetY={}, bDebugAimMarkers={}, bInterceptBackKey={}, iLogLevel={}",
+			enabled, activationKeyVK, scannerToggleKeyVK, backKeyVK, scannerCloseMode, targetConeDeg, maxTargetRange, cameraFovDegrees, cameraFovIsHorizontal, centerHitChancePercent, fullChanceRangeMeters, maxEffectiveRangeMeters, endLockOnAds, adsButtonVK, hideCrosshairWhileLocked, showTargetHealth, lockedProjectileSpeed, vatsResourceEnabled, vatsCapacityPerHealth, vatsRefillPerOxygen, vatsCostPerDamage, autoAdvanceOnKill, autoAdvanceRangeMeters, autoAdvanceRequireCrosshair, autoAdvanceRequireEngaged, autoAdvanceConeDeg, autoAdvanceGraceMs, hudRestoreDelayMs, targetMarkerRadius, aimPointCentreFactor, aimPointSmoothingSeconds, ignoreFriendlyActors, requireHostileTarget, moveCritMarker, critMarkerOffsetX, critMarkerOffsetY, debugAimMarkers, interceptBackKey, logLevel);
 	}
 }

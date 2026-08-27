@@ -63,11 +63,11 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 {
 	SFSE::Init(a_sfse);
 
-	REX::INFO("{} v{} loaded", SFSE::GetPluginName(), SFSE::GetPluginVersion().string());
+	VATS_LOG("{} v{} loaded", SFSE::GetPluginName(), SFSE::GetPluginVersion().string());
 
 	const auto* messaging = SFSE::GetMessagingInterface();
 	if (!messaging || !messaging->RegisterListener(OnSFSEMessage)) {
-		REX::ERROR("failed to register SFSE message listener");
+		VATS_ERROR("failed to register SFSE message listener");
 		return false;
 	}
 

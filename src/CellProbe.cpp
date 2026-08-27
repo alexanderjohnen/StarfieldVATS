@@ -68,7 +68,7 @@ namespace VATS
 			for (std::uint32_t i = 0; i < count; ++i) {
 				std::uint64_t entry = 0;
 				if (!Read(reinterpret_cast<const void*>(a_best.data), 8ull * i, entry) || !entry) {
-					REX::INFO("    [{}] <unreadable or null>", i);
+					VATS_LOG("    [{}] <unreadable or null>", i);
 					continue;
 				}
 
@@ -80,7 +80,7 @@ namespace VATS
 				const bool    okType = Read(e, kFormTypeOff, formType);
 				const bool    okPos = SafeRead(static_cast<const std::byte*>(e) + kLocationOff, pos, sizeof(pos));
 
-				REX::INFO("    [{}] ptr=0x{:X} formID={} formType={}{} pos={}",
+				VATS_LOG("    [{}] ptr=0x{:X} formID={} formType={}{} pos={}",
 					i,
 					entry,
 					okID ? std::format("{:08X}", formID) : "?",
@@ -93,7 +93,7 @@ namespace VATS
 
 	void RunCellProbe(const RE::TESObjectCELL* a_cell)
 	{
-		REX::INFO("=== CELL PROBE start: cell=0x{:X}, header claims references at 0x{:X} ===",
+		VATS_LOG("=== CELL PROBE start: cell=0x{:X}, header claims references at 0x{:X} ===",
 			reinterpret_cast<std::uint64_t>(a_cell), kHeaderClaimedReferencesOff);
 
 		// What lives at the header-claimed offset right now, raw:
@@ -104,7 +104,7 @@ namespace VATS
 			const bool    ok = Read(a_cell, kHeaderClaimedReferencesOff, size) &&
 			                Read(a_cell, kHeaderClaimedReferencesOff + 4, capacity) &&
 			                Read(a_cell, kHeaderClaimedReferencesOff + 8, data);
-			REX::INFO("  raw @0x{:X}: size={} cap={} data=0x{:X} (readable={})",
+			VATS_LOG("  raw @0x{:X}: size={} cap={} data=0x{:X} (readable={})",
 				kHeaderClaimedReferencesOff, size, capacity, data, ok);
 		}
 
@@ -112,21 +112,21 @@ namespace VATS
 		for (std::size_t off = 0x30; off <= 0x1F8; off += 8) {
 			if (auto cand = ProbeArrayAt(a_cell, off)) {
 				found.push_back(*cand);
-				REX::INFO("  CANDIDATE off=0x{:X}: size={} cap={} backptr-hits={}/{}",
+				VATS_LOG("  CANDIDATE off=0x{:X}: size={} cap={} backptr-hits={}/{}",
 					cand->offset, cand->size, cand->capacity, cand->hits, cand->checked);
 			}
 		}
 
 		if (found.empty()) {
-			REX::INFO("  no reference-array candidate found in 0x30..0x1F8");
+			VATS_LOG("  no reference-array candidate found in 0x30..0x1F8");
 		} else {
 			const auto best = *std::max_element(found.begin(), found.end(),
 				[](const Candidate& a_lhs, const Candidate& a_rhs) { return a_lhs.hits < a_rhs.hits; });
-			REX::INFO("  best candidate: off=0x{:X} — dumping first {} entries:",
+			VATS_LOG("  best candidate: off=0x{:X} — dumping first {} entries:",
 				best.offset, std::min<std::uint32_t>(best.size, 10));
 			DumpEntries(best);
 		}
 
-		REX::INFO("=== CELL PROBE end ===");
+		VATS_LOG("=== CELL PROBE end ===");
 	}
 }

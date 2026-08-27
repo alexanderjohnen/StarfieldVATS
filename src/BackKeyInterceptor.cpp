@@ -3,6 +3,7 @@
 #include "Settings.h"
 #include "VATSController.h"
 
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -16,6 +17,12 @@ namespace VATS
 	namespace
 	{
 		HHOOK s_hook = nullptr;
+
+		// Filled in by HookProc, consumed by the pump loop - see HookProc.
+		std::atomic<bool> s_pendingBackKey{ false };
+		std::atomic<bool> s_pendingHasFocus{ false };
+		std::atomic<bool> s_pendingLocked{ false };
+		std::atomic<bool> s_pendingSwallow{ false };
 
 		[[nodiscard]] bool GameWindowHasFocus()
 		{
@@ -67,14 +74,19 @@ namespace VATS
 					const bool     hasFocus = GameWindowHasFocus();
 					const VATSMode mode = Controller::Get().GetMode();
 					const bool     shouldSwallow = hasFocus && mode == VATSMode::kLocked;
-					std::thread([hasFocus, mode, shouldSwallow]() {
-						REX::INFO("[VATS] back key seen: hasFocus={} mode={} -> {}",
-							hasFocus, mode == VATSMode::kLocked ? "Locked" : "Off",
-							shouldSwallow ? "swallow+ForceOff" : "pass through");
-						if (shouldSwallow) {
-							Controller::Get().ForceOff("back key pressed");
-						}
-					}).detach();
+					// Signalled, not dispatched (2026-08-27). Spawning a
+					// std::thread is itself real work - a kernel thread
+					// create plus a stack commit - and it happened here, in
+					// the system-wide input path, on every press of this key
+					// regardless of whether anything came of it (the common
+					// case by far: Tab outside VATS, which just wanted the
+					// diagnostic line). The pump loop below already ticks
+					// every 5ms and can do both the log and the ForceOff off
+					// the input path, with no thread per keystroke.
+					s_pendingHasFocus.store(hasFocus, std::memory_order_relaxed);
+					s_pendingLocked.store(mode == VATSMode::kLocked, std::memory_order_relaxed);
+					s_pendingSwallow.store(shouldSwallow, std::memory_order_relaxed);
+					s_pendingBackKey.store(true, std::memory_order_relaxed);
 					if (shouldSwallow) {
 						return 1;  // swallow - Starfield never sees this keydown
 					}
@@ -90,12 +102,19 @@ namespace VATS
 		// hook proc lives in the calling process (it does - we're an
 		// in-process SFSE plugin) - NULL is the textbook-correct value here,
 		// not a module handle.
-		s_hook = ::SetWindowsHookExW(WH_KEYBOARD_LL, HookProc, nullptr, 0);
-		if (!s_hook) {
-			REX::ERROR("failed to install back-key hook, GetLastError={}", ::GetLastError());
+		// Same reasoning as AdsBlocker: a low-level hook is a system-wide
+		// cost, so a feature switched off must not leave one installed.
+		if (!Settings::Get().interceptBackKey) {
+			VATS_LOG("back-key interceptor: bInterceptBackKey=0, keyboard hook not installed");
 			return;
 		}
-		REX::INFO("back-key interceptor started");
+
+		s_hook = ::SetWindowsHookExW(WH_KEYBOARD_LL, HookProc, nullptr, 0);
+		if (!s_hook) {
+			VATS_ERROR("failed to install back-key hook, GetLastError={}", ::GetLastError());
+			return;
+		}
+		VATS_LOG("back-key interceptor started");
 
 		// A low-level hook only fires while its installing thread pumps
 		// messages. PeekMessage (not blocking GetMessage) so the loop can
@@ -107,6 +126,19 @@ namespace VATS
 				::TranslateMessage(&msg);
 				::DispatchMessageW(&msg);
 			}
+
+			if (s_pendingBackKey.exchange(false, std::memory_order_relaxed)) {
+				const bool hasFocus = s_pendingHasFocus.load(std::memory_order_relaxed);
+				const bool locked = s_pendingLocked.load(std::memory_order_relaxed);
+				const bool swallowed = s_pendingSwallow.load(std::memory_order_relaxed);
+				VATS_TRACE("[VATS] back key seen: hasFocus={} mode={} -> {}",
+					hasFocus, locked ? "Locked" : "Off",
+					swallowed ? "swallow+ForceOff" : "pass through");
+				if (swallowed) {
+					Controller::Get().ForceOff("back key pressed");
+				}
+			}
+
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		}
 

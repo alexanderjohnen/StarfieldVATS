@@ -123,14 +123,14 @@ namespace VATS
 
 			RTTICompleteObjectLocator locator{};
 			if (!ReadLocator(a_actor, locator)) {
-				REX::WARN("[VATS] actor rtti: could not resolve the complete object locator");
+				VATS_WARN("[VATS] actor rtti: could not resolve the complete object locator");
 				return false;
 			}
 
 			RTTIClassHierarchyDescriptor hierarchy{};
 			if (!SafeRead(reinterpret_cast<const void*>(moduleBase + locator.classDescriptor), &hierarchy, sizeof(hierarchy)) ||
 				hierarchy.numBaseClasses == 0 || hierarchy.numBaseClasses > kMaxBaseClasses || hierarchy.baseClassArray == 0) {
-				REX::WARN("[VATS] actor rtti: class hierarchy descriptor unreadable or implausible (numBases={})", hierarchy.numBaseClasses);
+				VATS_WARN("[VATS] actor rtti: class hierarchy descriptor unreadable or implausible (numBases={})", hierarchy.numBaseClasses);
 				return false;
 			}
 
@@ -155,7 +155,7 @@ namespace VATS
 				}
 
 				if (logMap) {
-					REX::INFO("[VATS] actor base[{:02}] +0x{:03X} -> {}", i, descriptor.mdisp, name);
+					VATS_TRACE("[VATS] actor base[{:02}] +0x{:03X} -> {}", i, descriptor.mdisp, name);
 				}
 
 				// The game's classes sit in the global namespace, so the
@@ -199,12 +199,12 @@ namespace VATS
 				static bool s_loggedFailure = false;
 				if (!s_loggedFailure) {
 					s_loggedFailure = true;
-					REX::WARN("[VATS] live health: no ActorValueOwner sub-object found in Actor - not calling anything");
+					VATS_WARN("[VATS] live health: no ActorValueOwner sub-object found in Actor - not calling anything");
 				}
 				return false;
 			}
 			s_haveOffset = true;
-			REX::INFO("[VATS] live health: ActorValueOwner sub-object confirmed at Actor+0x{:03X}", s_ownerOffset);
+			VATS_LOG("[VATS] live health: ActorValueOwner sub-object confirmed at Actor+0x{:03X}", s_ownerOffset);
 		}
 
 		// Re-confirm identity on every call before dispatching through the

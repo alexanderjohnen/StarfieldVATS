@@ -51,7 +51,7 @@ namespace VATS
 				}
 				std::uint8_t formType = 0;
 				if (Read(reinterpret_cast<const void*>(candidate), GameOffsets::kFormType, formType) && formType == kFormTypePROJ) {
-					REX::INFO("[VATS] projflag sweep: {}+0x{:X} = 0x{:X} -> formType=0x3A (kPROJ) - CANDIDATE MATCH",
+					VATS_TRACE("[VATS] projflag sweep: {}+0x{:X} = 0x{:X} -> formType=0x3A (kPROJ) - CANDIDATE MATCH",
 						a_label, off, candidate);
 				}
 			}
@@ -76,7 +76,7 @@ namespace VATS
 		{
 			std::uint8_t formType = 0;
 			if (!Read(reinterpret_cast<const void*>(a_projectile), GameOffsets::kFormType, formType) || formType != kFormTypePROJ) {
-				REX::INFO("[VATS] projflag candidate {}: 0x{:X} formType=0x{:02X} (not kPROJ, skipping)", a_label, a_projectile, formType);
+				VATS_TRACE("[VATS] projflag candidate {}: 0x{:X} formType=0x{:02X} (not kPROJ, skipping)", a_label, a_projectile, formType);
 				return;
 			}
 			std::uint32_t rawFlags = 0;
@@ -121,6 +121,7 @@ namespace VATS
 			// in ProjectileTracker.cpp.
 			{
 				static std::unordered_set<std::uint64_t> s_projDumped;
+				Log::Cap(s_projDumped);
 				if (s_projDumped.insert(a_projectile).second) {
 					std::string hex;
 					char        word[24];
@@ -131,11 +132,11 @@ namespace VATS
 							hex += word;
 						}
 					}
-					REX::INFO("[VATS] projflag proj raw dump {} projectile=0x{:X}: {}", a_label, a_projectile, hex);
+					VATS_TRACE("[VATS] projflag proj raw dump {} projectile=0x{:X}: {}", a_label, a_projectile, hex);
 				}
 			}
 
-			REX::INFO("[VATS] projflag candidate {}: projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f} type=0x{:02X} unk88={:.3f} unk8C={:.3f} unk90={:.3f} unk94={:.3f}",
+			VATS_TRACE("[VATS] projflag candidate {}: projectile=0x{:X} flags=0x{:08X} (read={}) hitScan={} gravity={:.2f} speed={:.1f} range={:.1f} type=0x{:02X} unk88={:.3f} unk8C={:.3f} unk90={:.3f} unk94={:.3f}",
 				a_label, a_projectile, rawFlags, flagsRead, flagsRead && (rawFlags & kFlagHitScan) != 0, gravity, speed, range, type, unk88, unk8C, unk90, unk94);
 		}
 
@@ -225,19 +226,19 @@ namespace VATS
 
 		std::uint64_t weaponAmmoData = 0;
 		if (!Read(reinterpret_cast<const void*>(instanceData), kInstanceDataWeaponAmmoData, weaponAmmoData) || !weaponAmmoData) {
-			REX::INFO("[VATS] projflag: no WeaponAmmoData for equipped weapon (unarmed/melee?)");
+			VATS_TRACE("[VATS] projflag: no WeaponAmmoData for equipped weapon (unarmed/melee?)");
 			return;
 		}
 
 		std::uint64_t ammo = 0;
 		if (!Read(reinterpret_cast<const void*>(weaponAmmoData), kWeaponAmmoDataAmmo, ammo) || !ammo) {
-			REX::INFO("[VATS] projflag: WeaponAmmoData=0x{:X} but ammo pointer is null", weaponAmmoData);
+			VATS_TRACE("[VATS] projflag: WeaponAmmoData=0x{:X} but ammo pointer is null", weaponAmmoData);
 			return;
 		}
 
 		std::uint8_t ammoFormType = 0;
 		if (!Read(reinterpret_cast<const void*>(ammo), GameOffsets::kFormType, ammoFormType) || ammoFormType != kFormTypeAMMO) {
-			REX::WARN("[VATS] projflag: cross-check failed - ammo=0x{:X} formType=0x{:02X}, expected kAMMO=0x{:02X} - chain may have shifted",
+			VATS_WARN("[VATS] projflag: cross-check failed - ammo=0x{:X} formType=0x{:02X}, expected kAMMO=0x{:02X} - chain may have shifted",
 				ammo, ammoFormType, kFormTypeAMMO);
 			return;
 		}
@@ -247,6 +248,7 @@ namespace VATS
 		// candidates below, not because we still doubt those two.
 		{
 			static std::unordered_set<std::uint64_t> s_dumped;
+			Log::Cap(s_dumped);
 			if (s_dumped.insert(ammo).second) {
 				std::string hex;
 				char        word[24];
@@ -257,7 +259,7 @@ namespace VATS
 						hex += word;
 					}
 				}
-				REX::INFO("[VATS] projflag raw dump ammo=0x{:X}: {}", ammo, hex);
+				VATS_TRACE("[VATS] projflag raw dump ammo=0x{:X}: {}", ammo, hex);
 				SweepForProjectile("ammo", ammo, 0x240);
 				SweepForProjectile("weaponAmmoData", weaponAmmoData, 0x184);
 			}

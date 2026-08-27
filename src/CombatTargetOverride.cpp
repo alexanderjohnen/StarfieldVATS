@@ -44,7 +44,7 @@ namespace VATS
 		s_originalValue = original;
 
 		const std::uint32_t formID = a_target->GetFormID();
-		REX::INFO("[VATS] combat-target override: engaged, forcing formID=0x{:08X} every {}ms (was 0x{:08X})",
+		VATS_LOG("[VATS] combat-target override: engaged, forcing formID=0x{:08X} every {}ms (was 0x{:08X})",
 			formID, kWriteInterval.count(), original);
 		m_thread = std::jthread(&CombatTargetOverride::ThreadProc, formID);
 	}
@@ -63,6 +63,6 @@ namespace VATS
 		}
 		auto*      addr = reinterpret_cast<std::byte*>(player) + GameOffsets::kCurrentCombatTarget;
 		const bool wrote = SafeWrite(addr, &s_originalValue, sizeof(s_originalValue));
-		REX::INFO("[VATS] combat-target override: disengaged, restored 0x{:08X} (ok={})", s_originalValue, wrote);
+		VATS_LOG("[VATS] combat-target override: disengaged, restored 0x{:08X} (ok={})", s_originalValue, wrote);
 	}
 }

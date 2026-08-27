@@ -16,7 +16,7 @@
 #include "imgui_impl_win32.h"
 
 // One of the above pulls in a Windows macro `ERROR` (from wingdi.h,
-// #define ERROR 0) that collides with REX::ERROR(...) used below.
+// #define ERROR 0) that collides with VATS_ERROR(...) used below.
 #ifdef ERROR
 #	undef ERROR
 #endif
@@ -57,20 +57,34 @@ namespace VATS::UI
 			// "RANGE 100M". Rendered at that size rather than scaled up to
 			// it, which is the entire point of this function.
 			constexpr float kFontSize = 20.0f;
+			// Forward slashes, deliberately. Until 2026-08-27 these paths
+			// were written with single backslashes, which C does not read
+			// as path separators at all: the escapes for W and F are
+			// unrecognised (MSVC warns and drops the backslash), and the
+			// one in front of "bahnschrift" is a literal BACKSPACE. What
+			// the font loader actually received was therefore
+			// "C:WindowsFonts<0x08>ahnschrift.ttf" - so BOTH candidates
+			// failed on every launch and the overlay silently fell back to
+			// ImGui's built-in 13px bitmap font. That is exactly the
+			// "sieht etwas schaebig aus ... sehr kantig" Alexander
+			// reported on 2026-08-26, which this very function was written
+			// to fix, and the log has said "no TTF found" ever since.
+			// Win32 accepts forward slashes in file paths, so this form
+			// has nothing left to escape.
 			constexpr const char* kCandidates[] = {
-				"C:\Windows\Fonts\bahnschrift.ttf",
-				"C:\Windows\Fonts\segoeui.ttf",
+				"C:/Windows/Fonts/bahnschrift.ttf",
+				"C:/Windows/Fonts/segoeui.ttf",
 			};
 
 			for (const char* path : kCandidates) {
 				if (io.Fonts->AddFontFromFileTTF(path, kFontSize) != nullptr) {
-					REX::INFO("[UI] HUD font: {} at {}px", path, kFontSize);
+					VATS_LOG("[UI] HUD font: {} at {}px", path, kFontSize);
 					return;
 				}
 			}
 
 			io.Fonts->AddFontDefault();
-			REX::WARN("[UI] HUD font: no TTF found, falling back to the built-in bitmap font");
+			VATS_WARN("[UI] HUD font: no TTF found, falling back to the built-in bitmap font");
 		}
 
 		DrawCallback g_drawCallback = nullptr;
@@ -99,32 +113,32 @@ namespace VATS::UI
 
 		[[nodiscard]] IATEntry SearchIAT(const char* a_dllName, const char* a_funcName)
 		{
-			REX::INFO("[UI] SearchIAT('{}', '{}') start", a_dllName ? a_dllName : "(null)", a_funcName);
+			VATS_LOG("[UI] SearchIAT('{}', '{}') start", a_dllName ? a_dllName : "(null)", a_funcName);
 
 			auto* dosHeader = RVA<const IMAGE_DOS_HEADER*>(0);
-			REX::INFO("[UI] SearchIAT: dosHeader=0x{:X} e_magic=0x{:X}",
+			VATS_TRACE("[UI] SearchIAT: dosHeader=0x{:X} e_magic=0x{:X}",
 				reinterpret_cast<std::uintptr_t>(dosHeader), dosHeader ? dosHeader->e_magic : 0);
 
 			auto* ntHeaders = RVA<const IMAGE_NT_HEADERS64*>(dosHeader->e_lfanew);
-			REX::INFO("[UI] SearchIAT: ntHeaders=0x{:X} signature=0x{:X}",
+			VATS_TRACE("[UI] SearchIAT: ntHeaders=0x{:X} signature=0x{:X}",
 				reinterpret_cast<std::uintptr_t>(ntHeaders), ntHeaders ? ntHeaders->Signature : 0);
 
 			const auto importsDir = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-			REX::INFO("[UI] SearchIAT: importsDir VA=0x{:X} size={}", importsDir.VirtualAddress, importsDir.Size);
+			VATS_TRACE("[UI] SearchIAT: importsDir VA=0x{:X} size={}", importsDir.VirtualAddress, importsDir.Size);
 
 			auto* imports = RVA<const IMAGE_IMPORT_DESCRIPTOR*>(importsDir.VirtualAddress);
-			REX::INFO("[UI] SearchIAT: imports=0x{:X}", reinterpret_cast<std::uintptr_t>(imports));
+			VATS_TRACE("[UI] SearchIAT: imports=0x{:X}", reinterpret_cast<std::uintptr_t>(imports));
 
 			for (std::uint64_t i = 0; imports[i].Characteristics; ++i) {
 				auto* dllName = RVA<const char*>(imports[i].Name);
-				REX::INFO("[UI] SearchIAT: [{}] dllName ptr=0x{:X}", i, reinterpret_cast<std::uintptr_t>(dllName));
-				REX::INFO("[UI] SearchIAT: [{}] dllName = '{}'", i, dllName ? dllName : "(null)");
+				VATS_TRACE("[UI] SearchIAT: [{}] dllName ptr=0x{:X}", i, reinterpret_cast<std::uintptr_t>(dllName));
+				VATS_TRACE("[UI] SearchIAT: [{}] dllName = '{}'", i, dllName ? dllName : "(null)");
 
 				if (a_dllName && _stricmp(dllName, a_dllName) != 0) {
 					continue;
 				}
 
-				REX::INFO("[UI] SearchIAT: matched dll '{}', OriginalFirstThunk=0x{:X} FirstThunk=0x{:X}",
+				VATS_TRACE("[UI] SearchIAT: matched dll '{}', OriginalFirstThunk=0x{:X} FirstThunk=0x{:X}",
 					dllName, imports[i].OriginalFirstThunk, imports[i].FirstThunk);
 
 				auto* names = RVA<const IMAGE_THUNK_DATA64*>(imports[i].OriginalFirstThunk);
@@ -135,12 +149,12 @@ namespace VATS::UI
 					}
 					auto* byName = RVA<const IMAGE_IMPORT_BY_NAME*>(names[j].u1.AddressOfData);
 					if (_stricmp(byName->Name, a_funcName) == 0) {
-						REX::INFO("[UI] SearchIAT: found '{}' at thunk[{}]", a_funcName, j);
+						VATS_TRACE("[UI] SearchIAT: found '{}' at thunk[{}]", a_funcName, j);
 						return reinterpret_cast<IATEntry>(&thunks[j].u1.AddressOfData);
 					}
 				}
 			}
-			REX::INFO("[UI] SearchIAT: '{}' not found in '{}'", a_funcName, a_dllName ? a_dllName : "(any)");
+			VATS_TRACE("[UI] SearchIAT: '{}' not found in '{}'", a_funcName, a_dllName ? a_dllName : "(any)");
 			return nullptr;
 		}
 
@@ -182,7 +196,7 @@ namespace VATS::UI
 				std::memcpy(&disp, bytes + 1, sizeof(disp));
 				current = reinterpret_cast<FuncPtr>(const_cast<unsigned char*>(bytes) + 5 + disp);
 			}
-			REX::ERROR("[UI] FollowFunctionHook: hop limit ({}) hit, chain did not terminate — using last-seen address", kMaxHops);
+			VATS_ERROR("[UI] FollowFunctionHook: hop limit ({}) hit, chain did not terminate — using last-seen address", kMaxHops);
 			return current;
 		}
 
@@ -191,12 +205,12 @@ namespace VATS::UI
 			LPVOID trampoline = nullptr;
 			const MH_STATUS createStatus = MH_CreateHook(reinterpret_cast<LPVOID>(a_old), reinterpret_cast<LPVOID>(a_new), &trampoline);
 			if (createStatus != MH_OK) {
-				REX::ERROR("[UI] MH_CreateHook(0x{:X}) failed: {}", reinterpret_cast<std::uintptr_t>(a_old), MH_StatusToString(createStatus));
+				VATS_ERROR("[UI] MH_CreateHook(0x{:X}) failed: {}", reinterpret_cast<std::uintptr_t>(a_old), MH_StatusToString(createStatus));
 				return nullptr;
 			}
 			const MH_STATUS enableStatus = MH_EnableHook(reinterpret_cast<LPVOID>(a_old));
 			if (enableStatus != MH_OK) {
-				REX::ERROR("[UI] MH_EnableHook(0x{:X}) failed: {}", reinterpret_cast<std::uintptr_t>(a_old), MH_StatusToString(enableStatus));
+				VATS_ERROR("[UI] MH_EnableHook(0x{:X}) failed: {}", reinterpret_cast<std::uintptr_t>(a_old), MH_StatusToString(enableStatus));
 				return nullptr;
 			}
 			return reinterpret_cast<FuncPtr>(trampoline);
@@ -221,12 +235,12 @@ namespace VATS::UI
 			const FuncPtr old = *a_slot;
 			DWORD oldProtect = 0;
 			if (!::VirtualProtect(a_slot, sizeof(FuncPtr), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-				REX::ERROR("[UI] HookVTableSlot: VirtualProtect(0x{:X}) failed", reinterpret_cast<std::uintptr_t>(a_slot));
+				VATS_ERROR("[UI] HookVTableSlot: VirtualProtect(0x{:X}) failed", reinterpret_cast<std::uintptr_t>(a_slot));
 				return nullptr;
 			}
 			*a_slot = a_new;
 			::VirtualProtect(a_slot, sizeof(FuncPtr), oldProtect, &oldProtect);
-			REX::INFO("[UI] HookVTableSlot: patched slot 0x{:X} (0x{:X} -> 0x{:X})",
+			VATS_LOG("[UI] HookVTableSlot: patched slot 0x{:X} (0x{:X} -> 0x{:X})",
 				reinterpret_cast<std::uintptr_t>(a_slot), reinterpret_cast<std::uintptr_t>(old), reinterpret_cast<std::uintptr_t>(a_new));
 			return old;
 		}
@@ -284,11 +298,11 @@ namespace VATS::UI
 
 		void Initialize(IDXGISwapChain* a_swapChain, ID3D12CommandQueue* a_queue)
 		{
-			REX::INFO("[UI] Initialize: swapchain=0x{:X}, queue=0x{:X}, hwnd=0x{:X}",
+			VATS_LOG("[UI] Initialize: swapchain=0x{:X}, queue=0x{:X}, hwnd=0x{:X}",
 				reinterpret_cast<std::uintptr_t>(a_swapChain), reinterpret_cast<std::uintptr_t>(a_queue),
 				reinterpret_cast<std::uintptr_t>(g_gameHwnd));
 			if (!g_gameHwnd) {
-				REX::ERROR("[UI] Initialize: g_gameHwnd is null, aborting (should be impossible — set in FakeCreateSwapChainForHwnd before this can run)");
+				VATS_ERROR("[UI] Initialize: g_gameHwnd is null, aborting (should be impossible — set in FakeCreateSwapChainForHwnd before this can run)");
 				return;
 			}
 			g_initialized = true;
@@ -299,13 +313,13 @@ namespace VATS::UI
 			bool                    ok = true;
 
 			if (FAILED(a_swapChain->GetDevice(IID_PPV_ARGS(&d3d12Device)))) {
-				REX::ERROR("[UI] Initialize: GetDevice failed");
+				VATS_ERROR("[UI] Initialize: GetDevice failed");
 				ok = false;
 			}
 
 			DXGI_SWAP_CHAIN_DESC desc{};
 			if (ok && FAILED(a_swapChain->GetDesc(&desc))) {
-				REX::ERROR("[UI] Initialize: GetDesc failed");
+				VATS_ERROR("[UI] Initialize: GetDesc failed");
 				ok = false;
 			}
 			if (ok && desc.BufferDesc.Width && desc.BufferDesc.Height) {
@@ -320,13 +334,13 @@ namespace VATS::UI
 					reinterpret_cast<IUnknown* const*>(&a_queue), 1, 0,
 					&d3d11Device, &g_d3d11Context, nullptr);
 				if (FAILED(hr)) {
-					REX::ERROR("[UI] Initialize: D3D11On12CreateDevice failed, hr=0x{:X}", static_cast<std::uint32_t>(hr));
+					VATS_ERROR("[UI] Initialize: D3D11On12CreateDevice failed, hr=0x{:X}", static_cast<std::uint32_t>(hr));
 					ok = false;
 				}
 			}
 
 			if (ok && FAILED(d3d11Device->QueryInterface(IID_PPV_ARGS(&g_d3d11On12Device)))) {
-				REX::ERROR("[UI] Initialize: QueryInterface(ID3D11On12Device) failed");
+				VATS_ERROR("[UI] Initialize: QueryInterface(ID3D11On12Device) failed");
 				ok = false;
 			}
 
@@ -407,7 +421,7 @@ namespace VATS::UI
 			if (!g_initialized) {
 				ReleaseIfInitialized();
 			}
-			REX::INFO("[UI] Initialize: {}", g_initialized ? "success" : "FAILED");
+			VATS_LOG("[UI] Initialize: {}", g_initialized ? "success" : "FAILED");
 		}
 
 		void InitializeOrRender(IDXGISwapChain* a_swapChain, ID3D12CommandQueue* a_queue)
@@ -500,7 +514,7 @@ namespace VATS::UI
 			static bool firstCall = true;
 			if (firstCall) {
 				firstCall = false;
-				REX::INFO("[UI] FakePresent: first call reached, swapchain=0x{:X}", reinterpret_cast<std::uintptr_t>(a_this));
+				VATS_LOG("[UI] FakePresent: first call reached, swapchain=0x{:X}", reinterpret_cast<std::uintptr_t>(a_this));
 			}
 
 			static IDXGISwapChain3*   lastSwapChain = nullptr;
@@ -535,7 +549,7 @@ namespace VATS::UI
 			}
 			g_swapChainHooksInstalled = true;
 
-			REX::INFO("[UI] installing swapchain hooks, vtable=0x{:X}, Present=0x{:X}, ResizeBuffers=0x{:X}",
+			VATS_LOG("[UI] installing swapchain hooks, vtable=0x{:X}, Present=0x{:X}, ResizeBuffers=0x{:X}",
 				reinterpret_cast<std::uintptr_t>(a_vtable),
 				reinterpret_cast<std::uintptr_t>(a_vtable[kPresent]),
 				reinterpret_cast<std::uintptr_t>(a_vtable[kResizeBuffers]));
@@ -553,7 +567,7 @@ namespace VATS::UI
 					HookVTableSlot(&a_vtable[kResizeBuffers], reinterpret_cast<FuncPtr>(&FakeResizeBuffers)));
 			}
 
-			REX::INFO("[UI] swapchain hooks installed: oldPresent={} oldResizeBuffers={}",
+			VATS_LOG("[UI] swapchain hooks installed: oldPresent={} oldResizeBuffers={}",
 				g_oldPresent ? "ok" : "FAILED", g_oldResizeBuffers ? "ok" : "FAILED");
 		}
 
@@ -568,7 +582,7 @@ namespace VATS::UI
 			const DXGI_SWAP_CHAIN_DESC1* a_desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* a_fsDesc,
 			IDXGIOutput* a_output, IDXGISwapChain1** a_swapChainOut)
 		{
-			REX::INFO("[UI] FakeCreateSwapChainForHwnd called, factory=0x{:X}, queueOrDevice=0x{:X}, hwnd=0x{:X}",
+			VATS_LOG("[UI] FakeCreateSwapChainForHwnd called, factory=0x{:X}, queueOrDevice=0x{:X}, hwnd=0x{:X}",
 				reinterpret_cast<std::uintptr_t>(a_this), reinterpret_cast<std::uintptr_t>(a_device),
 				reinterpret_cast<std::uintptr_t>(a_hwnd));
 
@@ -582,11 +596,11 @@ namespace VATS::UI
 
 			const auto ret = g_oldCreateSwapChainForHwnd(a_this, a_device, a_hwnd, a_desc, a_fsDesc, a_output, a_swapChainOut);
 			if (ret != S_OK || !a_swapChainOut || !*a_swapChainOut) {
-				REX::ERROR("[UI] FakeCreateSwapChainForHwnd: original call failed or returned null, hr=0x{:X}", static_cast<std::uint32_t>(ret));
+				VATS_ERROR("[UI] FakeCreateSwapChainForHwnd: original call failed or returned null, hr=0x{:X}", static_cast<std::uint32_t>(ret));
 				return ret;
 			}
 
-			REX::INFO("[UI] FakeCreateSwapChainForHwnd succeeded, swapchain=0x{:X}",
+			VATS_LOG("[UI] FakeCreateSwapChainForHwnd succeeded, swapchain=0x{:X}",
 				reinterpret_cast<std::uintptr_t>(*a_swapChainOut));
 
 			// The "device" parameter for a D3D12 swapchain is actually the command queue.
@@ -639,10 +653,10 @@ namespace VATS::UI
 
 		HRESULT __stdcall FakeCreateDXGIFactory2(UINT a_flags, REFIID a_riid, void** a_factoryOut)
 		{
-			REX::INFO("[UI] FakeCreateDXGIFactory2 called, flags=0x{:X}", a_flags);
+			VATS_LOG("[UI] FakeCreateDXGIFactory2 called, flags=0x{:X}", a_flags);
 
 			const auto ret = g_oldCreateDXGIFactory2(a_flags, a_riid, a_factoryOut);
-			REX::INFO("[UI] FakeCreateDXGIFactory2: original returned hr=0x{:X}, *factoryOut=0x{:X}",
+			VATS_LOG("[UI] FakeCreateDXGIFactory2: original returned hr=0x{:X}, *factoryOut=0x{:X}",
 				static_cast<std::uint32_t>(ret),
 				(a_factoryOut && *a_factoryOut) ? reinterpret_cast<std::uintptr_t>(*a_factoryOut) : 0);
 
@@ -654,13 +668,13 @@ namespace VATS::UI
 
 				auto* vtable = *reinterpret_cast<FuncPtr**>(*a_factoryOut);
 				constexpr unsigned kCreateSwapChainForHwnd = 15;
-				REX::INFO("[UI] factory vtable=0x{:X}, CreateSwapChainForHwnd slot=0x{:X}",
+				VATS_LOG("[UI] factory vtable=0x{:X}, CreateSwapChainForHwnd slot=0x{:X}",
 					reinterpret_cast<std::uintptr_t>(vtable), reinterpret_cast<std::uintptr_t>(vtable[kCreateSwapChainForHwnd]));
 
 				g_oldCreateSwapChainForHwnd = reinterpret_cast<CreateSwapChainForHwnd_t>(
 					HookFunctionMH(vtable[kCreateSwapChainForHwnd], reinterpret_cast<FuncPtr>(&FakeCreateSwapChainForHwnd)));
 
-				REX::INFO("[UI] CreateSwapChainForHwnd hook: {}", g_oldCreateSwapChainForHwnd ? "ok" : "FAILED");
+				VATS_LOG("[UI] CreateSwapChainForHwnd hook: {}", g_oldCreateSwapChainForHwnd ? "ok" : "FAILED");
 			}
 
 			return ret;
@@ -672,11 +686,11 @@ namespace VATS::UI
 		g_oldCreateDXGIFactory2 = reinterpret_cast<CreateDXGIFactory2_t>(
 			HookFunctionIAT("sl.interposer.dll", "CreateDXGIFactory2", reinterpret_cast<FuncPtr>(&FakeCreateDXGIFactory2)));
 		if (g_oldCreateDXGIFactory2) {
-			REX::INFO("[UI] hooked CreateDXGIFactory2 via sl.interposer.dll IAT entry (Nvidia Streamline present)");
+			VATS_LOG("[UI] hooked CreateDXGIFactory2 via sl.interposer.dll IAT entry (Nvidia Streamline present)");
 		} else {
 			g_oldCreateDXGIFactory2 = reinterpret_cast<CreateDXGIFactory2_t>(
 				HookFunctionIAT("dxgi.dll", "CreateDXGIFactory2", reinterpret_cast<FuncPtr>(&FakeCreateDXGIFactory2)));
-			REX::INFO("[UI] hooked CreateDXGIFactory2 via dxgi.dll IAT entry: {}", g_oldCreateDXGIFactory2 ? "ok" : "NOT FOUND");
+			VATS_LOG("[UI] hooked CreateDXGIFactory2 via dxgi.dll IAT entry: {}", g_oldCreateDXGIFactory2 ? "ok" : "NOT FOUND");
 		}
 	}
 

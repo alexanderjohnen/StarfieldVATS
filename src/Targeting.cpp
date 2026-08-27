@@ -275,10 +275,10 @@ namespace VATS
 		}
 
 		if (scanCount < size) {
-			REX::WARN("[targeting] cellRefs={} exceeds scan cap {} — {} entries were NOT scanned this call",
+			VATS_WARN("[targeting] cellRefs={} exceeds scan cap {} — {} entries were NOT scanned this call",
 				size, kScanCap, size - scanCount);
 		}
-		REX::INFO("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} notEngagedSkipped={} offScreenSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
+		VATS_TRACE("[targeting] cellRefs={} scanned={} actorsSeen={} outOfRange={} outsideCone={} deadSkipped={} friendlySkipped={} notEngagedSkipped={} offScreenSkipped={} closestMissAngle={:.1f}deg camFwd=({:.3f},{:.3f},{:.3f}) -> {}",
 			size, scanCount, nActorsSeen, nOutOfRange, nOutsideCone, nDeadSkipped, nFriendlySkipped, nNotEngagedSkipped, nOffScreenSkipped, closestMissAngleDeg, camFwd.x, camFwd.y, camFwd.z, best ? "FOUND" : "none");
 
 		return best;

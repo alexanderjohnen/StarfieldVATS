@@ -39,17 +39,17 @@ namespace VATS
 			for (const char* name : kBoolCandidates) {
 				if (auto* s = TryFind(gameSettings, name)) {
 					s_setting = s;
-					REX::INFO("[VATS] damage numbers: found setting '{}' via GameSettingCollection", name);
+					VATS_LOG("[VATS] damage numbers: found setting '{}' via GameSettingCollection", name);
 					return;
 				}
 				if (auto* s = TryFind(iniPrefs, name)) {
 					s_setting = s;
-					REX::INFO("[VATS] damage numbers: found setting '{}' via INIPrefSettingCollection", name);
+					VATS_LOG("[VATS] damage numbers: found setting '{}' via INIPrefSettingCollection", name);
 					return;
 				}
 			}
 
-			REX::WARN("[VATS] damage numbers: none of the candidate settings resolved in either collection, hide/restore is a no-op");
+			VATS_WARN("[VATS] damage numbers: none of the candidate settings resolved in either collection, hide/restore is a no-op");
 		}
 	}
 
@@ -63,7 +63,7 @@ namespace VATS
 		}
 		s_originalValue = s_setting->GetBool();
 		s_setting->SetBool(false);
-		REX::INFO("[VATS] damage numbers: hidden (was {})", s_originalValue);
+		VATS_LOG("[VATS] damage numbers: hidden (was {})", s_originalValue);
 	}
 
 	void DamageNumbersVisibility::Restore()
@@ -72,6 +72,6 @@ namespace VATS
 			return;
 		}
 		s_setting->SetBool(s_originalValue);
-		REX::INFO("[VATS] damage numbers: restored to {}", s_originalValue);
+		VATS_LOG("[VATS] damage numbers: restored to {}", s_originalValue);
 	}
 }
