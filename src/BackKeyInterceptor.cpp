@@ -1,5 +1,6 @@
 #include "BackKeyInterceptor.h"
 
+#include "InputHookPump.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -16,7 +17,6 @@ namespace VATS
 {
 	namespace
 	{
-		HHOOK s_hook = nullptr;
 
 		// Filled in by HookProc, consumed by the pump loop - see HookProc.
 		std::atomic<bool> s_pendingBackKey{ false };
@@ -98,10 +98,6 @@ namespace VATS
 
 	void BackKeyInterceptor::ThreadProc(const std::stop_token& a_stop)
 	{
-		// hMod is documented as ignorable for WH_KEYBOARD_LL as long as the
-		// hook proc lives in the calling process (it does - we're an
-		// in-process SFSE plugin) - NULL is the textbook-correct value here,
-		// not a module handle.
 		// Same reasoning as AdsBlocker: a low-level hook is a system-wide
 		// cost, so a feature switched off must not leave one installed.
 		if (!Settings::Get().interceptBackKey) {
@@ -109,41 +105,25 @@ namespace VATS
 			return;
 		}
 
-		s_hook = ::SetWindowsHookExW(WH_KEYBOARD_LL, HookProc, nullptr, 0);
-		if (!s_hook) {
-			VATS_ERROR("failed to install back-key hook, GetLastError={}", ::GetLastError());
-			return;
-		}
 		VATS_LOG("back-key interceptor started");
 
-		// A low-level hook only fires while its installing thread pumps
-		// messages. PeekMessage (not blocking GetMessage) so the loop can
-		// still check the stop token for clean shutdown, same polling-loop
-		// shape as HotkeyWatcher.
-		while (!a_stop.stop_requested()) {
-			MSG msg;
-			while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-				::TranslateMessage(&msg);
-				::DispatchMessageW(&msg);
-			}
-
-			if (s_pendingBackKey.exchange(false, std::memory_order_relaxed)) {
-				const bool hasFocus = s_pendingHasFocus.load(std::memory_order_relaxed);
-				const bool locked = s_pendingLocked.load(std::memory_order_relaxed);
-				const bool swallowed = s_pendingSwallow.load(std::memory_order_relaxed);
-				VATS_TRACE("[VATS] back key seen: hasFocus={} mode={} -> {}",
-					hasFocus, locked ? "Locked" : "Off",
-					swallowed ? "swallow+ForceOff" : "pass through");
-				if (swallowed) {
-					Controller::Get().ForceOff("back key pressed");
+		RunLowLevelHookPump(
+			a_stop, LowLevelHookKind::kKeyboard,
+			reinterpret_cast<LowLevelHookProc>(&HookProc), "back-key interceptor",
+			[]() {
+				if (s_pendingBackKey.exchange(false, std::memory_order_relaxed)) {
+					const bool hasFocus = s_pendingHasFocus.load(std::memory_order_relaxed);
+					const bool locked = s_pendingLocked.load(std::memory_order_relaxed);
+					const bool swallowed = s_pendingSwallow.load(std::memory_order_relaxed);
+					VATS_TRACE("[VATS] back key seen: hasFocus={} mode={} -> {}",
+						hasFocus, locked ? "Locked" : "Off",
+						swallowed ? "swallow+ForceOff" : "pass through");
+					if (swallowed) {
+						Controller::Get().ForceOff("back key pressed");
+					}
 				}
-			}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-		}
-
-		::UnhookWindowsHookEx(s_hook);
-		s_hook = nullptr;
+			},
+			nullptr);
 	}
 
 	void BackKeyInterceptor::Start()

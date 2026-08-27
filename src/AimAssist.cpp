@@ -2,6 +2,7 @@
 
 #include "AimAssistProbe.h"
 #include "GameOffsets.h"
+#include "InputHookPump.h"
 #include "ProjectileFlagProbe.h"
 #include "ProjectileTracker.h"
 #include "ProjectileTypeOverride.h"
@@ -28,7 +29,6 @@ namespace VATS
 {
 	namespace
 	{
-		HHOOK             s_hook = nullptr;
 		std::atomic<bool> s_buttonHeld{ false };
 
 		// Identifies which physical button-down this SteeringLoop instance
@@ -341,24 +341,20 @@ namespace VATS
 
 	void AimAssist::ThreadProc(const std::stop_token& a_stop)
 	{
-		s_hook = ::SetWindowsHookExW(WH_MOUSE_LL, HookProc, nullptr, 0);
-		if (!s_hook) {
-			VATS_ERROR("failed to install aim-assist mouse hook, GetLastError={}", ::GetLastError());
-			return;
-		}
 		VATS_LOG("aim-assist started");
 
-		while (!a_stop.stop_requested()) {
-			MSG msg;
-			while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-				::TranslateMessage(&msg);
-				::DispatchMessageW(&msg);
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-		}
-
-		::UnhookWindowsHookEx(s_hook);
-		s_hook = nullptr;
+		RunLowLevelHookPump(
+			a_stop, LowLevelHookKind::kMouse,
+			reinterpret_cast<LowLevelHookProc>(&HookProc), "aim-assist",
+			nullptr,
+			[]() {
+				// The hook is removed whenever the game loses focus, so a
+				// button-up that happens while alt-tabbed is never seen.
+				// Clearing the held flag here is what stops that stranding
+				// a SteeringLoop on a button it thinks is still down until
+				// its 10s safety timeout fires.
+				s_buttonHeld.store(false, std::memory_order_relaxed);
+			});
 	}
 
 	void AimAssist::Start()

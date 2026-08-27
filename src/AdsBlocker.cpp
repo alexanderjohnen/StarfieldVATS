@@ -1,5 +1,6 @@
 #include "AdsBlocker.h"
 
+#include "InputHookPump.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -16,7 +17,6 @@ namespace VATS
 {
 	namespace
 	{
-		HHOOK             s_hook = nullptr;
 		std::atomic<bool> s_pendingEndLock{ false };
 
 		// Matches a WM_*BUTTONDOWN message against Settings::adsButtonVK.
@@ -87,37 +87,22 @@ namespace VATS
 			return;
 		}
 
-		s_hook = ::SetWindowsHookExW(WH_MOUSE_LL, HookProc, nullptr, 0);
-		if (!s_hook) {
-			VATS_ERROR("failed to install ADS-watch mouse hook, GetLastError={}", ::GetLastError());
-			return;
-		}
 		VATS_LOG("[VATS] ADS watcher started (ends lock on button 0x{:X})", Settings::Get().adsButtonVK);
 
-		// A low-level hook only fires while its installing thread pumps
-		// messages. PeekMessage (not blocking GetMessage) so the loop can
-		// still check the stop token for clean shutdown, same polling-loop
-		// shape as BackKeyInterceptor/AimAssist.
-		while (!a_stop.stop_requested()) {
-			MSG msg;
-			while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-				::TranslateMessage(&msg);
-				::DispatchMessageW(&msg);
-			}
-
-			// The work the callback deliberately did not do. Running it
-			// here costs at most one pump interval of latency and takes
-			// it out of the system-wide input path entirely.
-			if (s_pendingEndLock.exchange(false, std::memory_order_relaxed)) {
-				VATS_LOG("[VATS] ADS button pressed while Locked, ending lock");
-				Controller::Get().ForceOff("player aimed down sights");
-			}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-		}
-
-		::UnhookWindowsHookEx(s_hook);
-		s_hook = nullptr;
+		RunLowLevelHookPump(
+			a_stop, LowLevelHookKind::kMouse,
+			reinterpret_cast<LowLevelHookProc>(&HookProc), "ADS watcher",
+			[]() {
+				// The work the callback deliberately did not do. It runs in
+				// the same pump iteration the callback fired in, so this
+				// costs no latency - it only moves the work off the
+				// system-wide input path.
+				if (s_pendingEndLock.exchange(false, std::memory_order_relaxed)) {
+					VATS_LOG("[VATS] ADS button pressed while Locked, ending lock");
+					Controller::Get().ForceOff("player aimed down sights");
+				}
+			},
+			nullptr);
 	}
 
 	void AdsBlocker::Start()
