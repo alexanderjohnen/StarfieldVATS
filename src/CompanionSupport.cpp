@@ -17,7 +17,9 @@ namespace VATS
 		tasks->AddTask([]() {
 			auto  state = Controller::Get().GetOverlayState();
 			if (state.mode != VATSMode::kSupport || !state.actor) {
-				return;  // session ended between the keypress and this task
+				VATS_LOG("[support] task ran but session was gone (mode ok={}, actor ok={})",
+					state.mode == VATSMode::kSupport, static_cast<bool>(state.actor));
+				return;
 			}
 			HealActor(state.actor.get());
 		});
