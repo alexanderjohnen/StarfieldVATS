@@ -59,8 +59,15 @@ namespace VATS
 				return;
 			}
 
-			constexpr std::uint32_t kCap = 250;
-			const std::uint32_t     scan = std::min(count, kCap);
+			// Generous, because this bound is a guard against a corrupt size
+			// field - NOT a scan limit. It was 250 until 2026-08-29, which
+			// quietly broke the item finder: Alexander inventory holds 417
+			// entries, so two fifths of it were invisible and every buff item
+			// happened to sit past the cut. Healing worked only because Med
+			// Pack landed inside it. A cap meant for logging must never limit
+			// a search.
+			constexpr std::uint32_t kSanityCap = 8192;
+			const std::uint32_t     scan = std::min(count, kSanityCap);
 			for (std::uint32_t i = 0; i < scan; ++i) {
 				const auto* entry = reinterpret_cast<const std::byte*>(items) +
 					static_cast<std::size_t>(i) * sizeof(RE::BGSInventoryItem);
@@ -78,64 +85,6 @@ namespace VATS
 		}
 	}
 
-	void CompanionSupport::LogPlayerInventory()
-	{
-		auto* player = RE::PlayerCharacter::GetSingleton();
-		if (!player) {
-			return;
-		}
-
-		// Offsets taken from the CommonLibSF headers rather than probed,
-		// which is unusual for this project - justified here because these
-		// particular types carry static_asserts on their own size
-		// (BGSInventoryItem == 0x28, Stack == 0x10), so the layout is at
-		// least internally consistent rather than a bare guess. Every read is
-		// still SafeRead-guarded, so a wrong offset degrades to "no items
-		// listed" instead of a crash.
-		RE::BGSInventoryList* list = nullptr;
-		if (!SafeRead(reinterpret_cast<const std::byte*>(player) + offsetof(RE::TESObjectREFR, inventoryList),
-				&list, sizeof(list)) ||
-			!list) {
-			VATS_WARN("[inv] no inventory list on the player");
-			return;
-		}
-
-		constexpr std::size_t kDataOff = offsetof(RE::BGSInventoryList, data);
-		std::uint32_t         count = 0;
-		std::uint64_t         items = 0;
-		if (!SafeRead(reinterpret_cast<const std::byte*>(list) + kDataOff, &count, sizeof(count)) ||
-			!SafeRead(reinterpret_cast<const std::byte*>(list) + kDataOff + 8, &items, sizeof(items)) ||
-			!items) {
-			VATS_WARN("[inv] inventory array unreadable (count={})", count);
-			return;
-		}
-
-		constexpr std::uint32_t kCap = 250;
-		const std::uint32_t     scan = std::min(count, kCap);
-		VATS_LOG("[inv] player inventory: {} entries (listing {})", count, scan);
-
-		for (std::uint32_t i = 0; i < scan; ++i) {
-			const auto* entry = reinterpret_cast<const std::byte*>(items) + 
-				static_cast<std::size_t>(i) * sizeof(RE::BGSInventoryItem);
-
-			std::uint64_t object = 0;
-			if (!SafeRead(entry + offsetof(RE::BGSInventoryItem, object), &object, sizeof(object)) || !object) {
-				continue;
-			}
-
-			std::uint8_t  formType = 0;
-			std::uint32_t formID = 0;
-			(void)SafeRead(reinterpret_cast<const std::byte*>(object) + GameOffsets::kFormType, &formType, sizeof(formType));
-			(void)SafeRead(reinterpret_cast<const std::byte*>(object) + offsetof(RE::TESForm, formID), &formID, sizeof(formID));
-
-			// Stack count: the stacks array header, same {size, capacity,
-			// data} shape every other array in this project uses.
-			std::uint32_t stackCount = 0;
-			(void)SafeRead(entry + offsetof(RE::BGSInventoryItem, stacks), &stackCount, sizeof(stackCount));
-
-			VATS_LOG("[inv] formID=0x{:08X} formType={} stacks={}", formID, formType, stackCount);
-		}
-	}
 
 	namespace
 	{
@@ -386,5 +335,37 @@ namespace VATS
 			before.current,
 			haveAfter ? after.current : -1.0f,
 			countBefore, countAfter);
+	}
+	void CompanionSupport::LogPlayerInventory()
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		int total = 0;
+		int aid = 0;
+		ForEachInventoryItemEntry(player, [&](const std::byte*, RE::TESBoundObject* a_object, std::uint32_t a_formID) {
+			++total;
+
+			std::uint8_t formType = 0;
+			(void)SafeRead(reinterpret_cast<const std::byte*>(a_object) + GameOffsets::kFormType, &formType, sizeof(formType));
+			if (formType != GameOffsets::kFormTypeALCH) {
+				return;
+			}
+			++aid;
+
+			// Only aid items now, not the whole inventory. Listing all 417
+			// entries buried the interesting six and hit a logging cap that
+			// then quietly became a SEARCH cap - see
+			// ForEachInventoryItemEntry. Aid items are the only kind this
+			// feature can spend, so they are the only kind worth printing.
+			const auto* known = FindAidItem(a_formID);
+			VATS_LOG("[inv] aid formID=0x{:08X} units={} -> {}", a_formID,
+				CountUnits(player, a_formID),
+				known ? known->name : "NOT IN TABLE");
+			});
+
+		VATS_LOG("[inv] {} entries scanned, {} aid items", total, aid);
 	}
 }
