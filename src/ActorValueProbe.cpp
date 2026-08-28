@@ -265,17 +265,69 @@ namespace VATS
 		return true;
 	}
 
+	namespace
+	{
+		// SEH-guarded so a wrong vtable slot degrades to "the shield did not
+		// apply" instead of dropping the player to the desktop mid-session.
+		//
+		// This is probe-grade armour, not a licence to guess: it is here
+		// because the previous version of this call DID crash the game, and
+		// the fix below is reasoned rather than proven. Remove it once the
+		// slot is confirmed by a run that does not fault.
+		//
+		// No objects with destructors in scope - MSVC forbids __try in a
+		// function that requires unwinding, same constraint SafeMem.cpp
+		// documents.
+		[[nodiscard]] bool SafeModActorValue(RE::ActorValueOwner* a_owner, RE::ACTOR_VALUE_MODIFIER a_mod,
+			const RE::ActorValueInfo* a_info, float a_delta, RE::TESObjectREFR* a_ref) noexcept
+		{
+			__try {
+				a_owner->ModActorValue(a_mod, *a_info, a_delta, a_ref);
+				return true;
+			} __except (1) {
+				return false;
+			}
+		}
+	}
+
 	bool TryModTemporary(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float a_delta)
 	{
 		auto* owner = ResolveVerifiedOwner(a_actor);
 		if (!owner) {
 			return false;
 		}
-		// The two-argument overload, vtable slot 07. Slot 06 is a newer
-		// variant taking an extra TESObjectREFR* - picking the wrong one
-		// would dispatch through the wrong slot entirely, so the argument
-		// list here is load-bearing, not stylistic.
-		owner->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, a_info, a_delta);
+		// The FOUR-argument overload, deliberately, and this is not a style
+		// choice - the three-argument one crashed the game outright
+		// (EXCEPTION_ACCESS_VIOLATION at this line, 2026-08-29, crash log
+		// named it with the actor and the ActorValueInfo both valid in
+		// registers).
+		//
+		// CommonLibSF declares two overloads back to back: slot 06 takes an
+		// extra TESObjectREFR*, slot 07 does not. Slots 01 and 09 on this
+		// same object are proven correct - reading live health and healing
+		// both work - so the entries exist, but nothing proves their ORDER.
+		// If it is reversed, a three-argument call lands in the function
+		// that wants four, and the callee reads an uninitialised register as
+		// a pointer. That is exactly what an access violation here looks
+		// like.
+		//
+		// Passing four arguments is safe under BOTH orderings, which is why
+		// it is the fix rather than a coin flip: if slot 06 really is the
+		// four-argument one, the call is correct; if the order is reversed
+		// and it takes three, the extra register is simply ignored by the
+		// x64 convention. No garbage is ever dereferenced either way.
+		//
+		// The ref is the actor itself - guaranteed valid, since its RTTI was
+		// verified moments ago - rather than nullptr, which a callee that
+		// does use the parameter might dereference.
+		if (!SafeModActorValue(owner, RE::ACTOR_VALUE_MODIFIER::kTemporary, &a_info, a_delta, a_actor)) {
+			static bool s_loggedOnce = false;
+			if (!s_loggedOnce) {
+				s_loggedOnce = true;
+				VATS_ERROR("[VATS] ModActorValue faulted - the vtable slot is wrong, shield disabled for this session");
+			}
+			return false;
+		}
 		return true;
 	}
 

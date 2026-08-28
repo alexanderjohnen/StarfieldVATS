@@ -281,3 +281,41 @@ inventory therefore needs no engine call at all.
 
 Note `stacks` reads the NUMBER OF STACKS, not the item count; the count
 lives inside `BGSInventoryItem::Stack` and has not been verified yet.
+
+### `ActorValueOwner::ModActorValue` - the three-argument overload faults
+
+Confirmed by crash, 2026-08-29. Detailed Crash Logger named the line:
+
+```
+EXCEPTION_ACCESS_VIOLATION   Starfield.exe + 0x1977526
+StarfieldVATS.dll  [VATS::TryModTemporary]   ActorValueProbe.cpp:280
+```
+
+with the actor (`ACHR 6C000806`) and the `ActorValueInfo`
+(`AVIF 000002E3 "Damage Resistance"`) both valid in registers - so the
+arguments were fine and the dispatch itself was not.
+
+CommonLibSF declares two overloads back to back:
+
+```cpp
+virtual void ModActorValue(ACTOR_VALUE_MODIFIER, const ActorValueInfo&, float, TESObjectREFR*);  // 06 - new
+virtual void ModActorValue(ACTOR_VALUE_MODIFIER, const ActorValueInfo&, float);                  // 07
+```
+
+Slots 01 (`GetActorValue`) and 09 (`RestoreActorValue`) on this same
+object are proven correct in production, so the entries between them
+exist - but nothing proves their ORDER. If it is reversed, a
+three-argument call lands in the function that expects four and the
+callee reads an uninitialised register as a pointer, which is exactly
+what this fault looks like.
+
+**Call the four-argument form.** It is safe under both orderings: if slot
+06 really takes four, the call is correct; if the order is reversed and
+it takes three, the extra register is ignored by the x64 convention.
+Nothing is dereferenced blind either way. Pass a real reference rather
+than `nullptr` - the actor itself will do, since its RTTI was verified
+moments earlier.
+
+The call is additionally SEH-guarded for now (see `SafeModActorValue`),
+so a wrong slot costs a disabled shield rather than a crash to desktop.
+That armour is probe-grade and comes off once a run confirms the slot.
