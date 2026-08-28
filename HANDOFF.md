@@ -1,4 +1,4 @@
-# StarfieldVATS — Handoff (2026-08-28, evening)
+# StarfieldVATS — Handoff (2026-08-29)
 
 Read this first in a new chat. Point-in-time snapshot — verify against the
 actual code and log before trusting anything here; offsets and "confirmed"
@@ -469,7 +469,7 @@ kaputter Fix haette genauso flach ausgesehen. Beide Schalter
 (`iOverlayStage`, `bSkipEmptyFrames`) bleiben im Code — als Leiter, falls
 im Renderpfad je wieder etwas zu suchen ist.
 
-## Begleiter-Support (Aspekt 1 fertig, 2026-08-28)
+## Begleiter-Support (Aspekte 1 und 2 fertig, Stand 2026-08-29)
 
 Bestätigt im Spiel: **Heilen funktioniert, und ein Begleiter im
 Downed-State kommt dadurch wieder hoch.** Beides über
@@ -523,3 +523,82 @@ Ausstieg, der nicht davon abhängt.
   `IsHostileToActor` hat Address-Library-ID 0.
 - **Buffs und Starborn-Powers.** `Actor::DoCombatSpellApply` wäre genau
   der eine Aufruf, den es braucht, ist aber Papyrus-only.
+
+---
+
+## Stand 2026-08-29 — Support ist fertig, alles bestätigt im Spiel
+
+Der Begleiter-Support hat jetzt beide Hälften. Jeder Baustein wurde
+einzeln bewiesen, bevor der nächste darauf gebaut wurde — die Reihenfolge
+war hier wichtiger als das Tempo.
+
+### Bedienung
+
+Eine Taste, drei Bedeutungen, in beiden Modi gleich:
+
+| | Kampf-Lock | Support-Sitzung |
+|---|---|---|
+| **Tippen** | *unbelegt* | heilen / wiederbeleben / schilden |
+| **Halten** (`iHoldToCancelMs`, 400 ms) | beenden | beenden |
+
+Scanner auf, Begleiter anvisieren → `SUPPORT (Taste)` erscheint statt
+`TARGETING`. Tippen öffnet die Sitzung, der Prompt unter der Markierung
+sagt dann `HEAL`, `REVIVE` (bei 0 Leben) oder `SHIELD` (bei vollem
+Leben). Darunter steht `HOLD … TO EXIT`.
+
+### Was bestätigt funktioniert
+
+- **Heilen** über `ActorValueOwner::RestoreActorValue` (Vtable-Slot 09)
+- **Wiederbeleben aus dem Downed-State** — funktioniert, anders als in
+  Fallout 4, wo Alexander das erfolglos versucht hatte
+- **Item-Verbrauch** über `TESObjectREFR::RemoveItem` (Slot 08B) mit
+  selbst gebautem `RemoveItemRequest` — bewiesen an `item units 235 → 234`
+- **Schild**: +500 auf alle drei DR-Typen über `ModActorValue` mit
+  `kTemporary`, Zeit läuft runter, Bogen und Textanzeige stimmen
+
+### Wo die Zahlen herkommen
+
+`src/AidItems.h` — eine feste Tabelle aus gemessenen FormIDs. Es wird
+**nie** ein ALCH-Record gelesen; das war der riskanteste Teil des
+Features und ist damit gestrichen.
+
+Heilung: Prozent vom **Maximalleben**, sofort (25/40/60 % für Med Pack /
+Trauma Pack / Emergency Kit). Bewusst nicht die Spielwerte — 4 % über
+fünf Sekunden ist keinen Tastendruck wert, und eine Heilung über Zeit
+könnten wir gar nicht anwenden.
+
+Schild: konstante 500 DR, das Item bestimmt nur die **Dauer**. Der
+Umrechnungsschlüssel ist `DR × Sekunden ÷ 500`, eine Regel für alle neun
+Items. Deckel 300 s, Nachlegen bis dorthin. Verbraucht wird immer das
+schwächste passende Item.
+
+### Offene Punkte, nach Wert sortiert
+
+1. **`BSTThreadScrapFunction`** — CommonLibSF definiert den Typ als
+   blossen Alias für `std::function`, was ein Platzhalter ist, kein
+   Binding. Solange das so ist, ist die Papyrus-VM unerreichbar. Wer das
+   löst, schaltet in einem Aufwasch `DoCombatSpellApply`, `AddSpell` und
+   den ganzen Rest frei — die Starborn-Powers hängen einzig daran.
+2. **Sichtlinienprüfung** (Tiefenpuffer, eigener Abschnitt oben). Blockt
+   den automatischen Zielwechsel *und* den freien Tipp-Druck im Kampf.
+3. **Neutrale NPCs**. Begleiter erkennen wir zuverlässig
+   (`kPlayerTeammate`, gemessen); für „neutral statt feindlich" fehlt ein
+   Signal, `IsHostileToActor` hat Address-Library-ID 0.
+4. **Zwei Sonden können raus**, sobald nichts mehr klemmt:
+   `CompanionSupport::LogPlayerInventory` und `ProbeDamageResist`. Ebenso
+   das SEH-Netz um `SafeModActorValue`, sobald ein sauberer Lauf den
+   Vtable-Slot bestätigt.
+
+### Zwei Fehler dieser Sitzung, die sich lohnen zu kennen
+
+**Eine Log-Grenze wurde zur Suchgrenze.** Der Inventar-Durchlauf hörte
+nach 250 Einträgen auf — eine Zahl, die als Zeilenlimit fürs Logging
+entstand und beim Herausziehen der Schleife mitwanderte. Alexanders
+Inventar hat 417 Einträge, sämtliche Buff-Items lagen dahinter. Dass das
+Heilen trotzdem lief, war Zufall: Med Pack liegt in den ersten 250.
+
+**Überlagerung als Symptom behandelt.** Der Ressourcenbogen hatte keine
+Modus-Prüfung und wurde auch um Begleiter gezeichnet. Statt zu fragen,
+warum er dort erscheint, habe ich den Schildbogen auf einen eigenen
+Radius geschoben. Alexanders Frage („die sollten doch nie gleichzeitig
+auftauchen") hat den eigentlichen Fehler gefunden.

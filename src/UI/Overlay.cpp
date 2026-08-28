@@ -47,6 +47,16 @@ namespace VATS::UI
 		// the scanner own blue-white lettering without competing with it.
 		constexpr ImU32 kSupportColor = IM_COL32(120, 235, 150, 240);
 
+		// The shield gauge is NOT support green, even though it belongs to a
+		// support session: it hangs directly off the marker ring, and drawn
+		// in the ring own colour it reads as part of the ring rather than as
+		// a reading of its own (Alexander spotted this immediately in the
+		// first working screenshot). Starfield instruments - the O2/CO2 dial,
+		// the scanner - are a pale cyan, so borrowing it puts the gauge in
+		// the visual language the player already reads without inventing a
+		// fourth colour for this HUD.
+		constexpr ImU32 kShieldColor = IM_COL32(130, 215, 240, 240);
+
 		// Dark outline drawn under every white stroke. Without it the box
 		// reads fine against dark backdrops but vanishes completely against
 		// Starfield's bright station-interior surfaces (confirmed in-game
@@ -223,7 +233,7 @@ namespace VATS::UI
 			const float frac = a_capacity > 0.0f ? std::clamp(a_remaining / a_capacity, 0.0f, 1.0f) : 0.0f;
 			const float thickness = std::max(2.0f, 3.0f * a_scale);
 			DrawArcGauge(a_dl, a_cx, a_cy, GaugeRadius(a_ringRadius, a_scale), kPi, 2.0f * kPi, frac,
-				IM_COL32(14, 30, 20, 210), kSupportColor, thickness);
+				IM_COL32(14, 26, 32, 210), kShieldColor, thickness);
 		}
 
 		void DrawResourceArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_current, float a_capacity, float a_scale)
@@ -682,7 +692,7 @@ namespace VATS::UI
 				DrawCenteredText(ImGui::GetForegroundDrawList(),
 					io.DisplaySize.x * 0.5f,
 					io.DisplaySize.y * 0.62f,
-					readout, kSupportColor);
+					readout, kShieldColor);
 			}
 		}
 
