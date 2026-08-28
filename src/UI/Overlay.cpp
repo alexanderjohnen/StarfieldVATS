@@ -213,18 +213,16 @@ namespace VATS::UI
 		// colour, so the two read as "the target's" and "mine" at a glance
 		// instead of competing. Turns amber as it runs low, since running
 		// dry ends the lock outright and that is worth seeing coming.
-		// The companion shield arc. Sits OUTSIDE the other two rather than
-		// sharing their radius, because it is the odd one out: the health and
-		// resource gauges both describe the thing in the middle of the ring,
-		// while this describes a buff the player put there. Same top half as
-		// the resource arc so it reads as "mine", one ring further out so it
-		// never collides with it.
+		// The companion shield arc. Occupies the same top half and the same
+		// radius as the VATS resource arc, because the two can never appear
+		// together: the budget belongs to a combat lock, the shield to a
+		// support session. One gauge per mode, in the same place, so the eye
+		// learns one position rather than two.
 		void DrawShieldArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_remaining, float a_capacity, float a_scale)
 		{
 			const float frac = a_capacity > 0.0f ? std::clamp(a_remaining / a_capacity, 0.0f, 1.0f) : 0.0f;
 			const float thickness = std::max(2.0f, 3.0f * a_scale);
-			const float radius = GaugeRadius(a_ringRadius, a_scale) + std::max(4.0f, 6.0f * a_scale);
-			DrawArcGauge(a_dl, a_cx, a_cy, radius, kPi, 2.0f * kPi, frac,
+			DrawArcGauge(a_dl, a_cx, a_cy, GaugeRadius(a_ringRadius, a_scale), kPi, 2.0f * kPi, frac,
 				IM_COL32(14, 30, 20, 210), kSupportColor, thickness);
 		}
 
@@ -559,16 +557,28 @@ namespace VATS::UI
 				DrawHealthArc(dl, px, py, radius, hp.current, hp.max, hudScale);
 			}
 
+			// This function draws BOTH a combat lock and a support session, so
+			// each gauge has to say which one it belongs to. The VATS budget is
+			// only ever spent by a lock - it was being drawn around companions
+			// too until 2026-08-29, which Alexander spotted from the other end:
+			// he asked how the resource arc and the shield arc could ever
+			// overlap, since they belong to different modes. They cannot, and
+			// the overlap I had worked around by pushing the shield out to its
+			// own radius was really this missing check.
+			const bool locked = Controller::Get().GetMode() == VATSMode::kLocked;
+
 			const auto& resource = VatsResource::Get().GetState();
-			if (Settings::Get().vatsResourceEnabled && resource.capacity > 0.0f) {
+			if (locked && Settings::Get().vatsResourceEnabled && resource.capacity > 0.0f) {
 				DrawResourceArc(dl, px, py, radius, resource.current, resource.capacity, hudScale);
 			}
 
-			// Only on the actor who actually carries it. Drawing a companion
-			// shield around an enemy ring during a combat lock would put a
-			// number on the wrong person.
+			// Only on the actor who actually carries it - a companion shield
+			// around an enemy ring would put the number on the wrong person.
+			// Shares the resource arc radius now that the two are mutually
+			// exclusive, which is where it belonged in the first place: same
+			// half of the ring, same distance, one per mode.
 			const auto shield = CompanionShield::Get().GetState();
-			if (shield.remaining > 0.0f && shield.actor && shield.actor.get() == a_actor) {
+			if (!locked && shield.remaining > 0.0f && shield.actor && shield.actor.get() == a_actor) {
 				DrawShieldArc(dl, px, py, radius, shield.remaining, shield.capacity, hudScale);
 			}
 		}
