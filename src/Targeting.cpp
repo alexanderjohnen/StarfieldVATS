@@ -345,9 +345,20 @@ namespace VATS
 		}
 
 		auto* actor = reinterpret_cast<RE::Actor*>(target);
-		if (!IsAlive(actor)) {
-			return nullptr;  // a downed companion still reads alive; a corpse does not
-		}
+
+		// NO liveness gate here, unlike every other pick in this file - and
+		// that is the whole point. IsAlive is health > 0, and a companion in
+		// the downed state is downed precisely BECAUSE their health hit zero.
+		// Gating on it would reject exactly the case support exists for
+		// (found 2026-08-28, when Alexander asked whether healing gets a
+		// downed companion back up - the honest answer was that they could
+		// not even be selected).
+		//
+		// Nothing here can tell a downed companion from a dead one: the
+		// engine dead bit is proven inert in this game (see docs/FINDINGS.md)
+		// and health reads zero either way. That is acceptable for teammates
+		// specifically - Starfield companions go down rather than die - and
+		// healing an actual corpse is a harmless no-op.
 
 		std::uint32_t boolBits = 0;
 		if (!Read(actor, kBoolBitsOff, boolBits) ||

@@ -378,26 +378,13 @@ namespace VATS
 		auto*          console = RE::ConsoleLog::GetSingleton();
 
 		if (current == VATSMode::kSupport) {
-			// Already in a support session: this press performs the
-			// highlighted action. With a single action there is nothing to
-			// highlight yet, so it heals; when there is more than one, this is
-			// where "confirm the selection" goes and cycling gets its own key.
-			//
-			// The session deliberately does NOT end here. Healing a companion
-			// mid-fight is something you do repeatedly, and making the same
-			// button both act and exit would mean re-acquiring them through
-			// the scanner between every press. Leaving is the back key or ADS,
-			// same as a combat lock.
-			RE::NiPointer<RE::Actor> friendTarget;
-			{
-				const std::scoped_lock lock(m_targetLock);
-				friendTarget = m_target;
-			}
-			if (!friendTarget) {
-				ForceOff("support target vanished");
-				return;
-			}
-			CompanionSupport::HealActor(friendTarget.get());
+			// Already in a support session: the VATS key LEAVES it, exactly as
+			// it ends a combat lock. The action lives on the game own activate
+			// key instead (see Settings::supportActionKeyVK) - Alexander called
+			// this out on the first working test, and he was right: the button
+			// that opens a mode has to be the one that closes it, or there is
+			// no way out that does not also do something.
+			ForceOff("support session ended by hotkey");
 			return;
 		}
 

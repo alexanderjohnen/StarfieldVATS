@@ -788,9 +788,16 @@ namespace VATS::UI
 			float px = 0.0f, py = 0.0f, pdist = 0.0f;
 			if (ResolveOnScreen(state.actor.get(), px, py, pdist)) {
 				char keyLabel[8];
-				VKToDisplayLabel(Settings::Get().activationKeyVK, keyLabel);
+				VKToDisplayLabel(Settings::Get().supportActionKeyVK, keyLabel);
+
+				// A downed companion reads zero health - that is what put them
+				// down. Naming the action for what it will actually look like
+				// costs one comparison and removes the moment of doubt about
+				// whether healing a body on the floor does anything at all.
+				HealthReading hp{};
+				const bool    down = GetActorHealth(state.actor.get(), hp) && hp.current <= 0.0f;
 				char prompt[32];
-				std::snprintf(prompt, sizeof(prompt), "HEAL (%s)", keyLabel);
+				std::snprintf(prompt, sizeof(prompt), down ? "REVIVE (%s)" : "HEAL (%s)", keyLabel);
 
 				const auto& io = ImGui::GetIO();
 				DrawCenteredText(ImGui::GetForegroundDrawList(),

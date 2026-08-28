@@ -3,9 +3,26 @@
 #include "ActorValueProbe.h"
 #include "HealthReader.h"
 #include "Settings.h"
+#include "VATSController.h"
 
 namespace VATS
 {
+	void CompanionSupport::RequestAction()
+	{
+		const auto* tasks = SFSE::GetTaskInterface();
+		if (!tasks) {
+			VATS_ERROR("[support] task interface unavailable, cannot act");
+			return;
+		}
+		tasks->AddTask([]() {
+			auto  state = Controller::Get().GetOverlayState();
+			if (state.mode != VATSMode::kSupport || !state.actor) {
+				return;  // session ended between the keypress and this task
+			}
+			HealActor(state.actor.get());
+		});
+	}
+
 	void CompanionSupport::HealActor(RE::Actor* a_actor)
 	{
 		if (!a_actor) {

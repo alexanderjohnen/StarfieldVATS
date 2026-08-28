@@ -1,6 +1,7 @@
 #include "BackKeyInterceptor.h"
 
 #include "InputHookPump.h"
+#include "CompanionSupport.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -23,6 +24,7 @@ namespace VATS
 		std::atomic<bool> s_pendingHasFocus{ false };
 		std::atomic<bool> s_pendingLocked{ false };
 		std::atomic<bool> s_pendingSwallow{ false };
+		std::atomic<bool> s_pendingSupportAction{ false };
 
 		[[nodiscard]] bool GameWindowHasFocus()
 		{
@@ -91,6 +93,24 @@ namespace VATS
 						return 1;  // swallow - Starfield never sees this keydown
 					}
 				}
+
+				// The support action key, handled by the SAME hook on purpose.
+				// A second system-wide keyboard hook would undo a good part of
+				// what the 2026-08-27 input work bought back - every hook sits
+				// in the input path of every application on the machine.
+				//
+				// Swallowed rather than merely observed: this is the game own
+				// activate key, and a companion is an activatable thing.
+				// Letting it through would start a conversation at the same
+				// moment we heal them. Only ever swallowed while a support
+				// session is actually open, so normal interaction is untouched
+				// the rest of the time.
+				if (info->vkCode == Settings::Get().supportActionKeyVK &&
+					GameWindowHasFocus() &&
+					Controller::Get().GetMode() == VATSMode::kSupport) {
+					s_pendingSupportAction.store(true, std::memory_order_relaxed);
+					return 1;
+				}
 			}
 			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
 		}
@@ -121,6 +141,12 @@ namespace VATS
 					if (swallowed) {
 						Controller::Get().ForceOff("back key pressed");
 					}
+				}
+
+				// Same deferral as the back key: the callback only flagged it,
+				// the work happens here, off the system-wide input path.
+				if (s_pendingSupportAction.exchange(false, std::memory_order_relaxed)) {
+					CompanionSupport::RequestAction();
 				}
 			},
 			nullptr);

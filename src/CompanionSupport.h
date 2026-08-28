@@ -48,5 +48,10 @@ namespace VATS
 		// what its name says on this build, and that is worth learning
 		// immediately rather than inferring from a health bar.
 		static void HealActor(RE::Actor* a_actor);
+
+		// Called from the keyboard-hook pump thread. Queues the real work onto
+		// the game thread and returns at once - the engine call must never run
+		// on an input thread.
+		static void RequestAction();
 	};
 }
