@@ -53,5 +53,22 @@ namespace VATS
 		// the game thread and returns at once - the engine call must never run
 		// on an input thread.
 		static void RequestAction();
+
+		// TEMPORARY (2026-08-28). Walks the player inventory and logs every
+		// entry: form ID, form type, stack count. Purely reads - no engine
+		// call, no write.
+		//
+		// It exists to harvest facts we must not invent. The plan for aid
+		// items is a fixed table (Alexander idea, and a good one: the base
+		// game set is tiny and its form IDs never change), but nobody here
+		// knows those IDs, and a guessed ID fails SILENTLY - the item is
+		// simply never found, which looks like a broken feature rather than
+		// a wrong number. Same for the ALCH form type constant: this project
+		// only has ACHR=75 confirmed, so the type is logged rather than
+		// filtered on.
+		//
+		// Runs once when a support session opens - bounded, deliberate, and
+		// exactly when it is relevant. Delete once the table is filled in.
+		static void LogPlayerInventory();
 	};
 }

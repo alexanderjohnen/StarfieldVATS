@@ -446,6 +446,7 @@ namespace VATS
 					}
 					m_mode.store(VATSMode::kSupport, std::memory_order_relaxed);
 					VATS_LOG("[VATS] SUPPORT | companion formID=0x{:08X}", friendID);
+					CompanionSupport::LogPlayerInventory();
 					if (console) {
 						console->Log("[VATS] SUPPORT | companion formID=0x{:08X}", friendID);
 					}
