@@ -774,6 +774,30 @@ namespace VATS::UI
 			}
 
 			DrawIfVisible(state.actor.get(), "SUPPORT", kSupportColor, /*a_showValue*/ true);
+
+			// The action, spelled out under the marker. Added 2026-08-28
+			// because the first in-game test stalled here: the session drew
+			// correctly, the companion was hurt, and Alexander asked "do I
+			// have to do something? I see no input" - and he was right, there
+			// was nothing on screen saying what the button now does. The log
+			// confirmed it: not one press arrived after the session opened.
+			//
+			// A mode whose action is invisible is worse than no mode. Once
+			// there is more than one action this line becomes the selected
+			// entry of the menu, so it is also the right place structurally.
+			float px = 0.0f, py = 0.0f, pdist = 0.0f;
+			if (ResolveOnScreen(state.actor.get(), px, py, pdist)) {
+				char keyLabel[8];
+				VKToDisplayLabel(Settings::Get().activationKeyVK, keyLabel);
+				char prompt[32];
+				std::snprintf(prompt, sizeof(prompt), "HEAL (%s)", keyLabel);
+
+				const auto& io = ImGui::GetIO();
+				DrawCenteredText(ImGui::GetForegroundDrawList(),
+					px * io.DisplaySize.x,
+					py * io.DisplaySize.y + Settings::Get().targetMarkerRadius + 14.0f,
+					prompt, kSupportColor);
+			}
 			return;
 		}
 
