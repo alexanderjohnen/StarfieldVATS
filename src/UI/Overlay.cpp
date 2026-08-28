@@ -878,6 +878,24 @@ namespace VATS::UI
 
 		DrawIfVisible(state.actor.get(), "TARGET", kLockedColor, /*a_showValue*/ true);
 
+		// Same exit hint the support session carries. A combat lock used to
+		// end on a tap, so it never needed one; now that it ends on a hold,
+		// leaving is a gesture nothing on screen would otherwise mention.
+		{
+			float lx = 0.0f, ly = 0.0f, ldist = 0.0f;
+			if (ResolveOnScreen(state.actor.get(), lx, ly, ldist)) {
+				char keyLabel[8];
+				VKToDisplayLabel(Settings::Get().activationKeyVK, keyLabel);
+				char exitHint[40];
+				std::snprintf(exitHint, sizeof(exitHint), "HOLD %s TO EXIT", keyLabel);
+				const auto& io = ImGui::GetIO();
+				DrawCenteredText(ImGui::GetForegroundDrawList(),
+					lx * io.DisplaySize.x,
+					ly * io.DisplaySize.y + Settings::Get().targetMarkerRadius + 14.0f,
+					exitHint, kAimColor);
+			}
+		}
+
 		// Re-check the equipped weapon every frame while Locked
 		// (2026-08-25) - see Controller::SyncProjectileOverride's comment.
 		// A weapon switch mid-lock used to leave the NEW weapon un-flipped

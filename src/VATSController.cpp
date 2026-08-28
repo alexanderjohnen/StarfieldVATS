@@ -548,29 +548,27 @@ namespace VATS
 			return;
 		}
 
-		// current == Locked -> Off
-		{
-			const std::scoped_lock lock(m_targetLock);
-			m_target.reset();
-		}
-		m_mode.store(VATSMode::kOff, std::memory_order_relaxed);
-		// Harmless/idempotent even though SetBlocked(true) is no longer
-		// called anywhere - see the lock branch's comment above.
-		EngineInputLayer::SetBlocked(false);
-		EngineInputLayer::SetAdsBlocked(false);
-		CrosshairVisibility::Restore();
-		DamageNumbersVisibility::Restore();
-		CombatTargetOverride::Disengage();
-		CombatHudVisibility::Restore();
-		{
-			const std::scoped_lock overrideLock(m_projectileOverrideLock);
-			ProjectileTypeOverride::Disengage(m_projectileOverride);
-			m_projectileOverride = {};
-			m_projectileOverrideTarget = 0;
-		}
-		VATS_LOG("[VATS] OFF");
-		if (console) {
-			console->Log("[VATS] OFF");
-		}
+		// current == Locked. A TAP does nothing here as of 2026-08-28.
+		//
+		// It used to end the lock, and that job moved to HOLDING the key -
+		// the same gesture that leaves a support session, so the model is
+		// now identical in both: tap acts, hold leaves. ForceOff does the
+		// entire teardown that used to live here, so nothing was lost in
+		// the move.
+		//
+		// The tap is deliberately left unbound rather than given a
+		// placeholder. Alexander's idea for it is switching to the next
+		// enemy, which this class can very nearly already do
+		// (TryAdvanceToNextTarget, written for auto-advance-on-kill) - but
+		// that feature is parked on the missing line-of-sight test, since
+		// without one it happily picks targets through walls. Wiring the
+		// tap to it now would ship that same bug under a new button.
+		//
+		// His other idea for it is cycling body parts, which would need the
+		// body-part system back - deliberately dropped 2026-08-26 for want of
+		// a usable per-part anchor (the bone walk never found one, see
+		// docs/FINDINGS.md). Either way the button is the easy half; both
+		// candidates are blocked on something else entirely.
+		VATS_LOG("[VATS] tap while locked - nothing bound to it yet (hold to exit)");
 	}
 }

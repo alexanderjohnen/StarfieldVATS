@@ -468,3 +468,58 @@ Entschaerfung vom Vortag den Zeichenpfad gar nicht erst erreicht und ein
 kaputter Fix haette genauso flach ausgesehen. Beide Schalter
 (`iOverlayStage`, `bSkipEmptyFrames`) bleiben im Code — als Leiter, falls
 im Renderpfad je wieder etwas zu suchen ist.
+
+## Begleiter-Support (Aspekt 1 fertig, 2026-08-28)
+
+Bestätigt im Spiel: **Heilen funktioniert, und ein Begleiter im
+Downed-State kommt dadurch wieder hoch.** Beides über
+`ActorValueOwner::RestoreActorValue` (Vtable-Slot 09) auf demselben
+RTTI-verifizierten Sub-Objekt, durch das `HealthReader` seit dem
+25.08. liest — kein Address Library, kein selbstgebautes Struct.
+
+Bedienung, einheitlich in beiden Modi:
+
+| | |
+|---|---|
+| Tippen | handeln (sperren, Sitzung öffnen, heilen) |
+| Halten (`iHoldToCancelMs`, 400 ms) | beenden, was offen ist |
+
+Der Tipp-Druck im **Kampf**-Lock ist seit dem 28.08. **unbelegt**. Er hat
+früher den Lock beendet, das macht jetzt das Halten. Zwei Kandidaten
+stehen im Raum, beide von Alexander, beide auf etwas anderes blockiert:
+
+- **Zum nächsten Gegner wechseln.** `TryAdvanceToNextTarget` existiert
+  bereits (für auto-advance-on-kill), hängt aber an der fehlenden
+  Sichtlinienprüfung — ohne sie werden Ziele durch Wände gewählt. Den
+  Tipp-Druck jetzt daranzuhängen hiesse, denselben Fehler unter einem
+  neuen Knopf auszuliefern.
+- **Körperteil wechseln.** Braucht das Körperteil-System zurück, das am
+  26.08. mangels brauchbarem Anker pro Teil aufgegeben wurde (der
+  Knochen-Durchlauf hat nie einen gefunden, siehe `docs/FINDINGS.md`).
+
+In beiden Fällen ist der Knopf die einfache Hälfte.
+
+### Was NICHT geht, und warum es nicht nochmal probiert werden sollte
+
+Die Aktion auf die **Aktionstaste des Spiels** (E) zu legen ist
+gescheitert: unser WH_KEYBOARD_LL-Hook unterdrückt sie nicht. Alexander
+hat es vom Spiel aus diagnostiziert — er konnte weiter mit dem Begleiter
+reden, also kam die Taste durch. Derselbe Hook hat schon bei der
+Zurück-Taste zeitweise nicht gegriffen (siehe Kommentar in
+`BackKeyInterceptor.cpp`).
+
+**Folge, die weiter reicht als dieses Feature:** die Rücktaste als
+Ausstieg ist damit ebenfalls unzuverlässig. Halten-zum-Beenden ist der
+Ausstieg, der nicht davon abhängt.
+
+### Noch offen
+
+- **Kein Item-Verbrauch.** Heilen ist gratis. Zwei mögliche Wege, beide
+  mit offener Frage: `TESObjectREFR::RemoveItem` ist virtuell (Slot 08B),
+  nimmt aber ein ungeprüftes 0x40-Byte-Struct; Papyrus wäre typsicher,
+  hängt aber am `BSTThreadScrapFunction`-Platzhalter.
+- **Neutrale NPCs.** Nur Begleiter werden erkannt (`kPlayerTeammate`,
+  gemessen). Für „neutral statt feindlich" fehlt ein Signal —
+  `IsHostileToActor` hat Address-Library-ID 0.
+- **Buffs und Starborn-Powers.** `Actor::DoCombatSpellApply` wäre genau
+  der eine Aufruf, den es braucht, ist aber Papyrus-only.
