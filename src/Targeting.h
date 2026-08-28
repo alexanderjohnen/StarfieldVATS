@@ -24,7 +24,7 @@ namespace VATS
 	//  4. Direct read of CommonLibSF's `TESObjectCELL::references` field —
 	//     the header's offsetof() computed 0x88 for this field on the
 	//     current (2026-08-19) library snapshot, but empirical probing
-	//     (CellProbe.cpp, matching every entry's proven-correct parentCell
+	//     (a diagnostic probe, since removed - it matched every entry against the proven-correct parentCell
 	//     backpointer) found the real array at 0x80 on game 1.16.244,
 	//     confirmed independently in two unrelated cells (ship interior +
 	//     exterior settlement, both 4/4 backpointer matches).

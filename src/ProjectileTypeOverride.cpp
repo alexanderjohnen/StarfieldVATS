@@ -24,7 +24,7 @@ namespace VATS
 		}
 
 		// Same equipped-weapon resolution as AimAssistProbe.cpp/
-		// ProjectileFlagProbe.cpp - duplicated rather than shared, matching
+		// the removed ProjectileFlagProbe - duplicated rather than shared, matching
 		// this project's existing per-file style.
 		constexpr std::size_t   kInventoryList = 0xA0;
 		constexpr std::size_t   kInventoryListData = 0x28;
@@ -38,16 +38,16 @@ namespace VATS
 		constexpr std::uint32_t kSlotMask = 0x7;
 		constexpr std::uint8_t  kFormTypeWEAP = 0x30;
 		constexpr std::size_t   kInstanceDataWeaponAmmoData = 0x20;
-		constexpr std::size_t   kWeaponAmmoDataProjectile = 0x20;  // sweep-confirmed 2026-08-23, see ProjectileFlagProbe
+		constexpr std::size_t   kWeaponAmmoDataProjectile = 0x20;  // sweep-confirmed 2026-08-23, see docs/FINDINGS.md
 		constexpr std::uint8_t  kFormTypePROJ = 0x3A;
 
-		// See ProjectileFlagProbe.cpp for how these were found/confirmed
+		// See docs/FINDINGS.md for how these were found/confirmed
 		// (raw-memory decoding, cross-checked against xEdit's own values
 		// for a real mod weapon).
 		constexpr std::size_t kProjectileData = 0x130;
 		constexpr std::size_t kProjectileDataType = 0x84;
 		// Same struct, same already-proven-writable memory as the type byte
-		// above - offset taken from ProjectileFlagProbe.cpp, whose logged
+		// above - offset taken from the removed ProjectileFlagProbe, whose logged
 		// value for this field has matched the weapon's real speed on every
 		// sample (500.0 for standard ballistics, 120.0 for the rocket).
 		constexpr std::size_t kProjectileDataSpeed = 0x50;

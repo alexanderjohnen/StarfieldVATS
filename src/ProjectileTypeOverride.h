@@ -7,7 +7,7 @@ namespace VATS
 	// before this (AimAssistProbe, ProjectileFlagProbe) only read and
 	// logged data.
 	//
-	// Confirmed 2026-08-23 via ProjectileFlagProbe: a byte at
+	// Confirmed 2026-08-23 (see docs/FINDINGS.md): a byte at
 	// BGSProjectile::data+0x84 (the header calls it "Type", though the
 	// runtime meaning may not match the header's Type enum 1:1 - see
 	// below) reads 0x00 on both confirmed-real-projectile weapons tested
@@ -20,7 +20,7 @@ namespace VATS
 	//
 	// This class force-writes 0x00 into that byte on the currently
 	// equipped weapon's live, resolved projectile (WeaponAmmoData+0x20 -
-	// see ProjectileFlagProbe.h for the full confirmed chain) for the
+	// see docs/FINDINGS.md.h for the full confirmed chain) for the
 	// duration of one held trigger, then restores the original value.
 	// Untested whether this alone is sufficient to make the engine
 	// actually spawn a real RE::Projectile for a normally-hitscan weapon -

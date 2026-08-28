@@ -1,6 +1,5 @@
 #include "Overlay.h"
 
-#include "BoneProbe.h"
 #include "CameraProject.h"
 #include "GameOffsets.h"
 #include "HealthReader.h"
@@ -811,22 +810,10 @@ namespace VATS::UI
 		// weapon actually changed since the last check.
 		Controller::Get().SyncProjectileOverride();
 
-		// Read-only probes (2026-08-25), draw nothing, change nothing.
-		// worldBound alone turned out insufficient - screenshot-confirmed
-		// too low on a wide/crouching pose (see BoneProbe.h) - so a named-
-		// bone candidate is now probed alongside it for comparison.
-		//
-		// Skipped entirely below iLogLevel=3 (2026-08-27). These were the
-		// two most expensive things Draw() did, and both exist only to
-		// write log lines: WorldBoundProbe re-reads the bounding sphere the
-		// draw path already resolved, and BoneProbe walks the whole NiNode
-		// graph of the target (heap vector, up to kMaxNodesVisited nodes)
-		// once a second, forever, to report that no candidate bone name
-		// matched - which it has now reported for days. Both also fed a
-		// permanently-growing per-formID throttle map.
+		// worldBound telemetry, verbose only - it re-reads the bounding
+		// sphere the draw path already resolved, purely to log it.
 		if (Log::Verbose()) {
 			WorldBoundProbe::LogIfChanged(state.actor.get());
-			BoneProbe::LogIfChanged(state.actor.get());
 		}
 
 		// RE::Actor::GetActorKnowledge was investigated 2026-08-22 as a

@@ -2,7 +2,7 @@
 
 // Centralized, in-game-verified struct offsets and constants shared between
 // targeting and UI. Everything here has either been empirically probed
-// (CellProbe / diagnostic logging) or proven by repeated successful use on
+// (diagnostic probes, since removed - see docs/FINDINGS.md) or proven by repeated successful use on
 // game 1.16.244. Do not add offsets here on header trust alone — see the
 // commonlibsf-unmapped-ids notes: CommonLibSF's layouts have been wrong
 // before (cell references off by 8), and a mapped/compiling offset is not
@@ -104,7 +104,7 @@ namespace VATS::GameOffsets
 	inline constexpr auto kLoadedRefData3D = offsetof(RE::LOADED_REF_DATA, data3D);
 	// NiAVObject::parent, header-documented at 0x038. Used only as a
 	// back-reference when probing for the children array offset
-	// (BoneProbe): a candidate array is accepted only if its first child
+	// (the removed BoneProbe, see docs/FINDINGS.md): a candidate array is accepted only if its first child
 	// points back at the node it came from. If this is wrong the probe
 	// finds nothing - it can never make it accept something bad.
 	inline constexpr std::size_t kNiAVObjectParent = 0x038;

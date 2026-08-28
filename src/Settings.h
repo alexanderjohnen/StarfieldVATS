@@ -83,7 +83,6 @@ namespace VATS
 
 		// --- Aim assist (2026-08-22) ---
 		// Hit chance is a cone around the crosshair, Alexander's idea
-		// 2026-08-22: 100% (well, centerHitChancePercent) dead center,
 		// falling off linearly to 0% at assistRadius, same shape as an
 		// NPC's own perception cone just pointed the other way. Replaces
 		// the original flat placeholder. Two real benefits over flat: (1)
@@ -107,8 +106,6 @@ namespace VATS
 		// redirected in-flight regardless of exact aim (ProjectileTracker)
 		// — tying the displayed/rolled chance to crosshair proximity would
 		// have fought that mechanic, not complemented it. centerHitChancePercent
-		// is now the chance at/under fullChanceRangeMeters, falling
-		// linearly to 0% by maxEffectiveRangeMeters. Being on-screen at
 		// all (roughly facing the target) and passing HasDetectionLOS are
 		// still hard requirements — see ComputeChancePercent.
 		float fullChanceRangeMeters{ 12.0f };
@@ -377,10 +374,9 @@ namespace VATS
 		// Applied at Load() to Log::g_level, which VATS_LOG/VATS_TRACE
 		// check BEFORE formatting their arguments (see Log.h - REX formats
 		// unconditionally, so a level check inside the logger would not
-		// have saved anything). Level 3 additionally re-enables two probes
-		// that are otherwise skipped outright rather than merely silenced:
-		// BoneProbe/WorldBoundProbe per frame in Overlay::Draw, and
-		// ProjectileFlagProbe per shot in AimAssist.
+		// have saved anything). Level 3 additionally re-enables a probe that
+		// is otherwise skipped outright rather than merely silenced:
+		// WorldBoundProbe per frame in Overlay::Draw.
 		int logLevel{ 2 };
 
 		// Whether to install the system-wide WH_KEYBOARD_LL hook that makes

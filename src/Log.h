@@ -49,8 +49,8 @@ namespace VATS::Log
 	}
 
 	// For skipping the WORK behind a diagnostic, not just its log line -
-	// BoneProbe walks a whole node graph and WorldBoundProbe re-reads the
-	// bounding sphere purely to have something to print.
+	// WorldBoundProbe re-reads the bounding sphere the draw path already
+	// resolved, purely to have something to print.
 	[[nodiscard]] inline bool Verbose() noexcept { return At(kVerbose); }
 }
 
@@ -82,7 +82,7 @@ namespace VATS::Log
 	// the first time a thing was seen and stayed for the rest of the
 	// process. Over a long session that is unbounded growth by
 	// construction - projectile pointers in particular arrive at one or
-	// more per shot fired (ProjectileFlagProbe's s_projDumped), and
+	// more per shot fired, and
 	// dynamically-created actors get fresh 0xFF-prefixed formIDs that
 	// never repeat.
 	//
