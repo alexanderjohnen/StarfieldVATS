@@ -583,6 +583,31 @@ Falls es doch kommt: eine feste Vier-Platz-Tabelle unter demselben Mutex,
 Reverse Engineering nötig, das Schreiben der Resistenz ist pro Akteur
 bewiesen. Knappe Sitzung.
 
+### Wiederbeleben auf 100 % — gemessen und so belassen (2026-08-29)
+
+Der Begleiter steht mit **voller** Gesundheit wieder auf, egal welches
+Item benutzt wurde. Das ist **nicht** unsere Rechnung. Beleg:
+
+```
+[support] healed formID=0x6C000806 using Med Pack: 25 percent of 575 = 144
+          | health -30.00 -> 575.00 | item units 235 -> 234
+```
+
+Angefordert waren 144 Punkte, von −30 aus also 114. Herausgekommen ist
+575, das Maximum. Sobald die Gesundheit über null steigt, führt Starfield
+seine eigene Wiederherstellung durch und überschreibt unseren Wert.
+
+„Nur die Item-Menge geben" wäre deshalb keine Einstellung, sondern ein
+Eingriff: nach dem Aufstehen wieder herunterschreiben, also ein
+Schadens-Schreibzugriff auf einen gerade aufgestandenen Begleiter, mit
+sichtbarem Sprung auf der Leiste. **Alexanders Entscheidung: so lassen.**
+
+Ebenfalls verworfen, und das ist der wichtigere Teil: der Vorschlag,
+stattdessen den *Preis* zu erhöhen (Wiederbeleben nur mit Trauma Pack
+oder Emergency Kit). Alexander will das ausdrücklich nicht — **genau
+diese Einschränkung stört ihn schon im Vanilla-Spiel**, wo nur drei
+Heil-Items wiederbeleben können. Nicht erneut vorschlagen.
+
 ### Wo die Zahlen herkommen
 
 `src/AidItems.h` — eine feste Tabelle aus gemessenen FormIDs. Es wird
