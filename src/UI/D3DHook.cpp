@@ -511,9 +511,15 @@ namespace VATS::UI
 			// inside the vendored backend (a persistent buffer instead of
 			// per-frame renaming) or by moving off D3D11-on-12 to a native
 			// D3D12 backend - next session, see HANDOFF.md.
+			// bSkipEmptyFrames exists so this mitigation can be turned OFF
+			// for measurement. With it on, an idle scene never reaches the
+			// draw at all - which would make a BROKEN fix look flat too, and
+			// the star map is the one place easy enough to sit still in for
+			// three minutes. Set it to 0 to force the full path every frame
+			// and measure the renderer honestly.
 			ImDrawData* drawData = ImGui::GetDrawData();
 			const bool  haveGeometry = drawData && drawData->CmdListsCount > 0 && drawData->TotalVtxCount > 0;
-			if (stage >= 3 && !haveGeometry) {
+			if (stage >= 3 && !haveGeometry && Settings::Get().skipEmptyFrames) {
 				return;
 			}
 

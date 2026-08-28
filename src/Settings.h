@@ -408,5 +408,12 @@ namespace VATS
 		// lines below it - stage 2 splits those. See D3DHook.cpp
 		// InitializeOrRender.
 		int overlayStage{ 3 };
+
+		// Skip the whole per-frame draw when there is nothing to draw. On by
+		// default and worth keeping on its own merits - that work could
+		// never have produced a pixel. Turn it off only to measure the
+		// renderer, since with it on an idle scene never reaches the draw
+		// and any renderer bug would read as flat. See D3DHook.cpp.
+		bool skipEmptyFrames{ true };
 	};
 }

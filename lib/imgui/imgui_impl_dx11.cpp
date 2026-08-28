@@ -132,10 +132,11 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
         bd->VertexBufferSize = draw_data->TotalVtxCount + 5000;
         D3D11_BUFFER_DESC desc;
         memset(&desc, 0, sizeof(D3D11_BUFFER_DESC));
-        desc.Usage = D3D11_USAGE_DYNAMIC;
+        // DEFAULT, not DYNAMIC - see the upload block below for why.
+        desc.Usage = D3D11_USAGE_DEFAULT;
         desc.ByteWidth = bd->VertexBufferSize * sizeof(ImDrawVert);
         desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        desc.CPUAccessFlags = 0;
         desc.MiscFlags = 0;
         if (bd->pd3dDevice->CreateBuffer(&desc, nullptr, &bd->pVB) < 0)
             return;
@@ -146,44 +147,69 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
         bd->IndexBufferSize = draw_data->TotalIdxCount + 10000;
         D3D11_BUFFER_DESC desc;
         memset(&desc, 0, sizeof(D3D11_BUFFER_DESC));
-        desc.Usage = D3D11_USAGE_DYNAMIC;
+        // DEFAULT, not DYNAMIC - see the upload block below for why.
+        desc.Usage = D3D11_USAGE_DEFAULT;
         desc.ByteWidth = bd->IndexBufferSize * sizeof(ImDrawIdx);
         desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        desc.CPUAccessFlags = 0;
         if (bd->pd3dDevice->CreateBuffer(&desc, nullptr, &bd->pIB) < 0)
             return;
     }
 
     // Upload vertex/index data into a single contiguous GPU buffer
-    D3D11_MAPPED_SUBRESOURCE vtx_resource, idx_resource;
-    if (ctx->Map(bd->pVB, 0, D3D11_MAP_WRITE_DISCARD, 0, &vtx_resource) != S_OK)
-        return;
-    if (ctx->Map(bd->pIB, 0, D3D11_MAP_WRITE_DISCARD, 0, &idx_resource) != S_OK)
-        return;
-    ImDrawVert* vtx_dst = (ImDrawVert*)vtx_resource.pData;
-    ImDrawIdx* idx_dst = (ImDrawIdx*)idx_resource.pData;
-    for (int n = 0; n < draw_data->CmdListsCount; n++)
+    //
+    // MODIFIED FOR THIS PROJECT (StarfieldVATS, 2026-08-27). Stock ImGui
+    // creates these three buffers as D3D11_USAGE_DYNAMIC and refills them
+    // every frame with Map(D3D11_MAP_WRITE_DISCARD). That is exactly right
+    // on a normal D3D11 device: DISCARD asks the driver for a freshly
+    // renamed allocation so the CPU never waits on the GPU, and the pool of
+    // renamed allocations is recycled at Present.
+    //
+    // This overlay never Presents. It draws on a D3D11On12 device whose
+    // work is submitted with Flush() from inside the game's D3D12 Present
+    // hook, so the D3D11 side never sees a frame boundary and the rename
+    // pool grew without bound: measured at ~2GB per minute, roughly a
+    // quarter of a megabyte per frame. The decisive clue was that it leaked
+    // at exactly the same rate in frames with NOTHING to draw - all three
+    // Maps ran regardless of whether a single vertex existed. See
+    // HANDOFF.md for the bisect that narrowed it to this function.
+    //
+    // So the buffers are DEFAULT and filled with UpdateSubresource, which
+    // copies through the command list instead of renaming. One call per
+    // command list, addressed with a D3D11_BOX so each list lands at its
+    // own offset - no CPU-side staging copy needed, and no allocation that
+    // outlives the command list it was recorded into.
     {
-        const ImDrawList* cmd_list = draw_data->CmdLists[n];
-        memcpy(vtx_dst, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
-        memcpy(idx_dst, cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx));
-        vtx_dst += cmd_list->VtxBuffer.Size;
-        idx_dst += cmd_list->IdxBuffer.Size;
+        UINT vtx_offset_bytes = 0;
+        UINT idx_offset_bytes = 0;
+        for (int n = 0; n < draw_data->CmdListsCount; n++)
+        {
+            const ImDrawList* cmd_list = draw_data->CmdLists[n];
+            const UINT vtx_bytes = (UINT)cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
+            const UINT idx_bytes = (UINT)cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx);
+            if (vtx_bytes)
+            {
+                const D3D11_BOX box = { vtx_offset_bytes, 0, 0, vtx_offset_bytes + vtx_bytes, 1, 1 };
+                ctx->UpdateSubresource(bd->pVB, 0, &box, cmd_list->VtxBuffer.Data, 0, 0);
+                vtx_offset_bytes += vtx_bytes;
+            }
+            if (idx_bytes)
+            {
+                const D3D11_BOX box = { idx_offset_bytes, 0, 0, idx_offset_bytes + idx_bytes, 1, 1 };
+                ctx->UpdateSubresource(bd->pIB, 0, &box, cmd_list->IdxBuffer.Data, 0, 0);
+                idx_offset_bytes += idx_bytes;
+            }
+        }
     }
-    ctx->Unmap(bd->pVB, 0);
-    ctx->Unmap(bd->pIB, 0);
 
     // Setup orthographic projection matrix into our constant buffer
     // Our visible imgui space lies from draw_data->DisplayPos (top left) to draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is (0,0) for single viewport apps.
     {
-        D3D11_MAPPED_SUBRESOURCE mapped_resource;
-        if (ctx->Map(bd->pVertexConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource) != S_OK)
-            return;
-        VERTEX_CONSTANT_BUFFER_DX11* constant_buffer = (VERTEX_CONSTANT_BUFFER_DX11*)mapped_resource.pData;
         float L = draw_data->DisplayPos.x;
         float R = draw_data->DisplayPos.x + draw_data->DisplaySize.x;
         float T = draw_data->DisplayPos.y;
         float B = draw_data->DisplayPos.y + draw_data->DisplaySize.y;
+        VERTEX_CONSTANT_BUFFER_DX11 constant_buffer;
         float mvp[4][4] =
         {
             { 2.0f/(R-L),   0.0f,           0.0f,       0.0f },
@@ -191,8 +217,8 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
             { 0.0f,         0.0f,           0.5f,       0.0f },
             { (R+L)/(L-R),  (T+B)/(B-T),    0.5f,       1.0f },
         };
-        memcpy(&constant_buffer->mvp, mvp, sizeof(mvp));
-        ctx->Unmap(bd->pVertexConstantBuffer, 0);
+        memcpy(&constant_buffer.mvp, mvp, sizeof(mvp));
+        ctx->UpdateSubresource(bd->pVertexConstantBuffer, 0, nullptr, &constant_buffer, 0, 0);
     }
 
     // Backup DX state that will be modified to restore it afterwards (unfortunately this is very ugly looking and verbose. Close your eyes!)
@@ -438,9 +464,11 @@ bool    ImGui_ImplDX11_CreateDeviceObjects()
         {
             D3D11_BUFFER_DESC desc;
             desc.ByteWidth = sizeof(VERTEX_CONSTANT_BUFFER_DX11);
-            desc.Usage = D3D11_USAGE_DYNAMIC;
+            // DEFAULT, not DYNAMIC - see the upload block in
+            // ImGui_ImplDX11_RenderDrawData for why.
+            desc.Usage = D3D11_USAGE_DEFAULT;
             desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-            desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            desc.CPUAccessFlags = 0;
             desc.MiscFlags = 0;
             bd->pd3dDevice->CreateBuffer(&desc, nullptr, &bd->pVertexConstantBuffer);
         }
