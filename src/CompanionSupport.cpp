@@ -35,8 +35,12 @@ namespace VATS
 		// throughout, so a wrong offset yields no entries rather than a
 		// crash. Confirmed working 2026-08-28: 65 entries, all seven known
 		// aid item form IDs present. See docs/FINDINGS.md.
+		// Visits each entry with (rawEntryBytes, boundObject, formID). The raw
+		// pointer is passed through because the per-stack unit count lives
+		// inside the entry and the callers that need it should not have to
+		// walk the list a second time to reach it.
 		template <class F>
-		void ForEachInventoryItem(RE::PlayerCharacter* a_player, F&& a_visit)
+		void ForEachInventoryItemEntry(RE::PlayerCharacter* a_player, F&& a_visit)
 		{
 			RE::BGSInventoryList* list = nullptr;
 			if (!SafeRead(reinterpret_cast<const std::byte*>(a_player) + offsetof(RE::TESObjectREFR, inventoryList),
@@ -68,7 +72,7 @@ namespace VATS
 				if (!SafeRead(reinterpret_cast<const std::byte*>(object) + offsetof(RE::TESForm, formID), &formID, sizeof(formID))) {
 					continue;
 				}
-				a_visit(reinterpret_cast<RE::TESBoundObject*>(object), formID);
+				a_visit(entry, reinterpret_cast<RE::TESBoundObject*>(object), formID);
 			}
 		}
 	}
@@ -141,7 +145,7 @@ namespace VATS
 		{
 			const AidItem* best = nullptr;
 			a_outObject = nullptr;
-			ForEachInventoryItem(a_player, [&](RE::TESBoundObject* a_object, std::uint32_t a_formID) {
+			ForEachInventoryItemEntry(a_player, [&](const std::byte*, RE::TESBoundObject* a_object, std::uint32_t a_formID) {
 				const auto* entry = FindAidItem(a_formID);
 				if (!entry || entry->healPercent <= 0.0f) {
 					return;
@@ -180,19 +184,43 @@ namespace VATS
 			a_player->RemoveItem(outHandle, request);
 		}
 
-		// How many entries in the inventory carry this form ID. Entries, not
-		// units - the per-stack count has not been verified yet - but that is
-		// enough to tell "the call removed something" from "the call did
-		// nothing".
-		[[nodiscard]] int CountEntries(RE::PlayerCharacter* a_player, std::uint32_t a_formID)
+		// How many UNITS of this form ID the player carries, summed across
+		// every stack of every matching entry.
+		//
+		// This counted ENTRIES until 2026-08-29, which made the first real
+		// test worthless: with several Med Packs in one stack, removing one
+		// leaves the entry standing, so "1 -> 1" meant both "nothing was
+		// removed" and "one of five was removed" and could not tell them
+		// apart. The comment there even claimed entries were enough to
+		// distinguish the two. They are not.
+		[[nodiscard]] int CountUnits(RE::PlayerCharacter* a_player, std::uint32_t a_formID)
 		{
-			int n = 0;
-			ForEachInventoryItem(a_player, [&](RE::TESBoundObject*, std::uint32_t a_id) {
-				if (a_id == a_formID) {
-					++n;
+			int total = 0;
+			ForEachInventoryItemEntry(a_player, [&](const std::byte* a_entry, RE::TESBoundObject*, std::uint32_t a_id) {
+				if (a_id != a_formID) {
+					return;
+				}
+
+				// stacks is a BSTArray<Stack>, same {size, capacity, data}
+				// shape as every other array here; Stack carries the count.
+				constexpr std::size_t kStacksOff = offsetof(RE::BGSInventoryItem, stacks);
+				std::uint32_t         stackCount = 0;
+				std::uint64_t         stackData = 0;
+				if (!SafeRead(a_entry + kStacksOff, &stackCount, sizeof(stackCount)) ||
+					!SafeRead(a_entry + kStacksOff + 8, &stackData, sizeof(stackData)) ||
+					!stackData) {
+					return;
+				}
+				for (std::uint32_t s = 0; s < std::min<std::uint32_t>(stackCount, 32); ++s) {
+					std::uint32_t n = 0;
+					const auto* stack = reinterpret_cast<const std::byte*>(stackData) +
+						static_cast<std::size_t>(s) * sizeof(RE::BGSInventoryItem::Stack);
+					if (SafeRead(stack + offsetof(RE::BGSInventoryItem::Stack, count), &n, sizeof(n))) {
+						total += static_cast<int>(n);
+					}
 				}
 				});
-			return n;
+			return total;
 		}
 	}
 
@@ -291,7 +319,7 @@ namespace VATS
 		// companions level - see AidItems.h.
 		const float amount = before.max * (item->healPercent / 100.0f);
 
-		const int countBefore = CountEntries(player, item->formID);
+		const int countBefore = CountUnits(player, item->formID);
 		if (!TryRestoreHealth(a_actor, amount)) {
 			VATS_WARN("[support] formID=0x{:08X}: RestoreActorValue not reachable - item NOT spent", formID);
 			return;
@@ -300,12 +328,12 @@ namespace VATS
 		// Spent only after the heal actually went through, so a failure
 		// cannot cost the player an item for nothing.
 		SpendItem(player, object);
-		const int countAfter = CountEntries(player, item->formID);
+		const int countAfter = CountUnits(player, item->formID);
 
 		HealthReading after{};
 		const bool    haveAfter = GetActorHealth(a_actor, after);
 
-		VATS_LOG("[support] healed formID=0x{:08X} using {} (0x{:08X}): {:.0f} percent of {:.0f} = {:.0f} | health {:.2f} -> {:.2f} | item entries {} -> {}",
+		VATS_LOG("[support] healed formID=0x{:08X} using {} (0x{:08X}): {:.0f} percent of {:.0f} = {:.0f} | health {:.2f} -> {:.2f} | item units {} -> {}",
 			formID, item->name, item->formID, item->healPercent, before.max, amount,
 			before.current,
 			haveAfter ? after.current : -1.0f,
