@@ -224,6 +224,20 @@ gracefully the way `SafeRead` does.
 (slot 07) for obtaining an object handle. The argument functor is the
 single missing piece.
 
+**Correction 2026-08-28.** An earlier version of this note said Starfield
+has no `AddSpell`. It does - on `ObjectReference.psc` (line 191), which
+`Actor` inherits from, alongside `RemoveSpell` on `Actor.psc`. The mistake
+came from checking only an `Actor` API summary. So if the VM call is ever
+solved there are TWO routes for buffs, not one: `DoCombatSpellApply` to
+apply a spell to another actor, or `AddSpell` to give the companion the
+spell so a Self-delivery effect lands on them.
+
+Also checked, from the authoritative script sources in
+`Data/scripts/source`: `Potion.psc` exposes only `IsHostile()`. An aid
+item magnitude and duration are unreachable from Papyrus too, so the
+fixed table in `AidItems.h` was not merely the safer option - it was the
+only one.
+
 **Consequence.** Anything that only exists in Papyrus is parked until
 someone establishes the real layout. Healing was not parked, because it
 does *not* need Papyrus: `ActorValueOwner::RestoreActorValue` is vtable
