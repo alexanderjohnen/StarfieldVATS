@@ -564,6 +564,25 @@ Leben). Darunter steht `HOLD … TO EXIT`.
   ganzen Log. Nebenbei mitbewiesen: Nachlegen stapelt gegen die
   Restzeit, nicht von vorn, und der 300-s-Ablauf greift von selbst.
 
+
+### Mehrere Begleiter — bewusst NICHT umgebaut (Alexander, 2026-08-29)
+
+Heilen und Wiederbeleben sind zustandslos und funktionieren mit beliebig
+vielen. Die Scanner-Zeile listet bis zu vier. **Der Schild hält weiterhin
+genau einen Akteur** (`CompanionShield::Add` ersetzt, statt zu stapeln),
+also kann nur eine der Zeilen je ein `/ SHIELD` tragen.
+
+Alexander spielt selten mit mehreren — das Spiel ist nicht darauf
+ausgelegt, und die Mods dafür haben durchweg Macken; seine ist wegen
+Nebenfunktionen installiert („Begleiter zu mir teleportieren"), nicht für
+eine echte Mehrfach-Truppe. **Er meldet sich, wenn sich das ändert — bis
+dahin nicht erneut vorschlagen.**
+
+Falls es doch kommt: eine feste Vier-Platz-Tabelle unter demselben Mutex,
+`Add` sucht den Platz des Akteurs, `Tick` zählt alle runter. Kein neues
+Reverse Engineering nötig, das Schreiben der Resistenz ist pro Akteur
+bewiesen. Knappe Sitzung.
+
 ### Wo die Zahlen herkommen
 
 `src/AidItems.h` — eine feste Tabelle aus gemessenen FormIDs. Es wird
