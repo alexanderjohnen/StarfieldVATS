@@ -231,3 +231,39 @@ slot 09 on the same RTTI-verified sub-object this project has been
 reading live health through since 2026-08-25. Same object, same
 verification, one slot further along, no Address Library and no
 hand-built struct.
+
+## Confirmed constants and layouts (support feature)
+
+### `TESForm::formType` for ALCH (aid items) is **54**
+
+Measured 2026-08-28 by walking the player's inventory with all seven
+base-game aid items carried. Every one of these came back as type 54:
+
+| Item | FormID |
+|---|---|
+| Med Pack | `0x0000ABF9` |
+| Trauma Pack | `0x0029A847` |
+| Emergency Kit | `0x002A9DE8` |
+| Alien Genetic Material | `0x000C1F57` |
+| Hypergiant Heart | `0x00122E9C` |
+| Heart+ | `0x0029CAD9` |
+| Red Amp | `0x001F3E86` |
+
+Thirteen entries in that inventory carried type 54, consistent with the
+aid items present. (`ACHR` = 75 was already confirmed independently.)
+
+### The inventory is reachable as plain data
+
+`TESObjectREFR::inventoryList` (0xA0) is a `BSGuarded<BGSInventoryList*>`
+whose pointer sits first; `BGSInventoryList::data` (0x28) is a `BSTArray`
+with this project's usual `{u32 size, u32 capacity, T* data}` shape, and
+`BGSInventoryItem` is 0x28 bytes with the bound object at offset 0.
+
+Unusually for this project the offsets came from the CommonLibSF headers
+rather than from probing, which was justified because these particular
+types carry `static_assert`s on their own size - and then confirmed in
+one run: 65 entries read, all seven expected form IDs present. Reading an
+inventory therefore needs no engine call at all.
+
+Note `stacks` reads the NUMBER OF STACKS, not the item count; the count
+lives inside `BGSInventoryItem::Stack` and has not been verified yet.

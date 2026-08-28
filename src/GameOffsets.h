@@ -19,6 +19,12 @@ namespace VATS::GameOffsets
 	inline constexpr auto kLocation = offsetof(RE::TESObjectREFR, data.location);
 	inline constexpr auto kBoolBits = offsetof(RE::Actor, boolBits);
 
+	// ALCH (aid items). Confirmed 2026-08-28 by walking the player inventory
+	// with all seven known base-game aid items in it: every one of the form
+	// IDs Alexander supplied came back as type 54, and thirteen entries in
+	// that inventory carried it. Measured, not taken from a header.
+	inline constexpr std::uint8_t  kFormTypeALCH = 54;
+
 	inline constexpr std::uint8_t  kFormTypeACHR = 75;   // matches crash logger's independent RTTI labeling
 	// UNUSED for death detection since 2026-08-25 - this bit reads
 	// identically on a living actor and one lying dead on the floor, so it

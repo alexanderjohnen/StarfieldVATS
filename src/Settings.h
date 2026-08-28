@@ -420,12 +420,5 @@ namespace VATS
 		// --- Support (Aspekt 1: Begleiter heilen) ---
 
 
-		// How much health one press restores. Goes through the engine own
-		// RestoreActorValue, the same path a stimpack takes, so it is capped
-		// at the target maximum by the engine and needs no clamping here.
-		//
-		// Costs nothing yet: consuming an actual aid item from the inventory
-		// is the next step, not this one. Treat the number as a probe value.
-		float supportHealAmount{ 200.0f };
 	};
 }
