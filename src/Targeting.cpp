@@ -317,6 +317,47 @@ namespace VATS
 		return RE::NiPointer<RE::Actor>(actor);
 	}
 
+	RE::NiPointer<RE::Actor> GetCrosshairTeammate()
+	{
+		// The mirror image of the function above: same engine-computed,
+		// occlusion-correct crosshair pick, but keeping exactly what that one
+		// throws away. IsTargetable rejects an actor whose kPlayerTeammate bit
+		// is set; this requires it.
+		//
+		// Deliberately does NOT go through IsTargetable with an inverted flag:
+		// that function also honours bRequireHostileTarget and
+		// bIgnoreFriendlyActors, and support actions must not depend on how the
+		// player has tuned combat targeting. A companion is a companion
+		// whether or not friendly filtering is switched on.
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return nullptr;
+		}
+
+		RE::TESObjectREFR* target = nullptr;
+		if (!Read(player, GameOffsets::kPlayerCommandTarget, target) || !target) {
+			return nullptr;
+		}
+
+		std::uint8_t formType = 0;
+		if (!Read(target, kFormTypeOff, formType) || formType != kFormTypeACHR) {
+			return nullptr;
+		}
+
+		auto* actor = reinterpret_cast<RE::Actor*>(target);
+		if (!IsAlive(actor)) {
+			return nullptr;  // a downed companion still reads alive; a corpse does not
+		}
+
+		std::uint32_t boolBits = 0;
+		if (!Read(actor, kBoolBitsOff, boolBits) ||
+			(boolBits & GameOffsets::kActorPlayerTeammateBit) == 0) {
+			return nullptr;
+		}
+
+		return RE::NiPointer<RE::Actor>(actor);
+	}
+
 	bool HasDetectionLOS(RE::Actor* a_source, RE::Actor* a_target)
 	{
 		if (!a_source || !a_target) {

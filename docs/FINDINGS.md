@@ -183,3 +183,51 @@ The flyer's centre height swings over two metres in time with its wingbeat. A HU
 | 7 different hitscan weapons | instant hitscan | `0x02` (every sample) |
 
 Zero exceptions across all samples collected. Writing `0x02 → 0x00` on a normally-hitscan weapon's live projectile was followed by that weapon's shots becoming findable and redirectable as real, in-flight `RE::Projectile` objects — but this hasn't been isolated from every other variable in the firing path, so it's reported as a strong lead, not a settled mechanism.
+
+## The Papyrus VM is reachable, its argument type is not
+
+`IVirtualMachine::DispatchMethodCall` (vtable slot 30) and
+`DispatchStaticCall` (2F) are plain pure virtuals — no Address Library
+lookup — and `GameVM::GetSingleton()->GetVM()` reaches them. That makes
+Papyrus look like an attractive route to functions with no native binding
+in CommonLibSF, and Starfield has several this project wants:
+
+| Papyrus | on | why we want it |
+|---|---|---|
+| `DoCombatSpellApply(Spell, ObjectReference)` | `Actor` | apply a spell **to another actor** — the only exposed way to put buffs or Starborn powers on a companion |
+| `RemoveItem(Form, int, bool, ObjectReference)` | `ObjectReference` | consume an aid item from the player's inventory |
+| `RestoreValue(ActorValue, float)` | `ObjectReference` | heal — but this one also exists natively, see below |
+
+**The blocker.** All three dispatch entry points take their arguments as
+
+```cpp
+const BSTThreadScrapFunction<bool(BSScrapArray<Variable>&)>& a_arguments
+```
+
+and CommonLibSF defines that type, in `RE/I/IVirtualMachine.h`, as:
+
+```cpp
+template <class F>
+using BSTThreadScrapFunction = std::function<F>;
+```
+
+That is a **placeholder, not a binding**. Bethesda's real
+`BSTThreadScrapFunction` is a scrap-heap-allocated callable with its own
+layout; `std::function` has a different size and different internals.
+Calling through it hands the engine a structure of the wrong shape — the
+same class of failure as the wrong struct offsets recorded above, except
+that this one is a call rather than a read, so it cannot degrade
+gracefully the way `SafeRead` does.
+
+`BSScrapArray` itself is fine (`BSTArray` with a scrap allocator,
+`RE/B/BSTArray.h`), as is `IObjectHandlePolicy::GetHandleForObject`
+(slot 07) for obtaining an object handle. The argument functor is the
+single missing piece.
+
+**Consequence.** Anything that only exists in Papyrus is parked until
+someone establishes the real layout. Healing was not parked, because it
+does *not* need Papyrus: `ActorValueOwner::RestoreActorValue` is vtable
+slot 09 on the same RTTI-verified sub-object this project has been
+reading live health through since 2026-08-25. Same object, same
+verification, one slot further along, no Address Library and no
+hand-built struct.

@@ -41,4 +41,28 @@ namespace VATS
 	// If the name is never found, this reports failure and nothing is
 	// called.
 	[[nodiscard]] bool TryGetLiveHealth(RE::Actor* a_actor, float& a_out);
+
+	// Heals a_actor by a_amount, through the SAME RTTI-verified sub-object
+	// the read above uses - ActorValueOwner::RestoreActorValue, vtable slot
+	// 09. Everything written above about why that is safe applies unchanged:
+	// no Address Library lookup, no hand-built struct, and no call at all
+	// unless the sub-object identifies itself as ActorValueOwner right now.
+	//
+	// This is the first time this project WRITES through an engine call
+	// rather than into plain data, so two extra rules apply at the call
+	// site, not here: only ever on the game thread (via the SFSE task
+	// interface), and only on an actor already confirmed alive and a
+	// player teammate. RestoreActorValue is the engine own healing path -
+	// the same one a stimpack takes - so it respects caps and does not need
+	// clamping by us.
+	//
+	// The Papyrus route was investigated first and rejected for now:
+	// Actor.RestoreValue exists and IVirtualMachine::DispatchMethodCall is a
+	// plain virtual, but its argument parameter is typed
+	// BSTThreadScrapFunction, which CommonLibSF defines as a bare alias for
+	// std::function. That is a placeholder, not a binding - the engine type
+	// is scrap-heap allocated with its own layout - so calling through it
+	// would hand the engine a structure of the wrong shape. See
+	// docs/FINDINGS.md.
+	[[nodiscard]] bool TryRestoreHealth(RE::Actor* a_actor, float a_amount);
 }

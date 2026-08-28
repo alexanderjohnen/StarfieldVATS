@@ -1,5 +1,6 @@
 #include "HotkeyWatcher.h"
 
+#include "CompanionSupport.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -45,6 +46,7 @@ namespace VATS
 	void HotkeyWatcher::ThreadProc(const std::stop_token& a_stop)
 	{
 		bool wasDown = false;
+		bool supportWasDown = false;
 
 		while (!a_stop.stop_requested()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -52,6 +54,7 @@ namespace VATS
 			const auto& settings = Settings::Get();
 			if (!settings.enabled || !GameWindowHasFocus()) {
 				wasDown = false;
+				supportWasDown = false;
 				continue;
 			}
 
@@ -61,6 +64,17 @@ namespace VATS
 				Controller::Get().RequestAdvance();
 			}
 			wasDown = isDown;
+
+			// Support key: heals the companion under the crosshair. Shares
+			// this thread rather than getting its own - it is the same 16ms
+			// poll and the same focus gate, and one more GetAsyncKeyState is
+			// nothing next to another thread.
+			const bool supportDown =
+				(::GetAsyncKeyState(static_cast<int>(settings.supportKeyVK)) & 0x8000) != 0;
+			if (supportDown && !supportWasDown) {
+				CompanionSupport::RequestHeal();
+			}
+			supportWasDown = supportDown;
 		}
 	}
 }

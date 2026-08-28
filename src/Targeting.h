@@ -98,6 +98,15 @@ namespace VATS
 	// ACHR actor, or if any read fails (SafeRead-guarded throughout).
 	[[nodiscard]] RE::NiPointer<RE::Actor> GetCrosshairActivationTarget();
 
+	// The mirror image: the same engine-computed crosshair pick, but
+	// returning ONLY a live player teammate - the actor the combat path
+	// deliberately discards. This is what the support actions target.
+	//
+	// Independent of bIgnoreFriendlyActors and bRequireHostileTarget on
+	// purpose: whether someone is your companion is not a combat-tuning
+	// preference.
+	[[nodiscard]] RE::NiPointer<RE::Actor> GetCrosshairTeammate();
+
 	// Live line-of-sight check between two actors, using the game's own
 	// AI/stealth detection LOS system (the same one that decides whether
 	// an NPC can see the player, just usable in either direction). Solves

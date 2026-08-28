@@ -178,55 +178,87 @@ namespace VATS
 		}
 	}
 
+	// Resolves the RTTI-verified ActorValueOwner sub-object of an Actor, or
+	// nullptr. Everything about the identification is described on
+	// TryGetLiveHealth in the header; this is that logic, factored out so
+	// the write path below cannot drift from the read path that has been
+	// running in production since 2026-08-25.
+	namespace
+	{
+		[[nodiscard]] RE::ActorValueOwner* ResolveVerifiedOwner(RE::Actor* a_actor)
+		{
+			if (!a_actor) {
+				return nullptr;
+			}
+
+			// Cached across calls, but deliberately re-verified below rather
+			// than trusted blind: the offset is a property of the class layout,
+			// not of any one actor, so it only has to be searched for once.
+			static std::size_t s_ownerOffset = 0;
+			static bool        s_haveOffset = false;
+			if (!s_haveOffset) {
+				if (!FindActorValueOwnerOffset(a_actor, s_ownerOffset)) {
+					static bool s_loggedFailure = false;
+					if (!s_loggedFailure) {
+						s_loggedFailure = true;
+						VATS_WARN("[VATS] actor values: no ActorValueOwner sub-object found in Actor - not calling anything");
+					}
+					return nullptr;
+				}
+				s_haveOffset = true;
+				VATS_LOG("[VATS] actor values: ActorValueOwner sub-object confirmed at Actor+0x{:03X}", s_ownerOffset);
+			}
+
+			// Re-confirm identity on every call before dispatching through the
+			// vtable. Two guarded reads and a substring compare is nothing next
+			// to a per-frame overlay, and it means a stale/garbage object can
+			// never reach the virtual call - the call only ever happens on a
+			// sub-object that identifies itself as ActorValueOwner right now.
+			auto* ownerBytes = reinterpret_cast<std::byte*>(a_actor) + s_ownerOffset;
+
+			// The sub-object's own complete object locator records which offset
+			// within the complete object that vtable serves. Requiring it to
+			// match the offset RTTI told us ActorValueOwner lives at confirms,
+			// on every single call, that we are about to dispatch through the
+			// right sub-object of a genuinely polymorphic object - a freed or
+			// recycled allocation will not satisfy it.
+			RTTICompleteObjectLocator locator{};
+			if (!ReadLocator(ownerBytes, locator) || locator.offset != s_ownerOffset) {
+				return nullptr;
+			}
+
+			return reinterpret_cast<RE::ActorValueOwner*>(ownerBytes);
+		}
+	}
+
 	bool TryGetLiveHealth(RE::Actor* a_actor, float& a_out)
 	{
-		if (!a_actor) {
-			return false;
-		}
-
 		auto* avList = RE::ActorValue::GetSingleton();
 		if (!avList || !avList->health) {
 			return false;
 		}
-
-		// Cached across calls, but deliberately re-verified below rather
-		// than trusted blind: the offset is a property of the class layout,
-		// not of any one actor, so it only has to be searched for once.
-		static std::size_t s_ownerOffset = 0;
-		static bool        s_haveOffset = false;
-		if (!s_haveOffset) {
-			if (!FindActorValueOwnerOffset(a_actor, s_ownerOffset)) {
-				static bool s_loggedFailure = false;
-				if (!s_loggedFailure) {
-					s_loggedFailure = true;
-					VATS_WARN("[VATS] live health: no ActorValueOwner sub-object found in Actor - not calling anything");
-				}
-				return false;
-			}
-			s_haveOffset = true;
-			VATS_LOG("[VATS] live health: ActorValueOwner sub-object confirmed at Actor+0x{:03X}", s_ownerOffset);
-		}
-
-		// Re-confirm identity on every call before dispatching through the
-		// vtable. Two guarded reads and a substring compare is nothing next
-		// to a per-frame overlay, and it means a stale/garbage object can
-		// never reach the virtual call - the call only ever happens on a
-		// sub-object that identifies itself as ActorValueOwner right now.
-		auto* ownerBytes = reinterpret_cast<std::byte*>(a_actor) + s_ownerOffset;
-
-		// The sub-object's own complete object locator records which offset
-		// within the complete object that vtable serves. Requiring it to
-		// match the offset RTTI told us ActorValueOwner lives at confirms,
-		// on every single call, that we are about to dispatch through the
-		// right sub-object of a genuinely polymorphic object - a freed or
-		// recycled allocation will not satisfy it.
-		RTTICompleteObjectLocator locator{};
-		if (!ReadLocator(ownerBytes, locator) || locator.offset != s_ownerOffset) {
+		auto* owner = ResolveVerifiedOwner(a_actor);
+		if (!owner) {
 			return false;
 		}
+		a_out = owner->GetActorValue(*avList->health);  // vtable slot 01
+		return true;
+	}
 
-		auto* owner = reinterpret_cast<RE::ActorValueOwner*>(ownerBytes);
-		a_out = owner->GetActorValue(*avList->health);
+	bool TryRestoreHealth(RE::Actor* a_actor, float a_amount)
+	{
+		if (!(a_amount > 0.0f)) {
+			return false;
+		}
+		auto* avList = RE::ActorValue::GetSingleton();
+		if (!avList || !avList->health) {
+			return false;
+		}
+		auto* owner = ResolveVerifiedOwner(a_actor);
+		if (!owner) {
+			return false;
+		}
+		owner->RestoreActorValue(*avList->health, a_amount);  // vtable slot 09
 		return true;
 	}
 }
