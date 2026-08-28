@@ -521,8 +521,10 @@ Ausstieg, der nicht davon abhängt.
 - **Neutrale NPCs.** Nur Begleiter werden erkannt (`kPlayerTeammate`,
   gemessen). Für „neutral statt feindlich" fehlt ein Signal —
   `IsHostileToActor` hat Address-Library-ID 0.
-- **Buffs und Starborn-Powers.** `Actor::DoCombatSpellApply` wäre genau
-  der eine Aufruf, den es braucht, ist aber Papyrus-only.
+- **Buffs.** `Actor::DoCombatSpellApply` wäre genau der eine Aufruf, den
+  es braucht, ist aber Papyrus-only. (Die **Starborn-Powers**, die früher
+  ebenfalls hier standen, sind seit 2026-08-29 kein offener Punkt dieses
+  Projekts mehr — siehe „Bewusst ausgelagert" unten.)
 
 ---
 
@@ -554,7 +556,13 @@ Leben). Darunter steht `HOLD … TO EXIT`.
 - **Item-Verbrauch** über `TESObjectREFR::RemoveItem` (Slot 08B) mit
   selbst gebautem `RemoveItemRequest` — bewiesen an `item units 235 → 234`
 - **Schild**: +500 auf alle drei DR-Typen über `ModActorValue` mit
-  `kTemporary`, Zeit läuft runter, Bogen und Textanzeige stimmen
+  `kTemporary`, Zeit läuft runter, Bogen und Textanzeige stimmen.
+  **Vtable-Slot 06 (Vier-Argument-Überladung) ist seit 2026-08-29
+  bestätigt**: ein Lauf, in dem der Schild dreimal wirklich angewendet
+  wurde (`0s → 30s → 57s → 86s`, Item 10 → 7, danach `expired`), ohne
+  `ModActorValue faulted` und ohne eine einzige `[W]`/`[E]`-Zeile im
+  ganzen Log. Nebenbei mitbewiesen: Nachlegen stapelt gegen die
+  Restzeit, nicht von vorn, und der 300-s-Ablauf greift von selbst.
 
 ### Wo die Zahlen herkommen
 
@@ -574,20 +582,67 @@ schwächste passende Item.
 
 ### Offene Punkte, nach Wert sortiert
 
-1. **`BSTThreadScrapFunction`** — CommonLibSF definiert den Typ als
-   blossen Alias für `std::function`, was ein Platzhalter ist, kein
-   Binding. Solange das so ist, ist die Papyrus-VM unerreichbar. Wer das
-   löst, schaltet in einem Aufwasch `DoCombatSpellApply`, `AddSpell` und
-   den ganzen Rest frei — die Starborn-Powers hängen einzig daran.
-2. **Sichtlinienprüfung** (Tiefenpuffer, eigener Abschnitt oben). Blockt
-   den automatischen Zielwechsel *und* den freien Tipp-Druck im Kampf.
-3. **Neutrale NPCs**. Begleiter erkennen wir zuverlässig
-   (`kPlayerTeammate`, gemessen); für „neutral statt feindlich" fehlt ein
-   Signal, `IsHostileToActor` hat Address-Library-ID 0.
-4. **Zwei Sonden können raus**, sobald nichts mehr klemmt:
-   `CompanionSupport::LogPlayerInventory` und `ProbeDamageResist`. Ebenso
-   das SEH-Netz um `SafeModActorValue`, sobald ein sauberer Lauf den
-   Vtable-Slot bestätigt.
+Neu geordnet 2026-08-29, nachdem die Starborn-Powers ausgelagert wurden
+(siehe unten) — das war der Grund, warum `BSTThreadScrapFunction` ganz
+oben stand.
+
+1. **Sichtlinienprüfung** (Tiefenpuffer, eigener Abschnitt oben). Der
+   wertvollste Punkt, weil er als einziger mehrere Dinge gleichzeitig
+   freischaltet: den automatischen Zielwechsel, den freien Tipp-Druck im
+   Kampf-Lock, und den Teil der neutralen NPCs, der sich über
+   Sichtbarkeit statt über Fraktionen lösen lässt. Liegt komplett im
+   D3D12-Hook, den wir besitzen — keine Struct-Offsets, keine
+   Address-Library-IDs, also ausserhalb der Crash-Kategorie.
+2. **Aufräumen, jetzt fällig.** `ProbeDamageResist` hat **gar keine
+   Aufrufer mehr** (nur noch Definition und Deklaration) und kann sofort
+   weg. Das SEH-Netz um `SafeModActorValue` ebenfalls — der Lauf, auf den
+   es wartete, ist da (siehe Schild oben). `LogPlayerInventory` läuft
+   dagegen noch bei jedem Support-Einstieg und sollte erst fallen, wenn
+   ein Lauf zeigt, dass alle vorhandenen Aid-Items in `AidItems.h`
+   stehen.
+3. **Diagnose-Schalter vor Release** (eigener Punkt weiter oben).
+4. **Neutrale NPCs**, soweit die Sichtlinie sie nicht abdeckt. Begleiter
+   erkennen wir zuverlässig (`kPlayerTeammate`, gemessen); für „neutral
+   statt feindlich" fehlt ein Signal, `IsHostileToActor` hat
+   Address-Library-ID 0.
+5. **`BSTThreadScrapFunction`** — **abgestuft, war vorher Platz 1.**
+   CommonLibSF definiert den Typ in `RE/I/IVirtualMachine.h:16` als
+   blossen Alias für `std::function`. Das ist kein *fehlendes* Binding,
+   sondern ein **falsches**: Bethesdas Original ist ein eigenes Objekt
+   mit eigener Vtable und eigenem Scrap-Allokator, `std::function` hat
+   ein anderes Layout. Ein Aufruf damit compiliert sauber und übergibt
+   der VM Müll — dieselbe Kategorie, die dieses Projekt schon zweimal in
+   einen Crash geführt hat, nur ohne Compiler-Warnung.
+
+   Wert gesunken, weil das, was daran hing, weg ist: Item-Verbrauch ist
+   über `RemoveItem` gelöst, die Starborn-Powers sind ausgelagert. Übrig
+   bleiben Buffs auf Begleiter — ein Extra, das keine Sitzung Reverse
+   Engineering an diesem Typ rechtfertigt.
+
+   Falls es doch jemand angeht: der Weg ist **nicht** „das Binding
+   suchen", sondern das echte Layout ermitteln und minimal nachbauen —
+   dieselbe Methode, die bei `RemoveItemRequest` funktioniert hat.
+   Vorbild aus CommonLibSSE/CommonLibF4 (Skyrim und FO4 benutzen dieselbe
+   Konstruktion), nachbauen, mit einem harmlosen Aufruf beweisen, und
+   erst dann etwas Echtes darauf setzen.
+
+### Bewusst ausgelagert: Starborn-Powers (Alexanders Entscheidung, 2026-08-29)
+
+Kein offener Punkt dieses Projekts mehr, sondern die Idee für eine
+**eigene Creation über das CK, ohne SFSE**.
+
+Der Grund ist stärker als „passt hier nicht rein": im CK ist das der
+**native** Weg. `AddSpell` und `DoCombatSpellApply` sind
+Papyrus-Funktionen — in einem Papyrus-Skript ruft man sie einfach auf.
+Das ganze `BSTThreadScrapFunction`-Problem existiert nur, weil wir aus
+C++ von aussen in die VM hineinwollen. Von innen ist es eine Zeile.
+Dazu läuft eine Creation ohne SFSE auf Xbox und überlebt Spiel-Updates,
+statt bei jedem Patch auf eine neue SFSE-Version zu warten.
+
+**Die Trennung ist nur so lange kostenlos, wie die beiden nichts
+voneinander wissen müssen.** Sobald das VATS-HUD den Zustand einer Power
+*anzeigen* soll, bräuchte es eine Brücke zwischen Creation und
+SFSE-Mod — und die wäre wieder genau dieses Papyrus-Problem.
 
 ### Zwei Fehler dieser Sitzung, die sich lohnen zu kennen
 

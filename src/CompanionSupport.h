@@ -49,22 +49,6 @@ namespace VATS
 		// immediately rather than inferring from a health bar.
 		static void HealActor(RE::Actor* a_actor);
 
-		// TEMPORARY (2026-08-28). Raises the target damage resistance by 500
-		// through the temporary-modifier mechanism, reads the result, then
-		// puts it straight back - a measurement, not a buff.
-		//
-		// It answers the question the whole shield idea rests on, before any
-		// of that gets built: does writing damage resistance do anything?
-		// Health works because health is authoritative. Damage resistance may
-		// be derived from armour and perks - the one vanilla script that
-		// changes it uses AddPerk and never touches the value - in which case
-		// a written number would either snap back or never reach the damage
-		// calculation, and the bar would display something that does nothing.
-		//
-		// Runs on a TAP at full health, where healing has nothing to do.
-		// Delete once answered.
-		static void ProbeDamageResist(RE::Actor* a_actor);
-
 		// Spends a buff item on a_actor, adding its worth to the shield. Runs
 		// on a tap at full health, where healing has nothing to do - which is
 		// the shape Alexander asked for: a healthy companion turns the prompt

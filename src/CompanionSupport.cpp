@@ -221,53 +221,6 @@ namespace VATS
 			countBefore, countAfter);
 	}
 
-	void CompanionSupport::ProbeDamageResist(RE::Actor* a_actor)
-	{
-		auto* avList = RE::ActorValue::GetSingleton();
-		if (!avList || !avList->damageResist) {
-			VATS_WARN("[dr] ActorValue singleton has no damageResist");
-			return;
-		}
-		const auto& av = *avList->damageResist;
-		const std::uint32_t formID = a_actor->GetFormID();
-
-		constexpr float kProbeAmount = 500.0f;
-
-		float valueBefore = -1.0f, modBefore = -1.0f;
-		(void)TryGetActorValue(a_actor, av, valueBefore);
-		(void)TryGetTemporaryModifier(a_actor, av, modBefore);
-
-		if (!TryModTemporary(a_actor, av, kProbeAmount)) {
-			VATS_WARN("[dr] formID=0x{:08X}: no verified ActorValueOwner, nothing applied", formID);
-			return;
-		}
-
-		float valueAfter = -1.0f, modAfter = -1.0f;
-		(void)TryGetActorValue(a_actor, av, valueAfter);
-		(void)TryGetTemporaryModifier(a_actor, av, modAfter);
-
-		// Put it straight back. This is a measurement, not a buff - leaving
-		// +500 damage resistance on a companion because a probe ran would be
-		// a gameplay change nobody asked for, and there is no timer to take
-		// it off again yet.
-		(void)TryModTemporary(a_actor, av, -kProbeAmount);
-
-		float valueReverted = -1.0f, modReverted = -1.0f;
-		(void)TryGetActorValue(a_actor, av, valueReverted);
-		(void)TryGetTemporaryModifier(a_actor, av, modReverted);
-
-		// Four numbers, and between them they settle it:
-		//   value moves      -> writing damage resistance works, build the bar
-		//   only mod moves   -> the modifier is stored but the value is
-		//                       derived from armour and perks, so it never
-		//                       reaches the damage calculation
-		//   neither moves    -> the write does not land at all
-		VATS_LOG("[dr] formID=0x{:08X} probe {:+.0f}: value {:.1f} -> {:.1f} -> {:.1f} | tempMod {:.1f} -> {:.1f} -> {:.1f}",
-			formID, kProbeAmount,
-			valueBefore, valueAfter, valueReverted,
-			modBefore, modAfter, modReverted);
-	}
-
 	void CompanionSupport::HealActor(RE::Actor* a_actor)
 	{
 		if (!a_actor) {

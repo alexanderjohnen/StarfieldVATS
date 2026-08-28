@@ -74,7 +74,7 @@ namespace VATS
 	// lowering it by the same amount is a complete buff with no magic effect
 	// and no Papyrus involved.
 	//
-	// UNPROVEN for damage resistance specifically, which is why
+	// This was UNPROVEN for damage resistance specifically, which is why
 	// TryGetTemporaryModifier exists next to TryGetActorValue. Health works
 	// because health is authoritative: you write it and that is the truth.
 	// Damage resistance may well be DERIVED - the one vanilla script that
@@ -82,6 +82,13 @@ namespace VATS
 	// derived value would either snap back or never reach the damage
 	// calculation. Reading the modifier separately from the total tells
 	// those apart: modifier stored but total unchanged means derived.
+	//
+	// SETTLED: the shield works in game, so the write is not merely stored.
+	// That leaves TryGetTemporaryModifier with NO CALLER since
+	// ProbeDamageResist was deleted (2026-08-29). Kept deliberately - it is
+	// a working accessor on a vtable slot that took measurement to
+	// establish (08) and the read-side counterpart to TryModTemporary, so
+	// re-deriving it later would cost far more than the line it occupies.
 	[[nodiscard]] bool TryGetActorValue(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float& a_out);
 	[[nodiscard]] bool TryGetTemporaryModifier(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float& a_out);
 	[[nodiscard]] bool TryModTemporary(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float a_delta);

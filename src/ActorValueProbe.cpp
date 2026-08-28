@@ -265,31 +265,6 @@ namespace VATS
 		return true;
 	}
 
-	namespace
-	{
-		// SEH-guarded so a wrong vtable slot degrades to "the shield did not
-		// apply" instead of dropping the player to the desktop mid-session.
-		//
-		// This is probe-grade armour, not a licence to guess: it is here
-		// because the previous version of this call DID crash the game, and
-		// the fix below is reasoned rather than proven. Remove it once the
-		// slot is confirmed by a run that does not fault.
-		//
-		// No objects with destructors in scope - MSVC forbids __try in a
-		// function that requires unwinding, same constraint SafeMem.cpp
-		// documents.
-		[[nodiscard]] bool SafeModActorValue(RE::ActorValueOwner* a_owner, RE::ACTOR_VALUE_MODIFIER a_mod,
-			const RE::ActorValueInfo* a_info, float a_delta, RE::TESObjectREFR* a_ref) noexcept
-		{
-			__try {
-				a_owner->ModActorValue(a_mod, *a_info, a_delta, a_ref);
-				return true;
-			} __except (1) {
-				return false;
-			}
-		}
-	}
-
 	bool TryModTemporary(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float a_delta)
 	{
 		auto* owner = ResolveVerifiedOwner(a_actor);
@@ -320,14 +295,14 @@ namespace VATS
 		// The ref is the actor itself - guaranteed valid, since its RTTI was
 		// verified moments ago - rather than nullptr, which a callee that
 		// does use the parameter might dereference.
-		if (!SafeModActorValue(owner, RE::ACTOR_VALUE_MODIFIER::kTemporary, &a_info, a_delta, a_actor)) {
-			static bool s_loggedOnce = false;
-			if (!s_loggedOnce) {
-				s_loggedOnce = true;
-				VATS_ERROR("[VATS] ModActorValue faulted - the vtable slot is wrong, shield disabled for this session");
-			}
-			return false;
-		}
+		//
+		// CONFIRMED IN GAME 2026-08-29, which is why this is a plain call
+		// again: it was SEH-guarded while the reasoning above was only
+		// reasoning. A run that applied the shield three times over a real
+		// companion (0s -> 30s -> 57s -> 86s, item 10 -> 7, then expiry)
+		// produced no fault and no warning of any kind. The guard was probe
+		// armour for an unproven slot and had nothing left to catch.
+		owner->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, a_info, a_delta, a_actor);  // slot 06
 		return true;
 	}
 
