@@ -428,3 +428,43 @@ Nebenwirkung, gleich mitbehandelt: mit aktivierten Dateifunktionen legt
 ImGui von sich aus `imgui.ini` und `imgui_log.txt` an. In einem
 Spielverzeichnis hat eine Mod das nicht zu tun, also setzt `D3DHook.cpp`
 direkt nach `CreateContext` beide auf `nullptr`.
+
+### BEHOBEN (2026-08-28)
+
+Ursache war das ImGui-DX11-Backend, nicht der 11on12-Wrap. Die drei
+Puffer (Vertex, Index, Constant) waren `D3D11_USAGE_DYNAMIC` und wurden
+pro Bild mit `Map(D3D11_MAP_WRITE_DISCARD)` neu befuellt. Auf einem
+normalen D3D11-Geraet ist das genau richtig: `DISCARD` liefert eine
+frisch umbenannte Allokation, damit die CPU nie auf die GPU wartet — und
+**dieser Vorrat wird bei `Present` eingesammelt.**
+
+Dieses Overlay macht nie ein `Present`. Es zeichnet auf einem
+D3D11On12-Geraet, dessen Arbeit per `Flush()` aus dem *D3D12*-Present-Hook
+des Spiels abgeschickt wird. Die D3D11-Seite sieht also nie eine
+Bildgrenze, und der Vorrat wuchs unbegrenzt.
+
+Der entscheidende Hinweis war, dass es in der Starmap mit **voller Rate**
+leckte, wo `Overlay::Draw` zurueckkehrt, bevor ein einziger Vertex
+entsteht: alle drei `Map`-Aufrufe liefen trotzdem. Es hing also am
+Umbenennen, nicht am Zeichnen.
+
+Fix: die drei Puffer sind jetzt `D3D11_USAGE_DEFAULT` und werden mit
+`UpdateSubresource` gefuellt — ein Aufruf pro Command-List, adressiert
+ueber eine `D3D11_BOX`, damit jede Liste an ihren eigenen Offset kommt.
+Keine CPU-Zwischenkopie, und nichts, was die Befehlsliste ueberlebt, in
+die es geschrieben wurde. Die Aenderung steht in
+`lib/imgui/imgui_impl_dx11.cpp` (eingebunden, daher aenderbar) und ist
+dort ausfuehrlich kommentiert.
+
+Nachgemessen, gleiche Szenen wie bei der Eingrenzung:
+
+| Phase | vorher | nachher |
+|---|---|---|
+| Starmap, leerer Zeichenpfad, 3,25 min | +6.700 MB | **−9,9 MB** |
+| Dungeon-Kampf mit voller HUD, 4,5 min | +9.300 MB | **−265 MB** |
+
+Der Starmap-Lauf lief bewusst mit `bSkipEmptyFrames=0`, sonst haette die
+Entschaerfung vom Vortag den Zeichenpfad gar nicht erst erreicht und ein
+kaputter Fix haette genauso flach ausgesehen. Beide Schalter
+(`iOverlayStage`, `bSkipEmptyFrames`) bleiben im Code — als Leiter, falls
+im Renderpfad je wieder etwas zu suchen ist.
