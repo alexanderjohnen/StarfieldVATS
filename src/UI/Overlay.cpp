@@ -795,9 +795,12 @@ namespace VATS::UI
 				// costs one comparison and removes the moment of doubt about
 				// whether healing a body on the floor does anything at all.
 				HealthReading hp{};
-				const bool    down = GetActorHealth(state.actor.get(), hp) && hp.current <= 0.0f;
+				const bool    haveHp = GetActorHealth(state.actor.get(), hp);
+				const bool    down = haveHp && hp.current <= 0.0f;
 				char prompt[32];
-				std::snprintf(prompt, sizeof(prompt), down ? "REVIVE (%s)" : "HEAL (%s)", keyLabel);
+				const bool full = hp.max > 0.0f && hp.current >= hp.max - 0.5f;
+				std::snprintf(prompt, sizeof(prompt),
+					down ? "REVIVE (%s)" : (full ? "SHIELD (%s)" : "HEAL (%s)"), keyLabel);
 
 				// Second line, because a key that does two things has to say so.
 				// Without it "hold to leave" is a piece of knowledge that exists

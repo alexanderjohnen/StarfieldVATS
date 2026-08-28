@@ -245,6 +245,40 @@ namespace VATS
 		return true;
 	}
 
+	bool TryGetActorValue(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float& a_out)
+	{
+		auto* owner = ResolveVerifiedOwner(a_actor);
+		if (!owner) {
+			return false;
+		}
+		a_out = owner->GetActorValue(a_info);  // slot 01
+		return true;
+	}
+
+	bool TryGetTemporaryModifier(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float& a_out)
+	{
+		auto* owner = ResolveVerifiedOwner(a_actor);
+		if (!owner) {
+			return false;
+		}
+		a_out = owner->GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, a_info);  // slot 08
+		return true;
+	}
+
+	bool TryModTemporary(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float a_delta)
+	{
+		auto* owner = ResolveVerifiedOwner(a_actor);
+		if (!owner) {
+			return false;
+		}
+		// The two-argument overload, vtable slot 07. Slot 06 is a newer
+		// variant taking an extra TESObjectREFR* - picking the wrong one
+		// would dispatch through the wrong slot entirely, so the argument
+		// list here is load-bearing, not stylistic.
+		owner->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, a_info, a_delta);
+		return true;
+	}
+
 	bool TryRestoreHealth(RE::Actor* a_actor, float a_amount)
 	{
 		if (!(a_amount > 0.0f)) {

@@ -65,4 +65,24 @@ namespace VATS
 	// would hand the engine a structure of the wrong shape. See
 	// docs/FINDINGS.md.
 	[[nodiscard]] bool TryRestoreHealth(RE::Actor* a_actor, float a_amount);
+
+	// Read any actor value, and read or change its TEMPORARY modifier -
+	// all through the same RTTI-verified sub-object as the two above.
+	//
+	// Why the temporary modifier and not a plain write: it is the engine own
+	// mechanism for "this value is raised for a while", so raising and later
+	// lowering it by the same amount is a complete buff with no magic effect
+	// and no Papyrus involved.
+	//
+	// UNPROVEN for damage resistance specifically, which is why
+	// TryGetTemporaryModifier exists next to TryGetActorValue. Health works
+	// because health is authoritative: you write it and that is the truth.
+	// Damage resistance may well be DERIVED - the one vanilla script that
+	// changes it does so with AddPerk, never by touching the value - and a
+	// derived value would either snap back or never reach the damage
+	// calculation. Reading the modifier separately from the total tells
+	// those apart: modifier stored but total unchanged means derived.
+	[[nodiscard]] bool TryGetActorValue(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float& a_out);
+	[[nodiscard]] bool TryGetTemporaryModifier(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float& a_out);
+	[[nodiscard]] bool TryModTemporary(RE::Actor* a_actor, const RE::ActorValueInfo& a_info, float a_delta);
 }
