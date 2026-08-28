@@ -26,10 +26,11 @@ namespace VATS
 	// inventory by the probe on 2026-08-28, all form type 54. See
 	// docs/FINDINGS.md.
 	//
-	// Red Amp is the one entry whose STATS are unverified - it was in the
-	// unreliable source and absent from the better one, though the item
-	// itself is confirmed to exist. Blend is deliberately absent: it is a
-	// drink, not an aid item.
+	// Red Amp stats are now confirmed from the in-game item card itself
+	// (+400 damage resistance for 3m, alongside melee, speed and jump
+	// bonuses we ignore): 400 x 180 = 72,000, so 145s rather than the 95s
+	// the unreliable source implied with a 120s duration. Blend is
+	// deliberately absent: it is a drink, not an aid item.
 	//
 	// The numbers are deliberately NOT the game's own:
 	//
@@ -78,9 +79,9 @@ namespace VATS
 		{ 0x00122E9C, "Hypergiant Heart",        0.0f, 300.0f },  // 500 DR x 300s
 		{ 0x00122EA3, "Giant Heart",             0.0f, 210.0f },  // 350 DR x 300s
 		{ 0x002A5024, "Battlestim",              0.0f, 150.0f },  // 250 DR x 300s
+		{ 0x001F3E86, "Red Amp",                 0.0f, 145.0f },  // 400 DR x 180s
 		{ 0x0029A849, "Boudicca",                0.0f, 110.0f },  // 300 DR x 180s
 		{ 0x002C587F, "Red Trench",              0.0f, 110.0f },  // 300 DR x 180s
-		{ 0x001F3E86, "Red Amp",                 0.0f,  95.0f },  // 400 DR x 120s - STATS UNVERIFIED
 		{ 0x0003D3AB, "Heal Gel",                0.0f,  90.0f },  // 150 DR x 300s
 		{ 0x0029CAD9, "Heart+",                  0.0f,  50.0f },  // 200 DR x 120s
 		{ 0x000C1F57, "Alien Genetic Material",  0.0f,  30.0f },  // 500 DR x  30s
