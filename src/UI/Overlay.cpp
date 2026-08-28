@@ -661,6 +661,31 @@ namespace VATS::UI
 
 		const auto state = Controller::Get().GetOverlayState();
 
+		// A running shield needs to be visible while the player is off
+		// FIGHTING, which is the whole reason it keeps ticking after the
+		// session that granted it closed. The arc cannot do that job: it is
+		// drawn inside DrawIfVisible, which only runs while a session or a
+		// lock is open, so the moment you leave to go and use the shield it
+		// disappears - Alexander asked exactly the right question about this.
+		//
+		// A readout rather than an arc on the companion, because the
+		// companion is regularly off screen (behind you, next room) and that
+		// is precisely when "twelve seconds left, top them up" matters. Only
+		// while no support session is open, since the arc already says it
+		// there and better.
+		{
+			const auto shield = CompanionShield::Get().GetState();
+			if (shield.remaining > 0.0f && state.mode != VATSMode::kSupport) {
+				char readout[24];
+				std::snprintf(readout, sizeof(readout), "SHIELD %.0fs", shield.remaining);
+				const auto& io = ImGui::GetIO();
+				DrawCenteredText(ImGui::GetForegroundDrawList(),
+					io.DisplaySize.x * 0.5f,
+					io.DisplaySize.y * 0.62f,
+					readout, kSupportColor);
+			}
+		}
+
 		// The unconditional "VATS: OFF/LOCKED" corner readout was removed
 		// 2026-08-25. It was added as a diagnostic on 2026-08-22 to settle
 		// an investigation where the game's own dev console lagged a line
