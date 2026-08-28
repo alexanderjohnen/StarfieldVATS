@@ -73,7 +73,7 @@ namespace VATS
 					// once the real cause is confirmed.
 					const bool     hasFocus = GameWindowHasFocus();
 					const VATSMode mode = Controller::Get().GetMode();
-					const bool     shouldSwallow = hasFocus && mode == VATSMode::kLocked;
+					const bool     shouldSwallow = hasFocus && mode != VATSMode::kOff;
 					// Signalled, not dispatched (2026-08-27). Spawning a
 					// std::thread is itself real work - a kernel thread
 					// create plus a stack commit - and it happened here, in
@@ -84,7 +84,7 @@ namespace VATS
 					// every 5ms and can do both the log and the ForceOff off
 					// the input path, with no thread per keystroke.
 					s_pendingHasFocus.store(hasFocus, std::memory_order_relaxed);
-					s_pendingLocked.store(mode == VATSMode::kLocked, std::memory_order_relaxed);
+					s_pendingLocked.store(mode != VATSMode::kOff, std::memory_order_relaxed);
 					s_pendingSwallow.store(shouldSwallow, std::memory_order_relaxed);
 					s_pendingBackKey.store(true, std::memory_order_relaxed);
 					if (shouldSwallow) {

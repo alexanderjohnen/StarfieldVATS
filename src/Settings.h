@@ -414,11 +414,6 @@ namespace VATS
 
 		// --- Support (Aspekt 1: Begleiter heilen) ---
 
-		// Virtual-key code of the support key. Held on a companion under the
-		// crosshair, it heals them. Default 0x48 = H, which Starfield does not
-		// bind by default - but check your own keybinds, this is not read from
-		// the game.
-		std::uint32_t supportKeyVK{ 0x48 };
 
 		// How much health one press restores. Goes through the engine own
 		// RestoreActorValue, the same path a stimpack takes, so it is capped

@@ -40,6 +40,12 @@ namespace VATS::UI
 		// letting anything through it.
 		constexpr ImU32 kAimColor = IM_COL32(186, 202, 208, 245);
 
+		// Support sessions get their own colour for one reason: at a glance,
+		// the player must never confuse "I am about to help this person" with
+		// "I am about to shoot this person". Green reads as friendly against
+		// the scanner own blue-white lettering without competing with it.
+		constexpr ImU32 kSupportColor = IM_COL32(120, 235, 150, 240);
+
 		// Dark outline drawn under every white stroke. Without it the box
 		// reads fine against dark backdrops but vanishes completely against
 		// Starfield's bright station-interior surfaces (confirmed in-game
@@ -631,15 +637,24 @@ namespace VATS::UI
 		// that. See starfield-vats-mod-design memory, 2026-08-22.
 		static auto                     s_lastScan = std::chrono::steady_clock::time_point{};
 		static RE::NiPointer<RE::Actor> s_cachedPick;
+		static RE::NiPointer<RE::Actor> s_cachedFriend;
 
 		if (state.mode == VATSMode::kOff) {
 			const auto now = std::chrono::steady_clock::now();
 			if (now - s_lastScan >= kAimScanInterval) {
 				s_lastScan = now;
 				s_cachedPick = GetCrosshairActivationTarget();
+				// The friendly half of the same pick. Resolved alongside
+				// rather than instead of, because the hint below has to tell
+				// the player WHICH of the two things the button will do -
+				// otherwise pointing at a companion looks identical to
+				// pointing at nothing, and the support feature is invisible
+				// until someone presses the key on a guess.
+				s_cachedFriend = s_cachedPick ? nullptr : GetCrosshairTeammate();
 			}
 		} else {
 			s_cachedPick = nullptr;
+			s_cachedFriend = nullptr;
 		}
 
 		// Is the hand scanner ("MonocleMenu" — data\interface\monoclemenu.swf
@@ -680,11 +695,13 @@ namespace VATS::UI
 		// it scales with any resolution.
 		if (isScanning && state.mode == VATSMode::kOff) {
 			float sx = 0.0f, sy = 0.0f, dist = 0.0f;
-			if (s_cachedPick && ResolveOnScreen(s_cachedPick.get(), sx, sy, dist)) {
+			RE::Actor* hintActor = s_cachedPick ? s_cachedPick.get() : s_cachedFriend.get();
+			const bool  hintIsFriend = !s_cachedPick && s_cachedFriend;
+			if (hintActor && ResolveOnScreen(hintActor, sx, sy, dist)) {
 				char keyLabel[8];
 				VKToDisplayLabel(Settings::Get().activationKeyVK, keyLabel);
 				char hint[32];
-				std::snprintf(hint, sizeof(hint), "TARGETING (%s)", keyLabel);
+				std::snprintf(hint, sizeof(hint), hintIsFriend ? "SUPPORT (%s)" : "TARGETING (%s)", keyLabel);
 				const auto& io = ImGui::GetIO();
 				auto*       dl = ImGui::GetForegroundDrawList();
 				auto*       font = ImGui::GetFont();
@@ -736,6 +753,27 @@ namespace VATS::UI
 			// per second and buried everything else in the log. The line
 			// carried no information anyway: Controller already logs every
 			// LOCKED and OFF transition.
+			return;
+		}
+
+		if (state.mode == VATSMode::kSupport) {
+			// Support sessions share the marker and the health readout with a
+			// combat lock, and nothing else. Everything below this branch is
+			// wrong for a companion: the VATS bar must not be billed for
+			// helping someone, the projectile override must not touch the
+			// weapon, and the death check would end the session by hopping to
+			// the "next target", which is a combat idea.
+			//
+			// The bar still refills, same as when off - a support session is
+			// not a VATS lock and should not cost the player one.
+			VatsResource::Get().TickIdle();
+
+			if (!state.actor) {
+				Controller::Get().ForceOff("support target gone");
+				return;
+			}
+
+			DrawIfVisible(state.actor.get(), "SUPPORT", kSupportColor, /*a_showValue*/ true);
 			return;
 		}
 

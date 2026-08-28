@@ -2,6 +2,7 @@
 
 #include "CombatHudVisibility.h"
 #include "CombatTargetOverride.h"
+#include "CompanionSupport.h"
 #include "CrosshairVisibility.h"
 #include "DamageNumbersVisibility.h"
 #include "EngineInputLayer.h"
@@ -126,6 +127,29 @@ namespace VATS
 			const std::uint32_t vk = Settings::Get().scannerToggleKeyVK;
 			VATS_LOG("[VATS] scanner-close attempt {}/{}, vk=0x{:X}", a_attempt, kMaxScannerCloseAttempts, vk);
 			std::thread(ScannerCloseAttemptWorker, a_attempt, vk).detach();
+		}
+
+		// Shared by both things a press can start - a combat lock and a
+		// support session. Extracted 2026-08-28 rather than copied: the
+		// keypress path below carries hard-won ordering (see
+		// CloseScannerIfOpen above) that must not exist in two places.
+		void CloseScannerPerSetting()
+		{
+			switch (Settings::Get().scannerCloseMode) {
+			case 1:
+				VATS_LOG("[VATS] closing scanner via simulated key press");
+				CloseScannerIfOpen(1);
+				break;
+			case 2:
+				VATS_LOG("[VATS] closing scanner via UIMessageQueue kHide");
+				if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
+					queue->AddMessage("MonocleMenu", RE::UI_MESSAGE_TYPE::kHide);
+				}
+				break;
+			default:
+				VATS_LOG("[VATS] leaving scanner open (iScannerCloseMode=0)");
+				break;
+			}
 		}
 	}
 
@@ -353,6 +377,30 @@ namespace VATS
 		const VATSMode current = m_mode.load(std::memory_order_relaxed);
 		auto*          console = RE::ConsoleLog::GetSingleton();
 
+		if (current == VATSMode::kSupport) {
+			// Already in a support session: this press performs the
+			// highlighted action. With a single action there is nothing to
+			// highlight yet, so it heals; when there is more than one, this is
+			// where "confirm the selection" goes and cycling gets its own key.
+			//
+			// The session deliberately does NOT end here. Healing a companion
+			// mid-fight is something you do repeatedly, and making the same
+			// button both act and exit would mean re-acquiring them through
+			// the scanner between every press. Leaving is the back key or ADS,
+			// same as a combat lock.
+			RE::NiPointer<RE::Actor> friendTarget;
+			{
+				const std::scoped_lock lock(m_targetLock);
+				friendTarget = m_target;
+			}
+			if (!friendTarget) {
+				ForceOff("support target vanished");
+				return;
+			}
+			CompanionSupport::HealActor(friendTarget.get());
+			return;
+		}
+
 		if (current == VATSMode::kOff) {
 			// Off -> Locked requires the hand scanner to actually be open —
 			// otherwise the hotkey could lock onto something anywhere, with
@@ -377,6 +425,24 @@ namespace VATS
 
 			RE::NiPointer<RE::Actor> lockTarget = GetCrosshairActivationTarget();
 			if (!lockTarget) {
+				// Nothing hostile there - but the same pick may well have
+				// landed on one of the player own people, which
+				// GetCrosshairActivationTarget throws away by design. That is
+				// the support case, and it takes over the same press.
+				if (auto teammate = GetCrosshairTeammate()) {
+					const std::uint32_t friendID = teammate->GetFormID();
+					{
+						const std::scoped_lock lock(m_targetLock);
+						m_target = teammate;
+					}
+					m_mode.store(VATSMode::kSupport, std::memory_order_relaxed);
+					VATS_LOG("[VATS] SUPPORT | companion formID=0x{:08X}", friendID);
+					if (console) {
+						console->Log("[VATS] SUPPORT | companion formID=0x{:08X}", friendID);
+					}
+					CloseScannerPerSetting();
+					return;
+				}
 				VATS_LOG("[VATS] ignored (nothing under crosshair)");
 				return;
 			}
@@ -469,21 +535,7 @@ namespace VATS
 			// TabMenuMaybe is evidently a much broader flag than its name
 			// suggests - don't re-enable without first confirming exactly
 			// what it does and does not gate.
-			switch (Settings::Get().scannerCloseMode) {
-			case 1:
-				VATS_LOG("[VATS] closing scanner via simulated key press");
-				CloseScannerIfOpen(1);
-				break;
-			case 2:
-				VATS_LOG("[VATS] closing scanner via UIMessageQueue kHide");
-				if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
-					queue->AddMessage("MonocleMenu", RE::UI_MESSAGE_TYPE::kHide);
-				}
-				break;
-			default:
-				VATS_LOG("[VATS] leaving scanner open (iScannerCloseMode=0)");
-				break;
-			}
+			CloseScannerPerSetting();
 			return;
 		}
 

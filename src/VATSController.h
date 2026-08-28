@@ -20,6 +20,22 @@ namespace VATS
 	{
 		kOff,
 		kLocked,
+
+		// Same button, same scanner, same crosshair pick - but the thing
+		// under it is one of the player own people. Aiming a VATS lock at a
+		// companion was always going to be either a no-op or a mistake, so
+		// that press means something else instead: support.
+		//
+		// Going through the scanner rather than a key of its own is
+		// Alexander design and it pays for itself twice - the scanner
+		// extends the crosshair pick well past interaction range (confirmed
+		// ~17m+ through cover, 2026-08-22), and there is no second keybind
+		// to explain or collide with.
+		//
+		// Deliberately a MODE and not a one-shot heal, even though healing is
+		// currently the only action: this is the skeleton the menu grows
+		// into. With one entry, pressing again simply performs it.
+		kSupport,
 	};
 
 	class Controller

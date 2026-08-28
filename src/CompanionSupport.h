@@ -38,14 +38,15 @@ namespace VATS
 	class CompanionSupport
 	{
 	public:
-		// Called from the hotkey thread. Queues the real work onto the game
-		// thread and returns immediately - this project has crashed once
-		// already from touching engine state off-thread, so the write never
-		// happens on the caller's thread.
-		static void RequestHeal();
-
-	private:
-		// Runs on the game thread only.
-		static void HealCrosshairTeammate();
+		// Heals a_actor. MUST be called on the game thread - Advance() already
+		// runs there, having been queued by RequestAdvance(). This project has
+		// crashed once from touching engine state off-thread, and this is the
+		// first engine call here that WRITES, so the rule is not negotiable.
+		//
+		// Logs health before and after, which is what makes a press a
+		// measurement: if the two are equal, RestoreActorValue does not do
+		// what its name says on this build, and that is worth learning
+		// immediately rather than inferring from a health bar.
+		static void HealActor(RE::Actor* a_actor);
 	};
 }

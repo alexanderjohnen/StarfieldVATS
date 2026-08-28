@@ -53,7 +53,7 @@ namespace VATS
 				const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(a_lParam);
 				const bool  injected = (info->flags & LLMHF_INJECTED) != 0;
 				if (!injected && Settings::Get().endLockOnAds &&
-					Controller::Get().GetMode() == VATSMode::kLocked &&
+					Controller::Get().GetMode() != VATSMode::kOff &&
 					MatchesConfiguredButton(a_wParam, info, Settings::Get().adsButtonVK)) {
 					// Signal only. Everything this used to do inline - a
 					// VATS_LOG (blocking file I/O) and ForceOff (which
