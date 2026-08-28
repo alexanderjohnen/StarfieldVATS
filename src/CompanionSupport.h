@@ -65,6 +65,12 @@ namespace VATS
 		// Delete once answered.
 		static void ProbeDamageResist(RE::Actor* a_actor);
 
+		// Spends a buff item on a_actor, adding its worth to the shield. Runs
+		// on a tap at full health, where healing has nothing to do - which is
+		// the shape Alexander asked for: a healthy companion turns the prompt
+		// into a buff. Game thread only.
+		static void ShieldActor(RE::Actor* a_actor);
+
 		// Called from the keyboard-hook pump thread. Queues the real work onto
 		// the game thread and returns at once - the engine call must never run
 		// on an input thread.

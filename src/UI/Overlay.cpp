@@ -8,6 +8,7 @@
 #include "Settings.h"
 #include "Targeting.h"
 #include "VATSController.h"
+#include "CompanionShield.h"
 #include "VatsResource.h"
 
 #include "RE/U/UI.h"
@@ -212,6 +213,21 @@ namespace VATS::UI
 		// colour, so the two read as "the target's" and "mine" at a glance
 		// instead of competing. Turns amber as it runs low, since running
 		// dry ends the lock outright and that is worth seeing coming.
+		// The companion shield arc. Sits OUTSIDE the other two rather than
+		// sharing their radius, because it is the odd one out: the health and
+		// resource gauges both describe the thing in the middle of the ring,
+		// while this describes a buff the player put there. Same top half as
+		// the resource arc so it reads as "mine", one ring further out so it
+		// never collides with it.
+		void DrawShieldArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_remaining, float a_capacity, float a_scale)
+		{
+			const float frac = a_capacity > 0.0f ? std::clamp(a_remaining / a_capacity, 0.0f, 1.0f) : 0.0f;
+			const float thickness = std::max(2.0f, 3.0f * a_scale);
+			const float radius = GaugeRadius(a_ringRadius, a_scale) + std::max(4.0f, 6.0f * a_scale);
+			DrawArcGauge(a_dl, a_cx, a_cy, radius, kPi, 2.0f * kPi, frac,
+				IM_COL32(14, 30, 20, 210), kSupportColor, thickness);
+		}
+
 		void DrawResourceArc(ImDrawList* a_dl, float a_cx, float a_cy, float a_ringRadius, float a_current, float a_capacity, float a_scale)
 		{
 			const float frac = a_capacity > 0.0f ? std::clamp(a_current / a_capacity, 0.0f, 1.0f) : 0.0f;
@@ -547,11 +563,35 @@ namespace VATS::UI
 			if (Settings::Get().vatsResourceEnabled && resource.capacity > 0.0f) {
 				DrawResourceArc(dl, px, py, radius, resource.current, resource.capacity, hudScale);
 			}
+
+			// Only on the actor who actually carries it. Drawing a companion
+			// shield around an enemy ring during a combat lock would put a
+			// number on the wrong person.
+			const auto shield = CompanionShield::Get().GetState();
+			if (shield.remaining > 0.0f && shield.actor && shield.actor.get() == a_actor) {
+				DrawShieldArc(dl, px, py, radius, shield.remaining, shield.capacity, hudScale);
+			}
 		}
 	}
 
 	void Draw()
 	{
+		// The shield ticks FIRST, before any of the early returns below.
+		// Its whole point is that it runs while the player is off fighting,
+		// so it must not depend on a support session being open, on a lock
+		// being held, or on no menu being up. This is the only per-frame
+		// callback the mod has, so it is where the clock lives.
+		{
+			static auto s_lastTick = std::chrono::steady_clock::now();
+			const auto  now = std::chrono::steady_clock::now();
+			const float dt = std::chrono::duration<float>(now - s_lastTick).count();
+			s_lastTick = now;
+			// A loading screen or an alt-tab can leave a gap of many seconds
+			// between frames; clamping stops one of those from eating a whole
+			// shield in a single step.
+			CompanionShield::Get().Tick(std::min(dt, 0.5f));
+		}
+
 		// A menu or transition that takes the player out of normal
 		// crosshair-aiming gameplay should actually END an active lock, not
 		// just hide the overlay — a hidden-but-still-Locked state was found

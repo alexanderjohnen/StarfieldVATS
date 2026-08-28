@@ -417,6 +417,21 @@ namespace VATS
 		// be mistaken for one, short enough not to feel like a wait.
 		std::uint32_t holdToCancelMs{ 400 };
 
+		// --- Support: the damage-resistance shield ---
+
+		// How much resistance one shield grants, applied to all three of
+		// Starfield own types at once. 500 is the top of the range the game
+		// own aid items occupy (they run 60 to 500), so it cannot be absurd
+		// by the game standards, and companions need it.
+		float shieldDamageResist{ 500.0f };
+
+		// Ceiling on stored shield time. Items add to it (see AidItems.h for
+		// what each is worth) and stop at this. 300s is chosen so the rarest
+		// item, Hypergiant Heart, fills the bar in one go while everything
+		// else has to be topped up - which is where the actual decision
+		// lives: spend now, or save it.
+		float shieldMaxSeconds{ 300.0f };
+
 		// --- Support (Aspekt 1: Begleiter heilen) ---
 
 

@@ -5,6 +5,7 @@
 #include "HealthReader.h"
 #include "SafeMem.h"
 #include "AidItems.h"
+#include "CompanionShield.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -224,6 +225,53 @@ namespace VATS
 		}
 	}
 
+	void CompanionSupport::ShieldActor(RE::Actor* a_actor)
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		// Weakest first, same rule as healing: the long items keep for when
+		// they are needed, and it also happens to waste the least against
+		// the cap - a 300s item spent with 250s already banked throws most
+		// of itself away.
+		const AidItem*      item = nullptr;
+		RE::TESBoundObject* object = nullptr;
+		ForEachInventoryItemEntry(player, [&](const std::byte*, RE::TESBoundObject* a_object, std::uint32_t a_formID) {
+			const auto* entry = FindAidItem(a_formID);
+			if (!entry || entry->shieldSeconds <= 0.0f) {
+				return;
+			}
+			if (!item || entry->shieldSeconds < item->shieldSeconds) {
+				item = entry;
+				object = a_object;
+			}
+			});
+
+		if (!item || !object) {
+			VATS_LOG("[shield] no buff item in inventory - nothing spent");
+			return;
+		}
+
+		const auto before = CompanionShield::Get().GetState();
+		if (before.remaining >= Settings::Get().shieldMaxSeconds - 0.5f) {
+			VATS_LOG("[shield] already full ({:.0f}s) - not spending {}", before.remaining, item->name);
+			return;
+		}
+
+		const int countBefore = CountUnits(player, item->formID);
+		CompanionShield::Get().Add(a_actor, item->shieldSeconds);
+		SpendItem(player, object);
+		const int countAfter = CountUnits(player, item->formID);
+
+		const auto after = CompanionShield::Get().GetState();
+		VATS_LOG("[shield] formID=0x{:08X} +{:.0f}s from {}: {:.0f}s -> {:.0f}s of {:.0f}s | item units {} -> {}",
+			a_actor->GetFormID(), item->shieldSeconds, item->name,
+			before.remaining, after.remaining, after.capacity,
+			countBefore, countAfter);
+	}
+
 	void CompanionSupport::ProbeDamageResist(RE::Actor* a_actor)
 	{
 		auto* avList = RE::ActorValue::GetSingleton();
@@ -291,7 +339,7 @@ namespace VATS
 		{
 			HealthReading hp{};
 			if (GetActorHealth(a_actor, hp) && hp.max > 0.0f && hp.current >= hp.max - 0.5f) {
-				ProbeDamageResist(a_actor);
+				ShieldActor(a_actor);
 				return;
 			}
 		}
