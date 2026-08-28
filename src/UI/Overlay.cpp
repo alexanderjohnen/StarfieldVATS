@@ -683,15 +683,30 @@ namespace VATS::UI
 		// is precisely when "twelve seconds left, top them up" matters. Only
 		// while no support session is open, since the arc already says it
 		// there and better.
+		//
+		// SCANNER ONLY since 2026-08-29, Alexander's call after seeing it in
+		// play: floating over the middle of the view during normal movement
+		// it read as clutter, not as information. Note what this trades away
+		// on purpose - the paragraph above wanted it visible WHILE FIGHTING,
+		// and now it is not. Checking the timer becomes deliberate: raise
+		// the scanner, which is the same gesture that grants the shield in
+		// the first place, so the information sits where the action does.
+		// If that ever feels like one gesture too many, the fix is a second
+		// condition here, not moving it back to the middle of the screen.
 		{
 			const auto shield = CompanionShield::Get().GetState();
-			if (shield.remaining > 0.0f && state.mode != VATSMode::kSupport) {
-				char readout[24];
-				std::snprintf(readout, sizeof(readout), "SHIELD %.0fs", shield.remaining);
+			auto*      ui = RE::UI::GetSingleton();
+			const bool scannerOpen = ui && ui->IsMenuOpen("MonocleMenu");
+			if (shield.remaining > 0.0f && scannerOpen && state.mode != VATSMode::kSupport) {
+				char readout[32];
+				std::snprintf(readout, sizeof(readout), "COMPANION SHIELD %.0fs", shield.remaining);
 				const auto& io = ImGui::GetIO();
+				// Horizontally centred, vertically on the lower edge of the
+				// scanner's own ring - see fShieldReadoutY on why that edge
+				// is a setting and not a constant.
 				DrawCenteredText(ImGui::GetForegroundDrawList(),
 					io.DisplaySize.x * 0.5f,
-					io.DisplaySize.y * 0.62f,
+					io.DisplaySize.y * Settings::Get().shieldReadoutY,
 					readout, kShieldColor);
 			}
 		}

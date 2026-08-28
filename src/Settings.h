@@ -343,7 +343,17 @@ namespace VATS
 		// starts making that claim again.
 		float targetMarkerRadius{ 22.0f };
 
-
+		// Vertical position of the companion-shield readout, as a fraction
+		// of screen height. 0.88 sits on the lower edge of the scanner's
+		// own ring - Alexander's placement, so the readout belongs to the
+		// scanner's furniture instead of floating over the middle of the
+		// view, where it sat at 0.62 and read as clutter.
+		//
+		// A setting rather than a constant because the ring is the GAME's,
+		// not ours: we never learn its radius, so this number was measured
+		// off a screenshot and may want nudging at another resolution or UI
+		// scale. If it ever drifts off the ring, that is the reason.
+		float shieldReadoutY{ 0.88f };
 
 		// Draws a labelled cross at each of the three candidate anchor
 		// points - the actor's own origin (feet), the raw bounding-sphere
