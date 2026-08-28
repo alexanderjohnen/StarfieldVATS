@@ -1,4 +1,4 @@
-# StarfieldVATS — Handoff (2026-08-26, evening)
+# StarfieldVATS — Handoff (2026-08-28, evening)
 
 Read this first in a new chat. Point-in-time snapshot — verify against the
 actual code and log before trusting anything here; offsets and "confirmed"
@@ -385,10 +385,10 @@ Ausgeschlossen und nicht erneut zu prüfen:
 - Der fehlschlagende HUD-Font. `ImGui_ImplDX11_NewFrame` legt die Textur
   nur an, solange `pFontSampler` leer ist, und ruft beim Wiederholen
   vorher `InvalidateDeviceObjects()`. Kann nicht pro Bild allokieren.
-  **Bleibt ein eigener, offener Fehler** (Log sagt weiterhin
-  „no TTF found", obwohl beide Pfade existieren und stimmen).
+  War zu diesem Zeitpunkt ein eigener, noch offener Fehler — inzwischen
+  behoben, siehe den Nachtrag weiter unten.
 
-### Nächster Schritt
+### Nächster Schritt (überholt — die Vermutung stimmte, siehe BEHOBEN unten)
 
 Erste Spur: `RenderDrawData` mappt Vertex- und Index-Puffer in jedem
 Bild mit `D3D11_MAP_WRITE_DISCARD` (~100 KB + ~20 KB). DISCARD heißt
