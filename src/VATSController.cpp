@@ -260,6 +260,22 @@ namespace VATS
 		});
 	}
 
+	void Controller::RequestCancel()
+	{
+		if (m_mode.load(std::memory_order_relaxed) == VATSMode::kOff) {
+			return;  // nothing open, and a hold outside VATS must stay silent
+		}
+		const auto* tasks = SFSE::GetTaskInterface();
+		if (!tasks) {
+			VATS_ERROR("task interface unavailable, cannot cancel");
+			return;
+		}
+		VATS_LOG("[hotkey] cancel requested (key held)");
+		tasks->AddTask([]() {
+			Controller::Get().ForceOff("VATS key held");
+		});
+	}
+
 	bool Controller::TryAdvanceToNextTarget()
 	{
 		const auto& settings = Settings::Get();
@@ -378,13 +394,19 @@ namespace VATS
 		auto*          console = RE::ConsoleLog::GetSingleton();
 
 		if (current == VATSMode::kSupport) {
-			// Already in a support session: the VATS key LEAVES it, exactly as
-			// it ends a combat lock. The action lives on the game own activate
-			// key instead (see Settings::supportActionKeyVK) - Alexander called
-			// this out on the first working test, and he was right: the button
-			// that opens a mode has to be the one that closes it, or there is
-			// no way out that does not also do something.
-			ForceOff("support session ended by hotkey");
+			// Already in a support session: a TAP performs the action. Leaving
+			// is a HOLD of the same key (RequestCancel), which is what lets one
+			// binding do both without swallowing anything the game wants.
+			RE::NiPointer<RE::Actor> friendTarget;
+			{
+				const std::scoped_lock lock(m_targetLock);
+				friendTarget = m_target;
+			}
+			if (!friendTarget) {
+				ForceOff("support target vanished");
+				return;
+			}
+			CompanionSupport::HealActor(friendTarget.get());
 			return;
 		}
 

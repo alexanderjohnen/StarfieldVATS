@@ -1,7 +1,6 @@
 #include "BackKeyInterceptor.h"
 
 #include "InputHookPump.h"
-#include "CompanionSupport.h"
 #include "Settings.h"
 #include "VATSController.h"
 
@@ -24,8 +23,6 @@ namespace VATS
 		std::atomic<bool> s_pendingHasFocus{ false };
 		std::atomic<bool> s_pendingLocked{ false };
 		std::atomic<bool> s_pendingSwallow{ false };
-		std::atomic<bool> s_pendingSupportAction{ false };
-		std::atomic<std::uint32_t> s_pendingSeenKey{ 0 };
 
 		[[nodiscard]] bool GameWindowHasFocus()
 		{
@@ -94,35 +91,6 @@ namespace VATS
 						return 1;  // swallow - Starfield never sees this keydown
 					}
 				}
-
-				// The support action key, handled by the SAME hook on purpose.
-				// A second system-wide keyboard hook would undo a good part of
-				// what the 2026-08-27 input work bought back - every hook sits
-				// in the input path of every application on the machine.
-				//
-				// Swallowed rather than merely observed: this is the game own
-				// activate key, and a companion is an activatable thing.
-				// Letting it through would start a conversation at the same
-				// moment we heal them. Only ever swallowed while a support
-				// session is actually open, so normal interaction is untouched
-				// the rest of the time.
-				// DIAGNOSTIC 2026-08-28: the action key produced nothing at all
-				// on its first test - no heal, no log, and the code path reads
-				// correct on inspection. So record every keydown seen WHILE a
-				// support session is open. Bounded by construction (a session
-				// lasts seconds and is entered deliberately) and it settles the
-				// first question outright: does this hook see the key at all,
-				// and under which code. Remove once answered.
-				if (Controller::Get().GetMode() == VATSMode::kSupport) {
-					s_pendingSeenKey.store(info->vkCode, std::memory_order_relaxed);
-				}
-
-				if (info->vkCode == Settings::Get().supportActionKeyVK &&
-					GameWindowHasFocus() &&
-					Controller::Get().GetMode() == VATSMode::kSupport) {
-					s_pendingSupportAction.store(true, std::memory_order_relaxed);
-					return 1;
-				}
 			}
 			return ::CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
 		}
@@ -153,18 +121,6 @@ namespace VATS
 					if (swallowed) {
 						Controller::Get().ForceOff("back key pressed");
 					}
-				}
-
-				// Same deferral as the back key: the callback only flagged it,
-				// the work happens here, off the system-wide input path.
-				if (const auto seen = s_pendingSeenKey.exchange(0, std::memory_order_relaxed)) {
-					VATS_LOG("[support] key seen during session: vk=0x{:X} (action key is 0x{:X})",
-						seen, Settings::Get().supportActionKeyVK);
-				}
-
-				if (s_pendingSupportAction.exchange(false, std::memory_order_relaxed)) {
-					VATS_LOG("[support] action key matched, dispatching to game thread");
-					CompanionSupport::RequestAction();
 				}
 			},
 			nullptr);

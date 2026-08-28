@@ -55,6 +55,11 @@ namespace VATS
 		// Thread-safe: queues the actual state advance onto the game thread.
 		void RequestAdvance();
 
+		// Leaves whatever is open - a combat lock or a support session.
+		// Bound to HOLDING the VATS key, so one key can both act and cancel
+		// without needing a second binding or swallowing a game one.
+		void RequestCancel();
+
 		[[nodiscard]] VATSMode GetMode() const { return m_mode.load(std::memory_order_relaxed); }
 
 		[[nodiscard]] OverlayState GetOverlayState();

@@ -412,18 +412,10 @@ namespace VATS
 		// and any renderer bug would read as flat. See D3DHook.cpp.
 		bool skipEmptyFrames{ true };
 
-		// Virtual-key code of the ACTIVATE key from the game settings
-		// (default 0x45 = E). While a support session is open this performs
-		// the highlighted action, and the mod swallows it so the game own
-		// activate does not fire alongside - pointing at a companion and
-		// pressing E would otherwise start a conversation while healing them.
-		//
-		// The VATS key is deliberately NOT the action key: it is needed to
-		// leave the session, exactly as it ends a combat lock. Alexander
-		// called that out on the first working test.
-		//
-		// MUST match the real keybind - this is not read from the game.
-		std::uint32_t supportActionKeyVK{ 0x45 };
+		// How long the VATS key must be held before it means cancel rather
+		// than act, in milliseconds. Long enough that a normal tap can never
+		// be mistaken for one, short enough not to feel like a wait.
+		std::uint32_t holdToCancelMs{ 400 };
 
 		// --- Support (Aspekt 1: Begleiter heilen) ---
 

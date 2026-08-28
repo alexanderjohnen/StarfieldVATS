@@ -788,7 +788,7 @@ namespace VATS::UI
 			float px = 0.0f, py = 0.0f, pdist = 0.0f;
 			if (ResolveOnScreen(state.actor.get(), px, py, pdist)) {
 				char keyLabel[8];
-				VKToDisplayLabel(Settings::Get().supportActionKeyVK, keyLabel);
+				VKToDisplayLabel(Settings::Get().activationKeyVK, keyLabel);
 
 				// A downed companion reads zero health - that is what put them
 				// down. Naming the action for what it will actually look like
@@ -798,6 +798,13 @@ namespace VATS::UI
 				const bool    down = GetActorHealth(state.actor.get(), hp) && hp.current <= 0.0f;
 				char prompt[32];
 				std::snprintf(prompt, sizeof(prompt), down ? "REVIVE (%s)" : "HEAL (%s)", keyLabel);
+
+				// Second line, because a key that does two things has to say so.
+				// Without it "hold to leave" is a piece of knowledge that exists
+				// only in the INI, and the session would look like it has no way
+				// out - which is exactly the hole the first test fell into.
+				char exitHint[40];
+				std::snprintf(exitHint, sizeof(exitHint), "HOLD %s TO EXIT", keyLabel);
 
 				const auto& io = ImGui::GetIO();
 				DrawCenteredText(ImGui::GetForegroundDrawList(),
