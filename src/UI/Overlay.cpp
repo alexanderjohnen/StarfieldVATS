@@ -688,28 +688,16 @@ namespace VATS::UI
 		// play: floating over the middle of the view during normal movement
 		// it read as clutter, not as information. Note what this trades away
 		// on purpose - the paragraph above wanted it visible WHILE FIGHTING,
-		// and now it is not. Checking the timer becomes deliberate: raise
-		// the scanner, which is the same gesture that grants the shield in
-		// the first place, so the information sits where the action does.
-		// If that ever feels like one gesture too many, the fix is a second
-		// condition here, not moving it back to the middle of the screen.
-		{
-			const auto shield = CompanionShield::Get().GetState();
-			auto*      ui = RE::UI::GetSingleton();
-			const bool scannerOpen = ui && ui->IsMenuOpen("MonocleMenu");
-			if (shield.remaining > 0.0f && scannerOpen && state.mode != VATSMode::kSupport) {
-				char readout[32];
-				std::snprintf(readout, sizeof(readout), "COMPANION SHIELD %.0fs", shield.remaining);
-				const auto& io = ImGui::GetIO();
-				// Horizontally centred, vertically on the lower edge of the
-				// scanner's own ring - see fShieldReadoutY on why that edge
-				// is a setting and not a constant.
-				DrawCenteredText(ImGui::GetForegroundDrawList(),
-					io.DisplaySize.x * 0.5f,
-					io.DisplaySize.y * Settings::Get().shieldReadoutY,
-					readout, kShieldColor);
-			}
-		}
+		// and now it is not. Checking becomes deliberate: raise the scanner,
+		// which is the same gesture that grants the shield in the first
+		// place, so the information sits where the action does.
+		//
+		// It grew into a full companion status line the same day. The shield
+		// timer alone answered "how long left" but never "does anyone need
+		// me", which is the question you actually raise the scanner to ask -
+		// and health is the half that answers it. So the line leads with
+		// health and appends the shield only when one is running. Drawn
+		// below, after isScanning is resolved.
 
 		// The unconditional "VATS: OFF/LOCKED" corner readout was removed
 		// 2026-08-25. It was added as a diagnostic on 2026-08-22 to settle
@@ -769,6 +757,86 @@ namespace VATS::UI
 		bool isScanning = false;
 		if (auto* ui = RE::UI::GetSingleton()) {
 			isScanning = ui->IsMenuOpen("MonocleMenu");
+		}
+
+		// Companion status line(s) - see the long note further up on why
+		// this is scanner-only and why it leads with health.
+		//
+		// Nothing is drawn when the player has no companion, which is not
+		// merely tidiness: the absence of the line is itself the answer to
+		// "is anyone with me". A permanent zero row would say the same
+		// thing far more loudly and take up the same space forever.
+		//
+		// Suppressed during a support session, where the arcs on the
+		// companion say all of this better and in place.
+		if (isScanning && state.mode != VATSMode::kSupport) {
+			// FOUR, because vanilla Starfield allows exactly one companion
+			// and Alexander runs mods that lift that. One is the common
+			// case and this costs nothing extra for it; four is a readable
+			// stack rather than a wall of text. A fifth companion is simply
+			// not listed - deliberately silent, since a truncation notice
+			// would be a line of clutter to report clutter.
+			constexpr std::size_t          kMaxListed = 4;
+			RE::NiPointer<RE::Actor>       teammates[kMaxListed]{};
+			static auto                    s_lastTeammateScan = std::chrono::steady_clock::time_point{};
+			static std::size_t             s_teammateCount = 0;
+			static RE::NiPointer<RE::Actor> s_teammates[kMaxListed]{};
+
+			// Throttled: FindTeammates walks the whole cell reference list,
+			// which runs to thousands of entries. At 60fps that is a scan
+			// per frame for a readout whose numbers a player reads once a
+			// second at most. kAimScanInterval is the interval the
+			// crosshair pick above already uses, for the same reason.
+			const auto now = std::chrono::steady_clock::now();
+			if (now - s_lastTeammateScan >= kAimScanInterval) {
+				s_lastTeammateScan = now;
+				s_teammateCount = FindTeammates(teammates, kMaxListed);
+				for (std::size_t i = 0; i < kMaxListed; ++i) {
+					s_teammates[i] = (i < s_teammateCount) ? teammates[i] : nullptr;
+				}
+			}
+
+			const auto  shield = CompanionShield::Get().GetState();
+			const auto& io = ImGui::GetIO();
+			const float baseY = io.DisplaySize.y * Settings::Get().shieldReadoutY;
+			const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+
+			// Stacked UPWARD from the ring's lower edge. Downward would run
+			// straight into the scanner's own button prompts along the
+			// bottom of the screen; upward grows into empty space inside
+			// the ring. With one companion - the vanilla case - the line
+			// lands exactly where the shield readout used to.
+			for (std::size_t i = 0; i < s_teammateCount; ++i) {
+				auto* mate = s_teammates[i].get();
+				if (!mate) {
+					continue;
+				}
+
+				HealthReading hp{};
+				char          readout[64];
+				// A downed companion reads zero health, and "0%" understates
+				// that badly - it looks like a rounding artefact next to a
+				// companion at 2%. DOWN is the word the support prompt uses
+				// for the same state, so the two agree.
+				if (!GetActorHealth(mate, hp) || hp.max <= 0.0f) {
+					continue;
+				}
+				const int pct = static_cast<int>((hp.current / hp.max) * 100.0f + 0.5f);
+				const bool holdsShield = shield.remaining > 0.0f && shield.actor.get() == mate;
+
+				if (hp.current <= 0.0f) {
+					std::snprintf(readout, sizeof(readout), "COMPANION DOWN");
+				} else if (holdsShield) {
+					std::snprintf(readout, sizeof(readout), "COMPANION HEALTH %d%% / SHIELD %.0fs", pct, shield.remaining);
+				} else {
+					std::snprintf(readout, sizeof(readout), "COMPANION HEALTH %d%%", pct);
+				}
+
+				DrawCenteredText(ImGui::GetForegroundDrawList(),
+					io.DisplaySize.x * 0.5f,
+					baseY - static_cast<float>(s_teammateCount - 1 - i) * lineHeight,
+					readout, kShieldColor);
+			}
 		}
 
 		// "TARGETING (N)" hotkey hint — shown only while the hand scanner is

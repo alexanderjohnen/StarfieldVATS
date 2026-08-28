@@ -369,6 +369,73 @@ namespace VATS
 		return RE::NiPointer<RE::Actor>(actor);
 	}
 
+	std::size_t FindTeammates(RE::NiPointer<RE::Actor>* a_out, std::size_t a_max)
+	{
+		if (!a_out || a_max == 0) {
+			return 0;
+		}
+
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return 0;
+		}
+		auto* cell = player->parentCell;
+		if (!cell) {
+			return 0;
+		}
+
+		std::uint32_t size = 0;
+		std::uint32_t capacity = 0;
+		std::uint64_t data = 0;
+		if (!Read(cell, kCellReferencesOffset, size) ||
+			!Read(cell, kCellReferencesOffset + 4, capacity) ||
+			!Read(cell, kCellReferencesOffset + 8, data) ||
+			size == 0 || capacity < size || !data) {
+			return 0;
+		}
+
+		// Same sanity bound as the crosshair scan, and for the same reason:
+		// it guards against a garbage `size` from a wrong offset, it is not
+		// a practical limit. See the long note there about the 4096 cap
+		// that silently truncated real cells - a FOLLOWING actor is exactly
+		// the kind that gets appended to the list late, so a companion scan
+		// is the last place to reintroduce a low cap.
+		constexpr std::uint32_t kScanCap = 32768;
+		const std::uint32_t     scanCount = std::min<std::uint32_t>(size, kScanCap);
+
+		std::size_t found = 0;
+		for (std::uint32_t i = 0; i < scanCount && found < a_max; ++i) {
+			std::uint64_t entry = 0;
+			if (!Read(reinterpret_cast<const void*>(data), 8ull * i, entry) || !entry) {
+				continue;
+			}
+			auto* candidate = reinterpret_cast<RE::Actor*>(entry);
+			if (static_cast<const void*>(candidate) == static_cast<const void*>(player)) {
+				continue;
+			}
+
+			std::uint8_t formType = 0;
+			if (!Read(candidate, kFormTypeOff, formType) || formType != kFormTypeACHR) {
+				continue;
+			}
+
+			// Deliberately NOT TryReadCandidate: that one rejects on the
+			// engine dead bit - proven inert in this game anyway - and reads
+			// a position this function has no use for. More to the point, a
+			// DOWNED companion has to survive this filter, since they are
+			// precisely the case the readout exists to surface.
+			std::uint32_t boolBits = 0;
+			if (!Read(candidate, kBoolBitsOff, boolBits) ||
+				(boolBits & GameOffsets::kActorPlayerTeammateBit) == 0) {
+				continue;
+			}
+
+			a_out[found++] = RE::NiPointer<RE::Actor>(candidate);
+		}
+
+		return found;
+	}
+
 	bool HasDetectionLOS(RE::Actor* a_source, RE::Actor* a_target)
 	{
 		if (!a_source || !a_target) {

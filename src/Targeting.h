@@ -107,6 +107,28 @@ namespace VATS
 	// preference.
 	[[nodiscard]] RE::NiPointer<RE::Actor> GetCrosshairTeammate();
 
+	// Every player teammate in the player's current cell, regardless of
+	// where they are looking - writes up to a_max of them into a_out and
+	// returns how many were written.
+	//
+	// Not a pick: no crosshair, no cone, no range. The companion readout
+	// has to answer "does anyone need help" while the player is looking
+	// somewhere else entirely, which is the opposite of what every other
+	// function in this file does.
+	//
+	// Returns them in cell-reference order, which is arbitrary but STABLE
+	// - deliberately not sorted by distance, because a list that reorders
+	// itself as people walk around is unreadable at a glance.
+	//
+	// Bounded by the caller's array, and the cell walk is the same
+	// SafeRead-guarded one the crosshair scan uses. Downed teammates are
+	// included on purpose; see the note in the implementation.
+	//
+	// Cost: one pass over the cell's reference list, which can be several
+	// thousand entries - cheap per entry (two guarded reads before
+	// anything else) but NOT something to call every frame. Throttle it.
+	[[nodiscard]] std::size_t FindTeammates(RE::NiPointer<RE::Actor>* a_out, std::size_t a_max);
+
 	// Live line-of-sight check between two actors, using the game's own
 	// AI/stealth detection LOS system (the same one that decides whether
 	// an NPC can see the player, just usable in either direction). Solves
