@@ -314,11 +314,11 @@ namespace VATS
 			// ForEachInventoryItemEntry. Aid items are the only kind this
 			// feature can spend, so they are the only kind worth printing.
 			const auto* known = FindAidItem(a_formID);
-			VATS_LOG("[inv] aid formID=0x{:08X} units={} -> {}", a_formID,
+			VATS_TRACE("[inv] aid formID=0x{:08X} units={} -> {}", a_formID,
 				CountUnits(player, a_formID),
 				known ? known->name : "NOT IN TABLE");
 			});
 
-		VATS_LOG("[inv] {} entries scanned, {} aid items", total, aid);
+		VATS_TRACE("[inv] {} entries scanned, {} aid items", total, aid);
 	}
 }

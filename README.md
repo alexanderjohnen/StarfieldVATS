@@ -13,6 +13,8 @@ A real-time V.A.T.S. system for Starfield, in the spirit of Fallout 76's real-ti
 - The weapon and camera never visibly snap onto the target — only the round's own flight path changes.
 - A HUD overlay marks the locked target with its current health, sized to the target's distance, and hides Starfield's own hit/kill/crit markers while a lock is active.
 - Using VATS costs a resource that scales with your character: maximum health sets how much damage you can deal through it before it runs dry, and maximum oxygen sets how quickly it refills once VATS is off.
+- The same key supports a **companion**: aim it at one through the scanner and a support session opens instead of a combat lock. A tap heals them, gets them back up when they are down, or — at full health — spends a buff item to give them a temporary damage-resistance shield on a timer. Healing and shielding consume the matching aid item from your inventory.
+- With the scanner raised, a line under the ring reports each companion's health, and the remaining shield time when one is running.
 
 There is **no hit-chance roll**. An earlier version rolled dice against a displayed percentage; that was removed in favour of every shot being redirected, with real geometry the only thing that stops one.
 
@@ -20,7 +22,7 @@ There is **no hit-chance roll**. An earlier version rolled dice against a displa
 
 **Work in progress.** Core targeting, the hitscan-to-real-projectile redirect, live target health and the resource system work for what has been tested so far, but this is not a polished, install-and-forget mod. Known gaps as of this writing:
 
-- **Never tested against non-humanoid creatures.** The aim point is deliberately proportional so it should scale to any body shape, but no alien has been fought with it. `fAimPointRadiusFactor` in the INI is the escape hatch if something looks wrong.
+- **The aim point is derived from the target's bounding sphere, not its skeleton.** It has been measured against humans, a mantid, a ground-hugging hopper and a flying alien, and tracks pose and body shape well enough on all of them; a per-character spread of roughly 20cm remains on humanoids, most likely from carried equipment shifting the sphere's centre. `fAimPointCentreFactor` in the INI trades aim height against that spread.
 - **No line-of-sight test exists.** Nothing here can tell whether a wall is between you and a target. This is why automatic advancing to the next enemy after a kill is shipped disabled — it could not reliably avoid picking targets behind walls or on other floors. The intended fix is a depth-buffer visibility check; see `HANDOFF.md`.
 - Only your companions are excluded from targeting, not neutral civilians. Starfield's own faction/relationship answer sits behind an unmapped engine ID.
 - Starfield's crit indicator can still flash briefly a few seconds after a kill. The game raises those events late, and suppressing them indefinitely would break the base game's HUD.
@@ -33,6 +35,16 @@ See [`docs/FINDINGS.md`](docs/FINDINGS.md) for the technical detail behind what'
 
 - [`docs/FINDINGS.md`](docs/FINDINGS.md) — verified CommonLibSF struct-offset corrections, crash-causing gaps, and dead ends found while building this, cross-checked in-game and (where possible) against independently-authored reference data. Hard facts only, clearly separated from anything still unconfirmed.
 - [`docs/CONTRIBUTIONS.md`](docs/CONTRIBUTIONS.md) — who contributed what, human and AI.
+
+## Installing
+
+Grab the newest archive from [Releases](https://github.com/alexanderjohnen/StarfieldVATS/releases) and extract it into your Starfield folder, so that the files land in `Data/SFSE/Plugins/`. The archive already has that structure, so extracting it over the game folder puts everything in place.
+
+You need [SFSE](https://www.nexusmods.com/starfield/mods/106) installed, and the game version the release names — this mod reads engine structures at fixed addresses, so a different game version can behave unpredictably.
+
+Settings live in `Data/SFSE/Plugins/StarfieldVATS.ini`, which is commented throughout. The log is written to `Documents/My Games/Starfield/SFSE/Logs/StarfieldVATS.log` and is replaced on every launch; raise `iLogLevel` there if you need to report a problem.
+
+To remove it, delete `StarfieldVATS.dll`, `.pdb` and `.ini` from `Data/SFSE/Plugins/`. Nothing is written to your save.
 
 ## Requirements & building
 

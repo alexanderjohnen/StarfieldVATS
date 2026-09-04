@@ -74,7 +74,15 @@ namespace VATS
 		// filtered on.
 		//
 		// Runs once when a support session opens - bounded, deliberate, and
-		// exactly when it is relevant. Delete once the table is filled in.
+		// exactly when it is relevant.
+		//
+		// VERBOSE ONLY since 2026-08-29 (the release pass): it stays in the
+		// build but writes nothing at the default log level. Kept rather
+		// than deleted because it is the only thing that would catch an aid
+		// item MISSING from the table - it prints "NOT IN TABLE" next to the
+		// form ID, which is exactly the report needed to fix it. Deleting it
+		// would trade a silent diagnostic for a silent bug. Set iLogLevel=3
+		// and open a support session to run it.
 		static void LogPlayerInventory();
 	};
 }
