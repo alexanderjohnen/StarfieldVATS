@@ -47,13 +47,29 @@ namespace VATS
 	// calls, no engine writes; the only reads are the guarded ones the
 	// rest of this project already uses.
 	//
-	// Horizontal only. The probe that calibrated this measured yaw, and
-	// pitch on the player may well live somewhere else entirely in first
-	// person - a question for its own probe rather than a guess inside
-	// this one.
+	// BOTH AXES since 2026-09-06. It began horizontal-only, because the
+	// calibration probe measured yaw. Alexander tried it in third person
+	// and the missing half was immediately obvious: the spring belongs
+	// between the weapon and the target, and a target above or below is
+	// just as far out of line as one to the side. Vertical uses its own
+	// conversion factor (fMouseDegPerUnitY), defaulted to the measured
+	// horizontal one but separate, since nothing has verified that
+	// Starfield turns pitch and yaw at the same rate per mouse unit.
+	//
+	// The pull is applied along the actual error direction rather than per
+	// axis, so it points AT the target from wherever the view is - the
+	// spring stretched between weapon and target, not two independent
+	// rubber bands.
 	class AimSpring
 	{
 	public:
+		// Current stretch, 0 (on target) to 1 (at the release angle). Read
+		// once per frame by the HUD tether, which is the only thing that
+		// tells the player how far out they are and how far they may go -
+		// without it the release arrives as a surprise, which Alexander
+		// reported as "too easy to break out of".
+		[[nodiscard]] static float GetTension();
+
 		static void Start();
 		static void Stop();
 	};

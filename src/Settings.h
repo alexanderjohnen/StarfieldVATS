@@ -158,7 +158,7 @@ namespace VATS
 		// make their own small corrections, which is exactly the "I lost
 		// control of the camera" complaint that killed the first
 		// camera-steering design in 2026-08.
-		float springDeadzoneDeg{ 8.0f };
+		float springDeadzoneDeg{ 4.0f };
 
 		// Past this angle the LOCK ENDS rather than the resistance getting
 		// harder. Alexander's shape: a spring with an exit, not a cage.
@@ -178,7 +178,7 @@ namespace VATS
 		// release angle and capped there. This is the "never infinite" part
 		// of the design: it is a spring, and a spring can always be pulled
 		// against.
-		float springMaxDegPerSec{ 90.0f };
+		float springMaxDegPerSec{ 300.0f };
 
 		// How far one unit of synthetic mouse movement turns the view.
 		// MEASURED, not guessed: 159 samples via CameraNudgeProbe on
@@ -193,6 +193,13 @@ namespace VATS
 		// for his setup is the value the project needs. Re-measure with
 		// bProbeCameraNudge if the sensitivity ever changes.
 		float mouseDegPerUnit{ 0.08059f };
+
+		// Vertical counterpart. Defaulted to the measured horizontal value
+		// but kept separate, because nothing has verified that Starfield
+		// turns pitch at the same rate per mouse unit as yaw - the probe
+		// only ever measured yaw. If the spring pulls correctly sideways
+		// but over- or undershoots vertically, this is the knob.
+		float mouseDegPerUnitY{ 0.08059f };
 
 		// --- VATS resource bar (2026-08-25, Alexander's design) ---
 		// See VatsResource.h for the full reasoning. Capacity comes from the

@@ -9,6 +9,7 @@
 #include "Targeting.h"
 #include "VATSController.h"
 #include "CompanionShield.h"
+#include "AimSpring.h"
 #include "VatsResource.h"
 
 #include "RE/U/UI.h"
@@ -64,6 +65,23 @@ namespace VATS::UI
 		// visible on screen) — contrast against an unknown, HUD-brightness
 		// background needs a shadow, not just more line thickness.
 		constexpr ImU32 kOutline = IM_COL32(10, 14, 16, 200);
+
+		// Blend between two packed colours. Component-wise on the raw bytes
+		// rather than through ImGui's float conversion, which is fine here -
+		// the only consumer is the spring tether, where the blend runs from
+		// one HUD colour to another and both are already in the palette.
+		[[nodiscard]] inline ImU32 LerpColor(ImU32 a_from, ImU32 a_to, float a_t)
+		{
+			const float t = a_t < 0.0f ? 0.0f : (a_t > 1.0f ? 1.0f : a_t);
+			ImU32       out = 0;
+			for (int shift = 0; shift < 32; shift += 8) {
+				const float from = static_cast<float>((a_from >> shift) & 0xFF);
+				const float to = static_cast<float>((a_to >> shift) & 0xFF);
+				const auto  mixed = static_cast<ImU32>(from + (to - from) * t + 0.5f);
+				out |= (mixed & 0xFF) << shift;
+			}
+			return out;
+		}
 
 		// How often the pre-lock scan re-evaluates "what's under the
 		// crosshair right now" (drives the "TARGETING (N)" hint while Off).
@@ -538,6 +556,50 @@ namespace VATS::UI
 			// "frozen while the target keeps growing". A constant cannot
 			// have any of them.
 			const float radius = std::max(4.0f, Settings::Get().targetMarkerRadius);
+
+			// The spring's tether, drawn BEFORE the marker so the marker
+			// stays on top of it.
+			//
+			// Alexander's report: the spring was "too easy to break out of",
+			// and the missing piece was not strength but information -
+			// nothing on screen said how far out the view was or how far it
+			// could go before the lock let go, so the release always arrived
+			// as a surprise. A line from the screen centre to the marker is
+			// the most literal possible statement of the mechanic: it IS the
+			// spring, it is exactly as long as the stretch, and it points
+			// where the pull points.
+			//
+			// Tension drives thickness and colour rather than length,
+			// because length is already saying something (how far off the
+			// target is) and a second meaning on the same channel would
+			// blur both. Near release it fades toward the warning colour, so
+			// the letting-go is announced rather than sprung.
+			// No mode check needed: the spring publishes zero tension unless
+			// it is actually pulling, which it only does while Locked.
+			{
+				const float tension = AimSpring::GetTension();
+				if (tension > 0.01f) {
+
+					const float cx = io.DisplaySize.x * 0.5f;
+					const float cy = io.DisplaySize.y * 0.5f;
+
+					// Stop short of the marker so the line reads as attached
+					// to the ring rather than stabbing through it.
+					const float dx = px - cx;
+					const float dy = py - cy;
+					const float len = std::sqrt(dx * dx + dy * dy);
+					if (len > radius + 4.0f) {
+						const float endX = px - (dx / len) * (radius + 2.0f);
+						const float endY = py - (dy / len) * (radius + 2.0f);
+
+						const ImU32 tetherColor = LerpColor(kShieldColor, kHitColor, tension);
+						auto* tdl = ImGui::GetForegroundDrawList();
+						tdl->AddLine(ImVec2{ cx, cy }, ImVec2{ endX, endY }, kOutline, 1.0f + 2.5f * tension);
+						tdl->AddLine(ImVec2{ cx, cy }, ImVec2{ endX, endY }, tetherColor, 0.8f + 1.6f * tension);
+					}
+				}
+			}
+
 			DrawTargetMarker(px, py, a_label, a_showValue ? value : nullptr, (showShotFlash && shotResult.hit) ? kHitColor : a_color, radius);
 
 			if (Settings::Get().debugAimMarkers) {

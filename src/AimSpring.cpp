@@ -5,7 +5,6 @@
 #include "SafeMem.h"
 #include "Settings.h"
 #include "VATSController.h"
-#include "UI/CameraProject.h"
 
 #include "RE/A/Actor.h"
 #include "RE/P/PlayerCamera.h"
@@ -31,20 +30,25 @@ namespace VATS
 		std::jthread      g_thread;
 		std::atomic<bool> g_running{ false };
 
-		constexpr float kPi = 3.14159265f;
+		// Published for the HUD tether. 0 = on target, 1 = at the release
+		// angle. Plain atomic float: written here at 60Hz, read once per
+		// frame from the render thread, and a torn read would cost one
+		// slightly wrong line width for one frame.
+		std::atomic<float> g_tension{ 0.0f };
+
 		constexpr float kRadToDeg = 57.29578f;
 
 		// Is Starfield the window that will actually receive this input?
 		//
 		// SendInput goes to the OS, not to a process, so a pulse sent while
 		// the game is in the background lands on whatever the player has in
-		// front and shakes their real desktop cursor. That is not a
-		// hypothetical - the calibration probe did exactly this on
-		// 2026-09-06 and Alexander could not click anything until the game
-		// was killed. It also keeps unfocused time out of the spring's own
-		// reasoning: an unfocused game consumes no mouse input, so the view
-		// cannot move, and a spring that kept integrating against a view
-		// that cannot move would build up a shove waiting to be delivered.
+		// front and shakes their real desktop cursor. Not hypothetical: the
+		// calibration probe did exactly that on 2026-09-06 and Alexander
+		// could not click anything until the game was killed. It also keeps
+		// unfocused time out of the spring's own reasoning - an unfocused
+		// game consumes no mouse input, so the view cannot move, and a
+		// spring integrating against a view that cannot move would build up
+		// a shove waiting to be delivered.
 		[[nodiscard]] bool GameHasFocus()
 		{
 			const HWND fg = ::GetForegroundWindow();
@@ -56,53 +60,70 @@ namespace VATS
 			return pid == ::GetCurrentProcessId();
 		}
 
-		void SendMouseMove(int a_dx)
+		void SendMouseMove(int a_dx, int a_dy)
 		{
-			if (a_dx == 0) {
+			if (a_dx == 0 && a_dy == 0) {
 				return;
 			}
 			INPUT input{};
 			input.type = INPUT_MOUSE;
 			input.mi.dx = a_dx;
-			input.mi.dy = 0;
+			input.mi.dy = a_dy;
 			input.mi.dwFlags = MOUSEEVENTF_MOVE;
 			::SendInput(1, &input, sizeof(INPUT));
 		}
 
-		// Signed horizontal angle from where the camera looks to where the
-		// target is, in degrees. Positive means the target is to the RIGHT,
-		// i.e. the direction a positive mouse dx turns the view.
+		[[nodiscard]] float Dot(const RE::NiPoint3& a, const RE::NiPoint3& b)
+		{
+			return a.x * b.x + a.y * b.y + a.z * b.z;
+		}
+
+		[[nodiscard]] bool Normalize(RE::NiPoint3& a_v)
+		{
+			const float len = std::sqrt(Dot(a_v, a_v));
+			if (len < 1.0e-5f) {
+				return false;
+			}
+			a_v.x /= len;
+			a_v.y /= len;
+			a_v.z /= len;
+			return true;
+		}
+
+		struct AimError
+		{
+			float yawDeg{ 0.0f };    // + = target is right of the view
+			float pitchDeg{ 0.0f };  // + = target is above the view
+			float magnitudeDeg{ 0.0f };
+		};
+
+		// Angular error from the view axis to the target, split into the two
+		// axes a mouse can move.
 		//
-		// THE SIGN COMES FROM THE PROJECTION, NOT FROM THE CROSS PRODUCT,
-		// and that is the fix for the first version of this file (2026-09-06).
-		// That one took the sign from the 2D cross product of the forward
-		// and to-target vectors, which silently assumes a handedness for
-		// Starfield's world axes that was never verified here. It was
-		// backwards: Alexander reported the camera being pushed AWAY from
-		// the target, and the log agreed - every release fired at 83-91
-		// degrees rather than creeping past the 55 degree threshold, which
-		// is what being accelerated outwards looks like rather than being
-		// resisted.
+		// ONE SOURCE FOR BOTH AXES AND BOTH SIGNS, which is the fix for the
+		// jitter (2026-09-06, second attempt). The first version took the
+		// magnitude from a vector angle and the sign from UI::WorldToScreen.
+		// Those are two different computations of the same thing, and near
+		// the boundary they disagree - so the sign flipped back and forth
+		// between ticks while the magnitude stayed above the deadzone, and
+		// the spring shoved left, right, left, right. Alexander felt it
+		// immediately as wobble. Mixing a proven source for one half of a
+		// quantity with a guessed source for the other half was the actual
+		// mistake; the sign was only its most visible symptom.
 		//
-		// UI::WorldToScreen is the proven alternative. It returns normalized
-		// coordinates with the origin top-left, it has placed the HUD marker
-		// on real targets since the first targeting test, and x < 0.5 versus
-		// x > 0.5 is left versus right with no handedness assumption of our
-		// own. The cross product is still computed and logged beside it, so
-		// one run settles what the world axes actually do - a fact worth
-		// having rather than routing around.
+		// The camera basis is the one CameraProject uses and proves: row 1
+		// is forward, row 0 is RIGHT and row 2 is UP - not by assumption
+		// about Starfield's handedness, but because that projection places
+		// the HUD marker on real targets, and it derives screen x directly
+		// from dot(diff, row 0). Anything that lands the marker correctly
+		// has the orientation right.
 		//
-		// The MAGNITUDE still comes from the vector angle, because the
-		// projection cannot express a target behind the camera and that is
-		// exactly where a spring needs its largest value.
-		//
-		// Horizontal only: both vectors are flattened onto the XY plane
-		// before the comparison. A target above or below contributes
-		// nothing, which is correct for a spring that only ever pushes
-		// sideways - otherwise a target at the player's feet would read as
-		// a large error and the spring would fight a direction it cannot
-		// move in.
-		[[nodiscard]] bool YawErrorToTarget(RE::Actor* a_target, float& a_outDeg)
+		// Working in the camera's frame is also what makes third person
+		// behave. The camera sits behind and beside the player there, so an
+		// error measured against the PLAYER would disagree with what the
+		// player sees on screen - and what they see is what they are aiming
+		// with.
+		[[nodiscard]] bool ComputeError(RE::Actor* a_target, AimError& a_out)
 		{
 			auto* camera = RE::PlayerCamera::GetSingleton();
 			if (!camera || !a_target) {
@@ -113,70 +134,44 @@ namespace VATS
 				return false;
 			}
 
-			const auto& world = cameraRoot->world;
+			const auto&        world = cameraRoot->world;
 			const RE::NiPoint3 camPos = world.translate;
 
-			// Row 1 is the view direction here, empirically verified
-			// 2026-08-22 - see the long note in Targeting.cpp. Row 0 is NOT
-			// forward, it behaves like a lateral axis.
-			float fx = world.rotate.entry[1].x;
-			float fy = world.rotate.entry[1].y;
-			const float fLen = std::sqrt(fx * fx + fy * fy);
-			if (fLen < 1.0e-4f) {
-				return false;  // looking straight up or down - no yaw to speak of
+			RE::NiPoint3 fwd{ world.rotate.entry[1].x, world.rotate.entry[1].y, world.rotate.entry[1].z };
+			RE::NiPoint3 right{ world.rotate.entry[0].x, world.rotate.entry[0].y, world.rotate.entry[0].z };
+			RE::NiPoint3 up{ world.rotate.entry[2].x, world.rotate.entry[2].y, world.rotate.entry[2].z };
+			if (!Normalize(fwd) || !Normalize(right) || !Normalize(up)) {
+				return false;
 			}
-			fx /= fLen;
-			fy /= fLen;
 
-			// The actor's own origin, deliberately NOT GetAimPoint.
-			//
-			// The aim point exists to lift the target vertically onto the
-			// chest, which is worth nothing to a spring that only pushes
-			// sideways. And it carries per-actor smoothing state, already
-			// shared between the render thread and AimAssist's steering
-			// thread; adding a third caller at 60Hz would perturb a filter
-			// two other consumers depend on, to obtain a horizontal
-			// direction that the raw position gives just as well.
+			// The actor's own origin, deliberately NOT GetAimPoint. The aim
+			// point exists to lift the target vertically onto the chest, and
+			// it carries per-actor smoothing state already shared between
+			// the render thread and AimAssist's steering thread. Adding a
+			// third caller at 60Hz would perturb a filter two other
+			// consumers depend on.
 			RE::NiPoint3 pos{};
 			if (!SafeRead(reinterpret_cast<const std::byte*>(a_target) + GameOffsets::kLocation, &pos, sizeof(pos))) {
 				return false;
 			}
 
-			float tx = pos.x - camPos.x;
-			float ty = pos.y - camPos.y;
-			const float tLen = std::sqrt(tx * tx + ty * ty);
-			if (tLen < 1.0e-3f) {
-				return false;  // standing inside the target - no meaningful direction
-			}
-			tx /= tLen;
-			ty /= tLen;
-
-			// Magnitude from the vectors: atan2 of the 2D cross and dot
-			// products stays well-behaved near 180 degrees, where an acos
-			// would lose all its precision - and 180 degrees is precisely
-			// where a spring is doing its most important work.
-			const float dot = fx * tx + fy * ty;
-			const float cross = fx * ty - fy * tx;
-			const float magnitude = std::abs(std::atan2(cross, dot) * kRadToDeg);
-
-			// Sign from the projection, which is proven on real targets.
-			float screenX = 0.0f;
-			float screenY = 0.0f;
-			if (UI::WorldToScreen(pos, screenX, screenY)) {
-				a_outDeg = (screenX >= 0.5f) ? magnitude : -magnitude;
-			}
-			else {
-				// Behind the camera: the projection has nothing to say, and
-				// which way to turn is genuinely arbitrary there - both ways
-				// are equally far. Keep the cross-product sign so the pull
-				// stays consistent instead of flapping while the target sits
-				// behind the player.
-				a_outDeg = (cross >= 0.0f) ? magnitude : -magnitude;
+			RE::NiPoint3 diff{ pos.x - camPos.x, pos.y - camPos.y, pos.z - camPos.z };
+			if (!Normalize(diff)) {
+				return false;
 			}
 
-			VATS_TRACE("[spring] err {:+.2f} deg | screenX {:.3f} | crossSign {} | agree={}",
-				a_outDeg, screenX, cross >= 0.0f ? "+" : "-",
-				((screenX >= 0.5f) == (cross >= 0.0f)) ? "yes" : "NO");
+			const float f = Dot(diff, fwd);
+			const float r = Dot(diff, right);
+			const float u = Dot(diff, up);
+
+			// atan2 rather than asin so that a target BEHIND the camera
+			// reads as a large angle instead of folding back toward zero.
+			// Behind is exactly where the spring should pull hardest, so
+			// getting it wrong there would be getting it wrong where it
+			// matters most.
+			a_out.yawDeg = std::atan2(r, f) * kRadToDeg;
+			a_out.pitchDeg = std::atan2(u, std::sqrt(f * f + r * r)) * kRadToDeg;
+			a_out.magnitudeDeg = std::acos(std::clamp(f, -1.0f, 1.0f)) * kRadToDeg;
 			return true;
 		}
 
@@ -184,9 +179,6 @@ namespace VATS
 		{
 			using namespace std::chrono;
 
-			// 60 Hz. Fast enough that the pull reads as continuous
-			// resistance rather than a series of shoves, and the work per
-			// tick is two guarded reads plus arithmetic.
 			constexpr auto kTick = milliseconds(16);
 
 			auto lastTick = steady_clock::now();
@@ -194,11 +186,12 @@ namespace VATS
 			bool beyondRelease = false;
 
 			// Fractional mouse units left over from the previous tick.
-			// SendInput takes integers, and at 60 Hz a gentle pull is often
+			// SendInput takes integers, and a gentle pull at 60Hz is often
 			// well under one unit per tick - truncating every tick would
-			// silently floor the whole spring to zero at exactly the low
-			// strengths it is supposed to feel smooth at.
-			float carry = 0.0f;
+			// floor the spring to zero at exactly the low strengths it most
+			// needs to feel smooth at.
+			float carryX = 0.0f;
+			float carryY = 0.0f;
 
 			while (!a_stop.stop_requested()) {
 				std::this_thread::sleep_for(kTick);
@@ -210,77 +203,96 @@ namespace VATS
 				const auto state = Controller::Get().GetOverlayState();
 				if (state.mode != VATSMode::kLocked || !state.actor || !GameHasFocus()) {
 					beyondRelease = false;
-					carry = 0.0f;
+					carryX = carryY = 0.0f;
+					g_tension.store(0.0f, std::memory_order_relaxed);
 					continue;
 				}
 
 				const auto& settings = Settings::Get();
 				if (!settings.aimSpringEnabled || settings.mouseDegPerUnit <= 0.0f) {
+					g_tension.store(0.0f, std::memory_order_relaxed);
 					continue;
 				}
 
-				float errDeg = 0.0f;
-				if (!YawErrorToTarget(state.actor.get(), errDeg)) {
+				AimError err{};
+				if (!ComputeError(state.actor.get(), err)) {
 					continue;
 				}
-				const float absErr = std::abs(errDeg);
+
+				const float span = std::max(1.0f, settings.springReleaseDeg - settings.springDeadzoneDeg);
+				const float tension = std::clamp((err.magnitudeDeg - settings.springDeadzoneDeg) / span, 0.0f, 1.0f);
+				g_tension.store(tension, std::memory_order_relaxed);
 
 				// Past the release angle the mode ends rather than the wall
-				// getting harder - but only after it has stayed past it for
+				// getting harder - but only after it has stayed there for
 				// iSpringReleaseGraceMs. Without the grace a glance sideways
-				// during a fight would drop the lock, and the player would
-				// read that as the mod being flaky rather than as a rule.
-				if (absErr >= settings.springReleaseDeg) {
+				// mid-fight drops the lock, which reads as flakiness rather
+				// than as a rule.
+				if (err.magnitudeDeg >= settings.springReleaseDeg) {
 					if (!beyondRelease) {
 						beyondRelease = true;
 						beyondReleaseSince = now;
 					}
 					else if (duration_cast<milliseconds>(now - beyondReleaseSince).count() >= settings.springReleaseGraceMs) {
-						VATS_LOG("[spring] released - view {:.1f} deg off target for {} ms", absErr, settings.springReleaseGraceMs);
+						VATS_LOG("[spring] released - {:.1f} deg off target for {} ms", err.magnitudeDeg, settings.springReleaseGraceMs);
 						Controller::Get().ForceOff("turned away from target");
 						beyondRelease = false;
-						carry = 0.0f;
+						carryX = carryY = 0.0f;
+						g_tension.store(0.0f, std::memory_order_relaxed);
+						continue;
 					}
-					// Keep pulling at full strength while the grace runs.
-					// Letting go here would make the last moments before a
-					// release feel loose, which is the opposite of what the
-					// release is meant to communicate.
 				}
 				else {
 					beyondRelease = false;
 				}
 
-				// Inside the deadzone the spring does nothing at all. This
-				// is not a tuning nicety: without it the view would be
-				// glued to the target and the player could not make their
-				// own small corrections, which is the exact "I lost control
-				// of the camera" complaint that killed the first
-				// camera-steering design.
-				if (absErr <= settings.springDeadzoneDeg) {
-					carry = 0.0f;
+				// Inside the deadzone the spring does nothing. Without it the
+				// view is glued to the target and the player cannot make
+				// their own small corrections - the exact "I lost control of
+				// the camera" complaint that killed the first camera-steering
+				// design in August.
+				if (err.magnitudeDeg <= settings.springDeadzoneDeg) {
+					carryX = carryY = 0.0f;
 					continue;
 				}
 
-				// Linear from the deadzone up to the release angle, then
-				// capped. Linear on purpose: the shape is going to be tuned
-				// by feel, and a curve with a second constant in it would
-				// make "it feels wrong" ambiguous between the two.
-				const float span = std::max(1.0f, settings.springReleaseDeg - settings.springDeadzoneDeg);
-				const float t = std::clamp((absErr - settings.springDeadzoneDeg) / span, 0.0f, 1.0f);
-				const float degPerSec = settings.springMaxDegPerSec * t;
+				// Restoring force, proportional to how far it is stretched -
+				// which is what makes it a spring rather than a brake. A
+				// brake only slows you leaving; this also carries you back
+				// once you stop pulling, which is what Alexander asked for.
+				//
+				// Applied along the actual error direction rather than per
+				// axis independently, so the pull points AT the target from
+				// wherever the view is - the "spring stretched between the
+				// weapon and the target" that motivates the whole feature.
+				const float degPerSec = settings.springMaxDegPerSec * tension;
+				const float step = degPerSec * dt;
+				const float scale = step / std::max(1.0e-3f, err.magnitudeDeg);
 
-				// Toward the target, hence the sign of the error.
-				const float wantDeg = degPerSec * dt * (errDeg > 0.0f ? 1.0f : -1.0f);
-				const float wantUnits = wantDeg / settings.mouseDegPerUnit + carry;
-				const int   units = static_cast<int>(wantUnits);
-				carry = wantUnits - static_cast<float>(units);
+				const float wantYawDeg = err.yawDeg * scale;
+				const float wantPitchDeg = err.pitchDeg * scale;
 
-				SendMouseMove(units);
+				const float wantX = wantYawDeg / settings.mouseDegPerUnit + carryX;
+				// Negative: on a mouse, moving DOWN (+dy) looks down, so
+				// looking UP at a target above the view needs a negative dy.
+				const float wantY = -wantPitchDeg / settings.mouseDegPerUnitY + carryY;
 
-				VATS_TRACE("[spring] err {:+.2f} deg | strength {:.2f} | {:+.3f} deg -> {} units (carry {:+.2f})",
-					errDeg, t, wantDeg, units, carry);
+				const int unitsX = static_cast<int>(wantX);
+				const int unitsY = static_cast<int>(wantY);
+				carryX = wantX - static_cast<float>(unitsX);
+				carryY = wantY - static_cast<float>(unitsY);
+
+				SendMouseMove(unitsX, unitsY);
+
+				VATS_TRACE("[spring] err {:.1f} deg (yaw {:+.1f}, pitch {:+.1f}) | tension {:.2f} | {:+.2f} deg -> ({}, {})",
+					err.magnitudeDeg, err.yawDeg, err.pitchDeg, tension, step, unitsX, unitsY);
 			}
 		}
+	}
+
+	float AimSpring::GetTension()
+	{
+		return g_tension.load(std::memory_order_relaxed);
 	}
 
 	void AimSpring::Start()
@@ -288,13 +300,12 @@ namespace VATS
 		if (g_running.exchange(true)) {
 			return;
 		}
-		// Started unconditionally and gated per tick instead of at startup,
-		// so bAimSpringEnabled can be flipped by a settings reload without
-		// a restart. The thread costs one wakeup per frame while idle.
-		VATS_LOG("[spring] started (enabled={}, deadzone={} deg, release={} deg, max={} deg/s, {} deg/unit)",
+		// Started unconditionally and gated per tick rather than at startup,
+		// so bAimSpringEnabled survives a settings reload without a restart.
+		VATS_LOG("[spring] started (enabled={}, deadzone={} deg, release={} deg, max={} deg/s, {}/{} deg/unit)",
 			Settings::Get().aimSpringEnabled, Settings::Get().springDeadzoneDeg,
 			Settings::Get().springReleaseDeg, Settings::Get().springMaxDegPerSec,
-			Settings::Get().mouseDegPerUnit);
+			Settings::Get().mouseDegPerUnit, Settings::Get().mouseDegPerUnitY);
 		g_thread = std::jthread(ThreadProc);
 	}
 
