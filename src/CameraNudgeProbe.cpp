@@ -45,6 +45,31 @@ namespace VATS
 			return SafeRead(reinterpret_cast<const std::byte*>(player) + kAngleZ, &a_out, sizeof(a_out));
 		}
 
+		// Is Starfield the window that will actually receive this input?
+		//
+		// SendInput goes to the OS, not to a process - so a pulse sent while
+		// the game is in the background lands on whatever the player has in
+		// front instead, and their real desktop cursor twitches. Alexander
+		// hit exactly that on 2026-09-06 ("meine Maus hat nen Tremor"), and
+		// the log shows the other half of it: 166 samples reading
+		// 2.3008 -> 2.3008, the view not moving at all because Starfield was
+		// not consuming input.
+		//
+		// So this guard does two jobs. It keeps the mod out of the player's
+		// desktop, and it keeps unfocused frames out of the measurement -
+		// they are not evidence that a nudge failed, only that nobody was
+		// listening. Anything built on this later needs it just as much.
+		[[nodiscard]] bool GameHasFocus()
+		{
+			const HWND fg = ::GetForegroundWindow();
+			if (!fg) {
+				return false;
+			}
+			DWORD pid = 0;
+			::GetWindowThreadProcessId(fg, &pid);
+			return pid == ::GetCurrentProcessId();
+		}
+
 		// OS-level synthetic mouse movement - the same mechanism as the
 		// scanner-close keypress, which is proven to reach this game. No
 		// engine call, no engine write.
@@ -96,7 +121,7 @@ namespace VATS
 			float sumDegPerUnit = 0.0f;
 
 			while (!a_stop.stop_requested()) {
-				if (Controller::Get().GetMode() != VATSMode::kLocked) {
+				if (Controller::Get().GetMode() != VATSMode::kLocked || !GameHasFocus()) {
 					// Idle cheaply while there is nothing to measure, and
 					// forget the running average - a session's worth of
 					// samples from different locks tells us less than a
