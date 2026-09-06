@@ -1,4 +1,4 @@
-# StarfieldVATS — Handoff (2026-08-29)
+# StarfieldVATS — Handoff (2026-09-06)
 
 Read this first in a new chat. Point-in-time snapshot — verify against the
 actual code and log before trusting anything here; offsets and "confirmed"
@@ -626,25 +626,45 @@ schwächste passende Item.
 
 ### Offene Punkte, nach Wert sortiert
 
-Neu geordnet 2026-08-29, nachdem die Starborn-Powers ausgelagert wurden
-(siehe unten) — das war der Grund, warum `BSTThreadScrapFunction` ganz
-oben stand.
+Neu geordnet 2026-09-06. Die Punkte 2 und 3 der vorigen Fassung
+(Aufräumen, Diagnose-Schalter) sind **erledigt** — siehe „Stand
+2026-09-06" unten.
 
-1. **Sichtlinienprüfung** (Tiefenpuffer, eigener Abschnitt oben). Der
-   wertvollste Punkt, weil er als einziger mehrere Dinge gleichzeitig
-   freischaltet: den automatischen Zielwechsel, den freien Tipp-Druck im
-   Kampf-Lock, und den Teil der neutralen NPCs, der sich über
-   Sichtbarkeit statt über Fraktionen lösen lässt. Liegt komplett im
-   D3D12-Hook, den wir besitzen — keine Struct-Offsets, keine
-   Address-Library-IDs, also ausserhalb der Crash-Kategorie.
-2. **Aufräumen, jetzt fällig.** `ProbeDamageResist` hat **gar keine
-   Aufrufer mehr** (nur noch Definition und Deklaration) und kann sofort
-   weg. Das SEH-Netz um `SafeModActorValue` ebenfalls — der Lauf, auf den
-   es wartete, ist da (siehe Schild oben). `LogPlayerInventory` läuft
-   dagegen noch bei jedem Support-Einstieg und sollte erst fallen, wenn
-   ein Lauf zeigt, dass alle vorhandenen Aid-Items in `AidItems.h`
-   stehen.
-3. **Diagnose-Schalter vor Release** (eigener Punkt weiter oben).
+1. **Die Grobstufe — Kamera-Magnet.** Neu auf Platz 1, und das ist keine
+   Verdrängung der Sichtlinie, sondern ein anderes Problem: die
+   Sichtlinie entscheidet, *welches* Ziel gewählt werden darf, der
+   Magnet, *wie* getroffen wird. Der Fund dahinter steht in
+   `docs/FINDINGS.md`: FO76 und VATS76 arbeiten zweistufig — grob über
+   die Kamera, fein über gelenkte Geschosse — und **uns fehlt die
+   Grobstufe vollständig.** Daher muss unsere Umlenkung beliebige Winkel
+   schaffen, und genau daher kommt `fLockedProjectileSpeed=80`.
+
+   Machbarkeit ist **gemessen, nicht vermutet**: 0,0806 Grad je
+   Mauseinheit, deterministisch über 159 Messwerte (`CameraNudgeProbe`,
+   `bProbeCameraNudge`). Auslegung nach Alexanders Entwurf: Widerstand,
+   der zum Ziel hin stark ist und mit dem Winkel nachlässt, und beim
+   eindeutigen Wegdrehen **endet der Lock**, statt dass die Wand härter
+   wird — dieselbe Form wie beim ADS, wo Nachgeben besser war als
+   Dagegenhalten. Zwei Dinge sind Pflicht: Fokusprüfung vor jedem
+   `SendInput` (sonst zuckt der echte Desktop-Cursor, passiert), und der
+   Umrechnungsfaktor gehört in die INI, nicht in den Code.
+2. **Sichtlinienprüfung** (Tiefenpuffer, eigener Abschnitt oben). Der
+   Punkt, der als einziger mehrere Dinge gleichzeitig freischaltet: den
+   automatischen Zielwechsel, den freien Tipp-Druck im Kampf-Lock, und
+   den Teil der neutralen NPCs, der sich über Sichtbarkeit statt über
+   Fraktionen lösen lässt. Liegt komplett im D3D12-Hook, den wir
+   besitzen — keine Struct-Offsets, keine Address-Library-IDs, also
+   ausserhalb der Crash-Kategorie.
+3. **`desiredTargetHandle` (0x174) — wiedereröffnet**, siehe
+   `docs/FINDINGS.md`. Der Schiffskampf beweist, dass die Engine eine
+   eigene Zielverfolgung besitzt und benutzt; das war eine der beiden
+   Vermutungen, auf denen die Entfernung am 25.08. beruhte. Offen bleibt
+   die andere: ein echtes `TESPointerHandle` beschaffen statt eine
+   FormID zu erfinden. Lohnt, weil die Engine im Simulationsschritt
+   lenkt und damit die Flugzeit nicht braucht, die unsere Lenkung
+   braucht — `fLockedProjectileSpeed` könnte schrumpfen oder wegfallen.
+   **Das ist die absturzgefährdete Hälfte**, der Handle-Typ muss vor dem
+   Schreiben stehen.
 4. **Neutrale NPCs**, soweit die Sichtlinie sie nicht abdeckt. Begleiter
    erkennen wir zuverlässig (`kPlayerTeammate`, gemessen); für „neutral
    statt feindlich" fehlt ein Signal, `IsHostileToActor` hat
@@ -701,3 +721,87 @@ Modus-Prüfung und wurde auch um Begleiter gezeichnet. Statt zu fragen,
 warum er dort erscheint, habe ich den Schildbogen auf einen eigenen
 Radius geschoben. Alexanders Frage („die sollten doch nie gleichzeitig
 auftauchen") hat den eigentlichen Fehler gefunden.
+
+---
+
+## Stand 2026-09-06 — erste Veröffentlichung, und eine neue Spur
+
+### Es gibt ein Release
+
+**https://github.com/alexanderjohnen/StarfieldVATS/releases/tag/v0.1.0**,
+als **Vorabversion** markiert. Archiv mit `Data/SFSE/Plugins/`-Struktur
+(DLL, PDB, INI), gebaut gegen 1.16.244.0. Die PDB liegt bewusst bei —
+damit macht ein Crash Logger aus einem unlesbaren Bericht einen mit
+Funktionsnamen.
+
+Der Release-Text nennt die bekannten Grenzen offen, allen voran die
+fehlende Sichtlinie samt Begründung, warum der automatische Zielwechsel
+ausgeschaltet ausgeliefert wird. Bei einer Vorabversion ist die einzige
+Enttäuschung, die wirklich schadet, eine unangekündigte.
+
+**Beim nächsten Release beachten:**
+
+- **Niemals `git push --tags`.** Der Tag `backup-before-strip-decompiled`
+  zeigt auf 210 Dateien mit Bethesdas dekompilierten UI-Assets. Er liegt
+  ausserhalb der `main`-Historie, ein Branch-Push ist also harmlos — aber
+  `--tags` würde genau das öffentlich hochladen, was einmal aus der
+  Historie entfernt wurde. Versions-Tags einzeln namentlich pushen.
+- **Sonden vor dem Packen ausschalten.** `res/StarfieldVATS.ini` ist die
+  Vorlage, die ins Archiv wandert. `bProbeCameraNudge` steht dort auf 0
+  und die deployte INI auf 1 — die Werte dürfen auseinanderlaufen,
+  `deploy.ps1` vergleicht nur Schlüssel und Abschnitte.
+- `gh` ist inzwischen installiert und angemeldet.
+
+### Erledigt seit der letzten Fassung
+
+- **Diagnose-Schalter.** Der Punkt war grösstenteils veraltet: `iLogLevel`
+  mit vier Stufen existiert längst, `WorldBoundProbe` und `HealthReader`
+  schreiben auf Normalstufe nichts. Übrig war der Inventar-Durchlauf, der
+  jetzt `VATS_TRACE` ist. Bewusst **nicht gelöscht**: er ist das einzige,
+  was ein fehlendes Aid-Item meldet (`NOT IN TABLE` neben der FormID).
+- **Aufräumen.** `ProbeDamageResist` und das SEH-Netz um
+  `SafeModActorValue` sind weg. `TryGetTemporaryModifier` hat dadurch
+  keinen Aufrufer mehr und **bleibt trotzdem** — ein funktionierender
+  Zugriff auf Vtable-Slot 08, dessen Wiederherleitung teurer wäre als die
+  Zeile, die er belegt. Steht so im Header, damit der nächste
+  Aufräumdurchgang ihn nicht als Rest löscht.
+- **HUD:** Die Schild-Anzeige ist zur Begleiter-Statuszeile geworden —
+  `COMPANION HEALTH 78% / SHIELD 230s`, nur bei offenem Scanner, auf der
+  unteren Ringkante (`fShieldReadoutY`). `Targeting::FindTeammates` ist
+  neu und listet bis zu vier Begleiter.
+
+### `deploy.ps1` prüft jetzt, ob es liefert, was es gebaut hat
+
+Ein Vorfall, der sich lohnt zu kennen. `xmake f -c` (nötig, weil `spdlog`
+im Paketcache fehlte) hat den Build-Modus auf `release` zurückgesetzt,
+während `deploy.ps1` aus `releasedbg` kopiert. Ergebnis: „build ok" und
+„Deployed" im Klartext — und eine **zwei Tage alte DLL** im Plugin-Ordner.
+Aufgefallen nur durch einen Zeitstempelvergleich von Hand.
+
+Zwei Prüfungen sitzen jetzt zwischen Build und Kopie: eine neuere DLL
+unter einem anderen Modus-Ordner **bricht ab** (die Datei ist
+nachweislich nicht die gebaute), eine Quelldatei neuer als die DLL
+**warnt** nur (ein inkrementeller Build ohne Arbeit lässt die DLL zu
+Recht in Ruhe). Beide gegen einen echten Fehlerfall geprüft.
+
+### Die neue Spur: uns fehlt die Grobstufe
+
+Ausführlich in `docs/FINDINGS.md`, hier nur der Kern, weil er die
+Prioritätenliste verändert hat.
+
+Alexander hat FO76, die VATS76-Mod für Fallout 4 und Starfields eigenen
+Schiffskampf angespielt und verglichen. Ergebnis: alle drei arbeiten
+**zweistufig** — grobe Ausrichtung, dann feine Korrektur. In FO76
+übernimmt die Kamera die Grobstufe und die Geschosse werden *trotzdem*
+sichtbar gelenkt. Im Schiffskampf liefert der **Spieler** die Grobstufe,
+und ein Konvergenzkreis entscheidet, wann die Feinstufe greift.
+
+**Wir haben nur die Feinstufe.** Nichts begrenzt die Blickrichtung, also
+muss die Umlenkung beliebige Winkel schaffen — und das ist der ganze
+Grund für `fLockedProjectileSpeed=80`, den sichtbarsten Kompromiss der
+Mod. Die Verlangsamung ist die Folge einer fehlenden Stufe, keine
+Eigenschaft des Mechanismus.
+
+Die Kameraübernahme bleibt abgelehnt (Gründungsregel: kein sichtbares
+Einrasten). Übernommen wird die Zweistufigkeit mit dem Spieler auf der
+Grobstufe.
