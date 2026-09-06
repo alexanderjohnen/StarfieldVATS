@@ -15,6 +15,11 @@
 
 #include <Windows.h>
 
+// Windows.h defines ERROR as a bare 0, which collides with REX::ERROR
+// behind VATS_ERROR. Same family of trap as NOMINMAX, and the error it
+// produces points at the logging call rather than at the macro.
+#undef ERROR
+
 namespace VATS
 {
 	namespace
@@ -182,7 +187,30 @@ namespace VATS
 
 	void CameraNudgeProbe::Start()
 	{
-		if (!Settings::Get().probeCameraNudge || g_running.exchange(true)) {
+		if (!Settings::Get().probeCameraNudge) {
+			return;
+		}
+
+		// Never alongside the spring. Both inject synthetic mouse movement,
+		// so running them together means two things steering the view with
+		// no knowledge of each other.
+		//
+		// This is not a theoretical conflict. The probe was left armed after
+		// its calibration run on 2026-09-06 while the spring was being
+		// built, and its own pulse pattern - 3.2 degrees right, 100ms, 3.2
+		// degrees back, 100ms - was reported as "ein konstantes rechts links
+		// rechts links" and spent four rounds being diagnosed as a fault in
+		// the spring. Every one of those fixes was aimed at code that was
+		// not producing the symptom.
+		//
+		// Refusing loudly rather than warning: a warning in a log nobody is
+		// reading yet is what allowed this to run for hours.
+		if (Settings::Get().aimSpringEnabled) {
+			VATS_ERROR("[nudge] NOT started - bAimSpringEnabled is on. Both inject mouse movement and would fight each other. Set bAimSpringEnabled=0 to calibrate.");
+			return;
+		}
+
+		if (g_running.exchange(true)) {
 			return;
 		}
 		VATS_LOG("[nudge] camera-nudge probe ARMED - pulses only while Locked");
