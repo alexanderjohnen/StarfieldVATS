@@ -5,6 +5,7 @@
 #include "SafeMem.h"
 #include "Settings.h"
 #include "VATSController.h"
+#include "WorldBoundProbe.h"
 
 #include "RE/A/Actor.h"
 #include "RE/P/PlayerCamera.h"
@@ -31,7 +32,7 @@ namespace VATS
 		std::atomic<bool> g_running{ false };
 
 		// Published for the HUD tether. 0 = on target, 1 = at the release
-		// angle. Plain atomic float: written here at 60Hz, read once per
+		// angle. Plain atomic float: written here every tick, read once per
 		// frame from the render thread, and a torn read would cost one
 		// slightly wrong line width for one frame.
 		std::atomic<float> g_tension{ 0.0f };
@@ -144,16 +145,35 @@ namespace VATS
 				return false;
 			}
 
-			// The actor's own origin, deliberately NOT GetAimPoint. The aim
-			// point exists to lift the target vertically onto the chest, and
-			// it carries per-actor smoothing state already shared between
-			// the render thread and AimAssist's steering thread. Adding a
-			// third caller at 60Hz would perturb a filter two other
-			// consumers depend on.
-			RE::NiPoint3 pos{};
-			if (!SafeRead(reinterpret_cast<const std::byte*>(a_target) + GameOffsets::kLocation, &pos, sizeof(pos))) {
+			// THE AIM POINT, not the actor's origin.
+			//
+			// The previous version read kLocation directly, on the reasoning
+			// that a sideways-only spring does not care about height and
+			// that GetAimPoint carries per-actor smoothing state shared with
+			// the render thread and AimAssist. Both halves of that stopped
+			// being true the moment the spring gained a vertical axis:
+			// kLocation is an actor's origin, which is at their FEET, so the
+			// spring pulled the view into the floor - Alexander screenshotted
+			// it pointing under a seated NPC, and shots stopped landing
+			// because they were being aimed at the furniture in front of the
+			// feet rather than at the person.
+			//
+			// The decisive argument is not the height though, it is
+			// agreement: the HUD tether is drawn to the MARKER, and the
+			// marker is placed at the aim point. A spring pulling anywhere
+			// else makes the indicator a liar - it would show a line to one
+			// place while dragging the view to another. Whatever the marker
+			// claims is where the pull has to go.
+			//
+			// The smoothing concern was over-cautious: that state is mutex
+			// guarded and already has two callers by design, and a filter
+			// shared by three consumers is a far smaller problem than a
+			// spring and its own indicator disagreeing.
+			RE::NiPoint3 feet{};
+			if (!SafeRead(reinterpret_cast<const std::byte*>(a_target) + GameOffsets::kLocation, &feet, sizeof(feet))) {
 				return false;
 			}
+			const RE::NiPoint3 pos = WorldBoundProbe::GetAimPoint(a_target, feet);
 
 			RE::NiPoint3 diff{ pos.x - camPos.x, pos.y - camPos.y, pos.z - camPos.z };
 			if (!Normalize(diff)) {
@@ -179,7 +199,32 @@ namespace VATS
 		{
 			using namespace std::chrono;
 
-			constexpr auto kTick = milliseconds(16);
+			// 250 Hz, not 60, and this is the third attempt at the jitter.
+			//
+			// The first two looked for a wrong DIRECTION - a flipped sign,
+			// then two disagreeing sources for one value. Both were real
+			// bugs and neither stopped the shaking, which is the evidence
+			// that the direction was never the problem. What is left is the
+			// GRANULARITY of the input itself: at 60 Hz and 300 deg/s each
+			// pulse is 4.8 degrees, delivered as one lump sixty times a
+			// second, and Starfield samples mouse input on its own frame
+			// boundaries. Frames that catch a lump jump, frames that fall
+			// between two get nothing, and a steady pull renders as a
+			// stutter. The stronger the spring, the worse it reads - which
+			// matches the pull only starting to shake once it had any real
+			// force behind it.
+			//
+			// Four times the rate is a quarter of the step for the same
+			// speed. It costs three extra wakeups per frame on a thread that
+			// does two guarded reads and some arithmetic.
+			constexpr auto kTick = milliseconds(4);
+
+			// And a ceiling on any single pulse. dt is already clamped to
+			// 100ms against a stall, but 100ms at full strength would still
+			// be a 30 degree lurch arriving in one packet - the exact thing
+			// this rate change exists to avoid, just triggered by a hitch
+			// instead of by design.
+			constexpr float kMaxStepDeg = 1.5f;
 
 			auto lastTick = steady_clock::now();
 			auto beyondReleaseSince = steady_clock::time_point{};
@@ -266,7 +311,7 @@ namespace VATS
 				// wherever the view is - the "spring stretched between the
 				// weapon and the target" that motivates the whole feature.
 				const float degPerSec = settings.springMaxDegPerSec * tension;
-				const float step = degPerSec * dt;
+				const float step = std::min(kMaxStepDeg, degPerSec * dt);
 				const float scale = step / std::max(1.0e-3f, err.magnitudeDeg);
 
 				const float wantYawDeg = err.yawDeg * scale;
