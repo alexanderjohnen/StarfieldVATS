@@ -147,6 +147,53 @@ namespace VATS
 		// round real flight time to be homed. 0 disables the override.
 		float lockedProjectileSpeed{ 80.0f };
 
+		// --- Aim spring: the COARSE stage (2026-09-06, Alexander's design) ---
+		// See AimSpring.h for why this exists at all. Short version: FO76,
+		// VATS76 and Starfield's own ship combat all work in two stages,
+		// coarse then fine, and this project only ever had the fine one.
+		bool aimSpringEnabled{ true };
+
+		// Inside this angle the spring does nothing. Not a nicety - without
+		// a deadzone the view is glued to the target and the player cannot
+		// make their own small corrections, which is exactly the "I lost
+		// control of the camera" complaint that killed the first
+		// camera-steering design in 2026-08.
+		float springDeadzoneDeg{ 8.0f };
+
+		// Past this angle the LOCK ENDS rather than the resistance getting
+		// harder. Alexander's shape: a spring with an exit, not a cage.
+		// Turning away is meant to be possible and felt, never forbidden -
+		// and this is also what makes the backwards shot impossible without
+		// any invisible rule about it, since at that angle the mode is
+		// already over.
+		float springReleaseDeg{ 55.0f };
+
+		// How long the view must stay beyond springReleaseDeg before the
+		// lock actually ends. A glance sideways mid-fight should not drop
+		// the lock - the player would read that as flakiness rather than as
+		// a rule. Open tuning question, deliberately generous to begin with.
+		std::uint32_t springReleaseGraceMs{ 350 };
+
+		// Pull rate at full strength, degrees per second, reached at the
+		// release angle and capped there. This is the "never infinite" part
+		// of the design: it is a spring, and a spring can always be pulled
+		// against.
+		float springMaxDegPerSec{ 90.0f };
+
+		// How far one unit of synthetic mouse movement turns the view.
+		// MEASURED, not guessed: 159 samples via CameraNudgeProbe on
+		// 2026-09-06 all returned 0.08059 deg/unit, identical to five
+		// decimal places.
+		//
+		// It is a setting rather than a constant because it depends on the
+		// player's own fMouseHeadingSensitivity in StarfieldPrefs.ini -
+		// change that and this number is wrong, silently, while looking
+		// more trustworthy than a guess. Alexander's call (2026-09-06):
+		// this mod is not distributed beyond GitHub, so the value correct
+		// for his setup is the value the project needs. Re-measure with
+		// bProbeCameraNudge if the sensitivity ever changes.
+		float mouseDegPerUnit{ 0.08059f };
+
 		// --- VATS resource bar (2026-08-25, Alexander's design) ---
 		// See VatsResource.h for the full reasoning. Capacity comes from the
 		// player's FULL health, refill rate from their FULL oxygen, and the
