@@ -199,32 +199,48 @@ namespace VATS
 		{
 			using namespace std::chrono;
 
-			// 250 Hz, not 60, and this is the third attempt at the jitter.
+			// 60 Hz, back down from the 250 the previous attempt raised it
+			// to. That change rested on a wrong diagnosis and made this
+			// worse, not better.
 			//
-			// The first two looked for a wrong DIRECTION - a flipped sign,
-			// then two disagreeing sources for one value. Both were real
-			// bugs and neither stopped the shaking, which is the evidence
-			// that the direction was never the problem. What is left is the
-			// GRANULARITY of the input itself: at 60 Hz and 300 deg/s each
-			// pulse is 4.8 degrees, delivered as one lump sixty times a
-			// second, and Starfield samples mouse input on its own frame
-			// boundaries. Frames that catch a lump jump, frames that fall
-			// between two get nothing, and a steady pull renders as a
-			// stutter. The stronger the spring, the worse it reads - which
-			// matches the pull only starting to shake once it had any real
-			// force behind it.
+			// Fourth attempt at the jitter, and Alexander's description is
+			// what finally identifies it: a CONSTANT right-left-right-left,
+			// not an uneven stutter. Granularity produces uneven stepping. A
+			// steady alternation is an OSCILLATION - something regularly
+			// overshoots and corrects back.
 			//
-			// Four times the rate is a quarter of the step for the same
-			// speed. It costs three extra wakeups per frame on a thread that
-			// does two guarded reads and some arithmetic.
-			constexpr auto kTick = milliseconds(4);
+			// This is a control loop with latency. We read the error, inject
+			// a correction, and that correction does not reach the camera
+			// matrix for a frame or two. Until it does we keep computing
+			// against the STALE error and keep injecting, so the total in
+			// flight exceeds what was needed, the view sails past the
+			// target, and the next tick repeats it in reverse. Raising the
+			// tick rate packs more stale corrections into the same latency
+			// window, which is exactly why 250 Hz was worse.
+			//
+			// It also explains why the first three attempts could not have
+			// worked: all three looked for a wrong DIRECTION. The direction
+			// was right. The GAIN was wrong.
+			constexpr auto kTick = milliseconds(16);
 
-			// And a ceiling on any single pulse. dt is already clamped to
-			// 100ms against a stall, but 100ms at full strength would still
-			// be a 30 degree lurch arriving in one packet - the exact thing
-			// this rate change exists to avoid, just triggered by a hitch
-			// instead of by design.
+			// Ceiling on any single pulse, so a frame hitch cannot deliver a
+			// lurch in one packet.
 			constexpr float kMaxStepDeg = 1.5f;
+
+			// The actual fix: never inject more than this fraction of the
+			// REMAINING error in one tick.
+			//
+			// With a step bounded by a fraction of the error, the loop
+			// converges rather than rings even while corrections are still
+			// in flight - after two ticks of latency at 25% each, only about
+			// 44% of the original error has been injected, so overshoot is
+			// impossible by construction rather than by choosing a gentle
+			// enough speed. It also makes fSpringMaxDegPerSec safe to raise:
+			// that setting now governs how fast the spring pulls when far
+			// from the target, and this governs whether it can overshoot
+			// when near it. Those were the same number before, which is why
+			// making the spring strong enough to feel also made it ring.
+			constexpr float kMaxErrorFraction = 0.25f;
 
 			auto lastTick = steady_clock::now();
 			auto beyondReleaseSince = steady_clock::time_point{};
@@ -311,7 +327,9 @@ namespace VATS
 				// wherever the view is - the "spring stretched between the
 				// weapon and the target" that motivates the whole feature.
 				const float degPerSec = settings.springMaxDegPerSec * tension;
-				const float step = std::min(kMaxStepDeg, degPerSec * dt);
+				const float step = std::min({ kMaxStepDeg,
+					degPerSec * dt,
+					err.magnitudeDeg * kMaxErrorFraction });
 				const float scale = step / std::max(1.0e-3f, err.magnitudeDeg);
 
 				const float wantYawDeg = err.yawDeg * scale;
