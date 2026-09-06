@@ -5,7 +5,7 @@
 #include "SafeMem.h"
 #include "Settings.h"
 #include "VATSController.h"
-#include "WorldBoundProbe.h"
+#include "UI/CameraProject.h"
 
 #include "RE/A/Actor.h"
 #include "RE/P/PlayerCamera.h"
@@ -71,8 +71,30 @@ namespace VATS
 
 		// Signed horizontal angle from where the camera looks to where the
 		// target is, in degrees. Positive means the target is to the RIGHT,
-		// which is the same direction a positive mouse dx turns the view -
-		// so the sign can be used directly without a lookup table.
+		// i.e. the direction a positive mouse dx turns the view.
+		//
+		// THE SIGN COMES FROM THE PROJECTION, NOT FROM THE CROSS PRODUCT,
+		// and that is the fix for the first version of this file (2026-09-06).
+		// That one took the sign from the 2D cross product of the forward
+		// and to-target vectors, which silently assumes a handedness for
+		// Starfield's world axes that was never verified here. It was
+		// backwards: Alexander reported the camera being pushed AWAY from
+		// the target, and the log agreed - every release fired at 83-91
+		// degrees rather than creeping past the 55 degree threshold, which
+		// is what being accelerated outwards looks like rather than being
+		// resisted.
+		//
+		// UI::WorldToScreen is the proven alternative. It returns normalized
+		// coordinates with the origin top-left, it has placed the HUD marker
+		// on real targets since the first targeting test, and x < 0.5 versus
+		// x > 0.5 is left versus right with no handedness assumption of our
+		// own. The cross product is still computed and logged beside it, so
+		// one run settles what the world axes actually do - a fact worth
+		// having rather than routing around.
+		//
+		// The MAGNITUDE still comes from the vector angle, because the
+		// projection cannot express a target behind the camera and that is
+		// exactly where a spring needs its largest value.
 		//
 		// Horizontal only: both vectors are flattened onto the XY plane
 		// before the comparison. A target above or below contributes
@@ -106,18 +128,22 @@ namespace VATS
 			fx /= fLen;
 			fy /= fLen;
 
-			// The aim point rather than the actor's origin, so the spring
-			// agrees with what the HUD marks and what the redirect steers
-			// toward. Falls back to the feet position if the bounding
-			// volume is not readable.
-			RE::NiPoint3 feet{};
-			if (!SafeRead(reinterpret_cast<const std::byte*>(a_target) + GameOffsets::kLocation, &feet, sizeof(feet))) {
+			// The actor's own origin, deliberately NOT GetAimPoint.
+			//
+			// The aim point exists to lift the target vertically onto the
+			// chest, which is worth nothing to a spring that only pushes
+			// sideways. And it carries per-actor smoothing state, already
+			// shared between the render thread and AimAssist's steering
+			// thread; adding a third caller at 60Hz would perturb a filter
+			// two other consumers depend on, to obtain a horizontal
+			// direction that the raw position gives just as well.
+			RE::NiPoint3 pos{};
+			if (!SafeRead(reinterpret_cast<const std::byte*>(a_target) + GameOffsets::kLocation, &pos, sizeof(pos))) {
 				return false;
 			}
-			const RE::NiPoint3 aim = WorldBoundProbe::GetAimPoint(a_target, feet);
 
-			float tx = aim.x - camPos.x;
-			float ty = aim.y - camPos.y;
+			float tx = pos.x - camPos.x;
+			float ty = pos.y - camPos.y;
 			const float tLen = std::sqrt(tx * tx + ty * ty);
 			if (tLen < 1.0e-3f) {
 				return false;  // standing inside the target - no meaningful direction
@@ -125,12 +151,32 @@ namespace VATS
 			tx /= tLen;
 			ty /= tLen;
 
-			// atan2 of the 2D cross and dot products, which gives the signed
-			// angle in one step and stays well-behaved near 180 degrees
-			// where an acos would lose all its precision.
+			// Magnitude from the vectors: atan2 of the 2D cross and dot
+			// products stays well-behaved near 180 degrees, where an acos
+			// would lose all its precision - and 180 degrees is precisely
+			// where a spring is doing its most important work.
 			const float dot = fx * tx + fy * ty;
 			const float cross = fx * ty - fy * tx;
-			a_outDeg = std::atan2(cross, dot) * kRadToDeg;
+			const float magnitude = std::abs(std::atan2(cross, dot) * kRadToDeg);
+
+			// Sign from the projection, which is proven on real targets.
+			float screenX = 0.0f;
+			float screenY = 0.0f;
+			if (UI::WorldToScreen(pos, screenX, screenY)) {
+				a_outDeg = (screenX >= 0.5f) ? magnitude : -magnitude;
+			}
+			else {
+				// Behind the camera: the projection has nothing to say, and
+				// which way to turn is genuinely arbitrary there - both ways
+				// are equally far. Keep the cross-product sign so the pull
+				// stays consistent instead of flapping while the target sits
+				// behind the player.
+				a_outDeg = (cross >= 0.0f) ? magnitude : -magnitude;
+			}
+
+			VATS_TRACE("[spring] err {:+.2f} deg | screenX {:.3f} | crossSign {} | agree={}",
+				a_outDeg, screenX, cross >= 0.0f ? "+" : "-",
+				((screenX >= 0.5f) == (cross >= 0.0f)) ? "yes" : "NO");
 			return true;
 		}
 
