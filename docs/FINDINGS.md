@@ -316,6 +316,75 @@ Nothing is dereferenced blind either way. Pass a real reference rather
 than `nullptr` - the actor itself will do, since its RTTI was verified
 moments earlier.
 
-The call is additionally SEH-guarded for now (see `SafeModActorValue`),
-so a wrong slot costs a disabled shield rather than a crash to desktop.
-That armour is probe-grade and comes off once a run confirms the slot.
+The call was SEH-guarded while that reasoning was only reasoning, so a
+wrong slot would have cost a disabled shield rather than a crash to
+desktop. **That armour came off on 2026-08-29**, once a run applied the
+shield three times over a real companion (0s to 30s to 57s to 86s, item
+count 10 to 7, then expiry) with no fault and no warning anywhere in the
+log. Slot 06 is the four-argument overload, confirmed in play.
+
+## How other VATS implementations land their shots
+
+Observed in play rather than read out of any code, so these are behavioural findings, not implementation facts. They are recorded because each one closed or reopened a question this project had been carrying.
+
+### Fallout 76, and the VATS76 mod for Fallout 4
+
+Both take the camera over. The player keeps WASD movement but not the view, aiming down sights ends the mode, and the view is held toward the locked target.
+
+The interesting part is what happens on top of that: **the shots are still visibly steered.** The view does not sit exactly on the target, and rounds can be seen travelling diagonally toward it. Spread does not explain that - spread scatters around the aim axis, it does not converge on a point from an off-axis muzzle.
+
+So the reference implementation is **two stages**: coarse orientation by camera, fine correction in flight. That matters here in three ways.
+
+It confirms the mechanism this project chose. In-flight redirection is not a workaround for lacking camera control; the game being emulated does it too.
+
+It explains why the camera is allowed to be imprecise. Once a fine stage guarantees the hit, the coarse stage is free to be optimised for how it looks instead of how accurate it is - and it visibly is, since an exact follow would jitter with every step the target takes. This project learned the same lesson one level down, on the aim point: the bounding sphere of a flying creature swings 2.04m with its wingbeat, the marker followed it exactly, and the fix was damping (`fAimPointSmoothingSeconds`).
+
+And it locates this project's real gap. **We have the fine stage and no coarse stage at all.** Nothing constrains where the player looks, so the redirect must be able to cover any angle up to a full reversal, which is the entire reason projectiles are slowed to 80 m/s (`fLockedProjectileSpeed`). That slowdown is a consequence of a missing stage, not a property of the mechanic.
+
+Camera takeover itself stays rejected - it contradicts this project's founding constraint that the weapon and camera must never visibly snap. What is adopted is the two-stage shape, with the player as the coarse stage.
+
+### Starfield's own ship combat
+
+Two separate mechanics, and the less obvious one is the useful one.
+
+**The lock** (a rectangle that shrinks over a "LOCKING %" period once the view is held toward a ship) is the ship-scale equivalent of this mod's own lock. Nothing new.
+
+**The convergence circle** is the interesting one. It is not glued to the target: it lags the camera and drifts toward the target marker while the player holds roughly the right direction. Once it sits inside the target rectangle, the ship's weapons aim there on their own and hit - including automatic weapons tracking the target without the player turning further.
+
+That is the same two-stage split as above, with the **player** supplying the coarse stage and a tolerance zone deciding when the fine stage engages. It is the model that fits this project's constraints, because nothing is taken away from the player at any point.
+
+The mechanism does not transfer: ship weapons sit on mounts that rotate independently of the hull, and a handheld weapon points where the character points. What transfers is the rule - when does assistance apply, how strongly, and how does the player see that it is applying.
+
+Open question, answerable only in play: does the circle keep drifting at large angles (a soft weighting) or stop entirely past some angle (a hard tolerance)? That decides which shape the equivalent rule takes here.
+
+## Synthetic mouse input turns the view - 0.0806 deg per unit
+
+Measured 2026-09-06 with `CameraNudgeProbe` (`bProbeCameraNudge`). A fixed 40-unit `SendInput`/`MOUSEEVENTF_MOVE` pulse during a lock, with the player's yaw read back through the same guarded path everything else here uses, then undone.
+
+**159 samples returned +3.224 degrees - identical to five decimal places every time.** Not merely proportional: deterministic. One unit is ~0.0806 degrees, fine enough for a gradual pull rather than visible steps.
+
+This settles a question the removed camera-steering AimAssist never answered. That code converted degrees to raw mouse units through `fMouseSensitivityScale`, a factor its own comment admits was never derived; every constant layered on top of it was guesswork on guesswork.
+
+It also rests on an asymmetry now established three times over in this project: **injecting** input reaches this game (the scanner-close keypress is built on it and is proven), while **suppressing** input does not (four failed attempts at blocking ADS, plus the unreliable back key). Anything shaped as "add movement" is viable; anything shaped as "remove the player's movement" is not.
+
+Two caveats belong with the number:
+
+**It only applies while the game has focus.** The same run produced 166 samples reading `2.3008 -> 2.3008` - no movement at all - because the player had alt-tabbed and an unfocused Starfield consumes no mouse input. The pulses did not vanish; they went to the desktop and visibly shook the real cursor. Any code sending synthetic input must check that the foreground window belongs to this process, both to stay out of the player's desktop and to keep unfocused frames out of any measurement, where they are not evidence of failure but of nobody listening.
+
+**The factor is tied to the player's own mouse sensitivity** (`fMouseHeadingSensitivity` in `StarfieldPrefs.ini`); a different setting gives a different factor. Recorded and accepted rather than solved (Alexander, 2026-09-06): this mod is not distributed beyond GitHub, so the value that is correct for his setup is the value this project needs. It belongs in the INI as a tunable default rather than baked into code - a number measured once still becomes wrong silently when the setting underneath it changes, and looks more trustworthy than a guess while doing the same damage.
+
+One flaw in the probe, recorded because the shape recurs: its running average mixed the zeros with the real values and converged on 0.042, a figure describing nothing. The answer was the most common value, not the mean. **An average across a bimodal sample produces something that looks like a measurement and is not one.**
+
+## Reopened: `Projectile::desiredTargetHandle` (0x174)
+
+Not a new find - this project wrote to it once, on every homing tick, hoping to trigger the engine's own lock-on behaviour, and removed it on 2026-08-25. What is new is the evidence.
+
+The removal reasoned that it was a guess on two counts: that the field drives that behaviour at all, and that a raw form ID is a valid `TESPointerHandle` (it is not, for a dynamically spawned combat NPC). Both were unknowns, not disproofs, and the code comment says as much - restore it from git history if native homing is ever pursued properly, with the handle type established first.
+
+**Starfield's ship combat settles the first count.** Ship weapons demonstrably track a selected target while the player looks elsewhere, so the engine owns a homing mechanism and ships with it in use. Supporting this on the live projectile: `desiredTargetHandle` sits at 0x174, immediately after `shooterHandle` at 0x170 - an offset this project reads correctly in production, since player-fired rounds report `1` there - and the class carries a virtual `ShouldUseDesiredTarget()`, i.e. the engine asks in flight whether to use a desired target.
+
+The second count is still open and is the actual work: obtain a real handle for the target actor rather than inventing one. There is a lead - an enemy's `combatTarget` reads `1` against the player, so that field holds handles, which makes this a read rather than a construction.
+
+The payoff if it holds is not homing for its own sake: the engine steers inside its own simulation step, so it does not need the flight time our manual steering does, and `fLockedProjectileSpeed` could shrink or go.
+
+**The risk is unchanged.** Writing a wrong-typed value into a handle the engine dereferences is the exact shape of both crashes of 2026-08-25. The handle type has to be established before the write, not after.
