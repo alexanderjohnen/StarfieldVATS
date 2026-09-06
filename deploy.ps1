@@ -10,7 +10,57 @@ try {
     xmake build -y
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
-    Copy-Item (Join-Path $buildOut "StarfieldVATS.dll") $pluginDir -Force
+    # Is the DLL about to be copied actually the one that was just built?
+    #
+    # "build ok" does not answer that. $buildOut is hardcoded to releasedbg,
+    # while xmake writes wherever the ACTIVE MODE says - so if the mode ever
+    # changes, this script reports success and ships whatever DLL happens to
+    # be sitting in releasedbg from days ago. That is not hypothetical: on
+    # 2026-09-06 `xmake f -c` (run to re-resolve a missing spdlog package)
+    # reset the mode to release, and the deploy afterwards printed "build ok"
+    # and "Deployed" while leaving a two-day-old DLL in the plugin folder.
+    # It was caught by comparing timestamps by hand, and only by luck - the
+    # cost of missing it is a whole test session spent measuring a build that
+    # is not installed.
+    $dllPath = Join-Path $buildOut "StarfieldVATS.dll"
+    if (-not (Test-Path $dllPath)) {
+        throw "No DLL at $dllPath - the build wrote somewhere else. Check the active mode with 'xmake f -m releasedbg -y'."
+    }
+    $dllTime = (Get-Item $dllPath).LastWriteTime
+
+    # A newer DLL under a DIFFERENT mode is the signature of exactly that
+    # failure. Deliberately not a warning: unlike the INI checks below, which
+    # report something tunable being absent, this means the file about to be
+    # installed is definitively not what was just compiled. Continuing would
+    # produce a confident, wrong result.
+    $buildRoot = Join-Path $PSScriptRoot "build\windows\x64"
+    foreach ($modeDir in (Get-ChildItem $buildRoot -Directory -ErrorAction SilentlyContinue)) {
+        if ($modeDir.FullName -eq $buildOut) { continue }
+        $other = Join-Path $modeDir.FullName "StarfieldVATS.dll"
+        if (Test-Path $other) {
+            $otherTime = (Get-Item $other).LastWriteTime
+            if ($otherTime -gt $dllTime) {
+                throw ("Build mode mismatch: '$($modeDir.Name)' has a NEWER DLL ($otherTime) than the '$(Split-Path $buildOut -Leaf)' one this script deploys ($dllTime). " +
+                       "The build went somewhere else. Run 'xmake f -m releasedbg -y' and deploy again.")
+            }
+        }
+    }
+
+    # Second, weaker check: did the build pick up the latest edit at all? An
+    # incremental build that had nothing to do legitimately leaves the DLL
+    # untouched, so an older DLL is only suspicious relative to the SOURCE -
+    # not relative to when this script started. A warning rather than an
+    # error, since a touched-but-unchanged file produces the same shape.
+    $srcDir = Join-Path $PSScriptRoot "src"
+    $newestSrc = Get-ChildItem $srcDir -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in '.cpp', '.h' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($null -ne $newestSrc -and $newestSrc.LastWriteTime -gt $dllTime) {
+        Write-Warning "$($newestSrc.Name) was modified at $($newestSrc.LastWriteTime), which is AFTER the DLL was linked ($dllTime)."
+        Write-Warning "The build may not have picked that edit up. Deploying anyway - verify before trusting a test result."
+    }
+
+    Copy-Item $dllPath $pluginDir -Force
     $pdb = Join-Path $buildOut "StarfieldVATS.pdb"
     if (Test-Path $pdb) { Copy-Item $pdb $pluginDir -Force }
 
