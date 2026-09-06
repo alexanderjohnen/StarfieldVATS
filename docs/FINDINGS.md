@@ -388,3 +388,48 @@ The second count is still open and is the actual work: obtain a real handle for 
 The payoff if it holds is not homing for its own sake: the engine steers inside its own simulation step, so it does not need the flight time our manual steering does, and `fLockedProjectileSpeed` could shrink or go.
 
 **The risk is unchanged.** Writing a wrong-typed value into a handle the engine dereferences is the exact shape of both crashes of 2026-08-25. The handle type has to be established before the write, not after.
+
+## The coarse stage exists: a spring on the view
+
+Built 2026-09-06, working in game the same day. `AimSpring.cpp`, settings under `[Combat]`.
+
+Mechanism: OS-level synthetic mouse movement (`SendInput`/`MOUSEEVENTF_MOVE`), the same one the scanner-close keypress uses. This rests on the asymmetry recorded above - injecting input reaches this game, suppressing it does not - so a spring only ever adds movement and never blocks the player's own.
+
+Shape, and the direction is the design: **resistance grows with the angle**. The further the view turns off the target, the harder it pulls back, capped so it never becomes infinite, and past `fSpringReleaseDeg` the lock ENDS rather than the wall hardening. A spring with an exit, not a cage. Same shape as the ADS decision - when the player unmistakably signals something else, give way instead of fighting - and it makes the backwards shot impossible without an invisible rule, since at that angle the mode is already over.
+
+The opposite arrangement (strong on target, fading with angle - ordinary console aim assist) was proposed first and rejected by Alexander, for a reason worth keeping: a tolerance zone whose only consequence is "then it does not help" is a **rule the player has to learn**, while resistance is a **sensation that needs no explanation**. The fading version is the conventional one and will keep looking like the obvious choice. It is not the one that was chosen.
+
+Four things the implementation has to get right, each learned by getting it wrong:
+
+**One source for both axes and both signs.** The first version took the magnitude from a vector angle and the sign from `UI::WorldToScreen`. Those are two computations of one quantity and they disagree near the boundary, so the sign flipped between ticks while the magnitude stayed above the deadzone. Both now come from the camera basis `CameraProject` proves: row 1 forward, row 0 **right**, row 2 **up** - established by that projection placing the HUD marker on real targets, not by assuming Starfield's handedness. Worth recording on its own: `Targeting.cpp` uses the same vectors safely because a cone test is a dot product and symmetric. The spring is the first thing here that needed to know left from right.
+
+**Pull toward the marker, never toward `kLocation`.** An actor's origin is at their **feet**. Harmless while the spring was horizontal; the moment it gained a vertical axis it aimed at the floor. The deciding argument is not height though - the HUD tether is drawn to the marker, so a spring pulling anywhere else makes its own indicator a liar.
+
+**A deadzone.** Without one the view is glued to the target and the player cannot make their own corrections, which is the exact "I lost control of the camera" complaint that killed the first camera-steering design in August.
+
+**A fractional carry.** `SendInput` takes integers and a gentle pull at 60Hz is often well under one unit per tick; truncating each tick floors the spring to zero at exactly the low strengths it most needs to feel smooth at.
+
+The pull is applied along the error direction rather than per axis, so it points at the target from wherever the view is - one spring between weapon and target, not two rubber bands.
+
+### The tether, and why the spring needed one
+
+Alexander's report on the first working version was that it felt "too easy to break out of" - and that turned out to be about information, not strength. Nothing on screen said how far out the view was or how much was left before release, so letting go always arrived as a surprise.
+
+A line from screen centre to the marker is the most literal statement of the mechanic: it **is** the spring, it is exactly as long as the stretch, and it points where the pull points. Tension drives thickness and colour rather than length, because length already carries a meaning and a second one on the same channel blurs both.
+
+### Two things injecting input must never run together
+
+The calibration probe was left armed after its measurement run while the spring was being built. Both inject mouse movement. The probe's pattern - 3.2 degrees right, 100ms, 3.2 back, 100ms, five times a second while Locked - was reported as "ein konstantes rechts links rechts links" and spent **four rounds** being diagnosed as a fault in the spring.
+
+`CameraNudgeProbe` now refuses to start while `bAimSpringEnabled` is on, as an error rather than a warning.
+
+The diagnostic lesson is the more useful half, because the shape recurs:
+
+- Three of the four attempts looked for a wrong **direction**. Two found real bugs and neither stopped the symptom, and *that* was the evidence - a fix that does not change the symptom is information about where the cause is not.
+- `bProbeCameraNudge=true` sat in the settings line of every log read during those rounds, beside `bAimSpringEnabled=true`. The logs were searched for `[spring]` output and the line describing what else was running was never read. Measuring only where the fault is already suspected is not measuring.
+- The symptom's own texture was the tell and it was given too late: **a constant alternation is an oscillation, an uneven stutter is granularity.** Those have disjoint causes.
+- What finally settled it was the spring's own trace at `iLogLevel=3`: `err 4.5 deg` then `err 7.5 deg` in one 17ms tick, when the spring is bounded to a quarter of the error and was pulling the other way. A jump that large can only come from outside.
+
+### Untested and tunable
+
+`fSpringMaxDegPerSec` (300), `fSpringReleaseDeg` (55) and `iSpringReleaseGraceMs` (350) are all guesses that only play can settle - none of them could be judged while the probe was still firing. `fMouseDegPerUnitY` is unverified: the calibration probe measured yaw only, so if the spring pulls correctly sideways but over- or undershoots vertically, that is the knob.

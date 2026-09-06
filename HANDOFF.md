@@ -79,6 +79,11 @@ and was stripped from history once already — never add it to a commit.
 
 ## Current state — confirmed working in-game
 
+- **Aim spring (the coarse stage)** — pulls the view toward the target
+  while Locked, with resistance growing by angle and the lock ending past
+  `fSpringReleaseDeg` rather than the wall hardening. A tether line from
+  screen centre to the marker shows the stretch. See the 2026-09-06 late
+  section at the bottom.
 - **Redirect**: hitscan weapons are flipped to real projectiles for the
   duration of a lock and slowed (`fLockedProjectileSpeed`, 80 m/s) so there
   is actually a frame in which to steer them. At stock 500 m/s a round
@@ -630,7 +635,9 @@ Neu geordnet 2026-09-06. Die Punkte 2 und 3 der vorigen Fassung
 (Aufräumen, Diagnose-Schalter) sind **erledigt** — siehe „Stand
 2026-09-06" unten.
 
-1. **Die Grobstufe — eine FEDER, kein Magnet.** Neu auf Platz 1, und das
+1. **Die Grobstufe — eine FEDER, kein Magnet. GEBAUT 2026-09-06, im Spiel
+   bestätigt** (siehe „Stand 2026-09-06, spät" unten; hier steht der
+   Entwurf, der dorthin geführt hat). War Platz 1, und das
    ist keine Verdrängung der Sichtlinie, sondern ein anderes Problem: die
    Sichtlinie entscheidet, *welches* Ziel gewählt werden darf, die Feder,
    *wie* getroffen wird. Der Fund dahinter steht in
@@ -828,3 +835,93 @@ Eigenschaft des Mechanismus.
 Die Kameraübernahme bleibt abgelehnt (Gründungsregel: kein sichtbares
 Einrasten). Übernommen wird die Zweistufigkeit mit dem Spieler auf der
 Grobstufe.
+
+---
+
+## Stand 2026-09-06, spät — die Grobstufe steht
+
+**Die Feder läuft und ist im Spiel bestätigt.** Damit hat die Mod erstmals
+beide Stufen: grob (Feder auf den Blick) und fein (Umlenkung im Flug).
+Ausführlich in `docs/FINDINGS.md`, hier das Bediennahe.
+
+### Was sie tut
+
+`AimSpring.cpp`, Einstellungen unter `[Combat]`. Während eines Locks zieht
+sie den Blick zum Ziel — **Widerstand wächst mit dem Winkel**, gedeckelt,
+und jenseits von `fSpringReleaseDeg` endet der Lock, statt dass die Wand
+härter wird. Eine Feder mit Ausgang, kein Käfig.
+
+| Winkel zum Ziel | Verhalten |
+|---|---|
+| bis `fSpringDeadzoneDeg` (4°) | nichts, freie Feinkorrektur |
+| bis `fSpringReleaseDeg` (55°) | Zug wächst linear bis `fSpringMaxDegPerSec` (300°/s) |
+| darüber, länger als `iSpringReleaseGraceMs` (350 ms) | Lock endet |
+
+Dazu die **Leine**: eine Linie von der Bildmitte zur Markierung, so lang
+wie die Dehnung, mit der Spannung dicker und wärmer werdend. Sie kam
+dazu, weil „zu leicht auszubrechen" eine Informations- und keine
+Kraftfrage war — nichts sagte, wie weit man draußen ist.
+
+### Was noch geraten ist
+
+`fSpringMaxDegPerSec`, `fSpringReleaseDeg` und `iSpringReleaseGraceMs`
+sind Schätzungen — keine davon war beurteilbar, solange die Sonde
+mitfeuerte (siehe unten). `fMouseDegPerUnitY` ist **unbestätigt**: die
+Kalibrierung hat nur Yaw gemessen. Zieht die Feder seitlich sauber und
+senkrecht daneben, ist das die Schraube.
+
+### Nicht wieder umdrehen
+
+Die umgekehrte Auslegung — stark am Ziel, mit dem Winkel nachlassend,
+also übliche Konsolen-Zielhilfe — wurde von Alexander verworfen. Sein
+Grund, und er trägt: eine Toleranzzone, deren einzige Folge „dann hilft
+es eben nicht" ist, ist eine **Regel**, die der Spieler lernen muss. Ein
+Widerstand ist eine **Empfindung**, die keine Erklärung braucht. Die
+nachlassende Variante ist die konventionelle und wird weiterhin wie die
+offensichtliche Wahl aussehen. Sie ist nicht die gewählte.
+
+### Die Sonden-Episode, und was daraus zu lernen ist
+
+`CameraNudgeProbe` blieb nach der Kalibrierung scharf, während die Feder
+gebaut wurde. Beide speisen Mausbewegung ein. Ihr Muster — 3,2° rechts,
+100 ms, 3,2° zurück, 100 ms, fünfmal je Sekunde bei aktivem Lock — wurde
+als „konstantes rechts links rechts links" gemeldet und **vier Runden
+lang als Fehler der Feder diagnostiziert.**
+
+Behoben, und ein Riegel sitzt jetzt im Code: die Sonde verweigert den
+Start, solange `bAimSpringEnabled` an ist.
+
+Die Diagnose-Lehren sind der wertvollere Teil, weil die Form wiederkommt:
+
+- **Drei der vier Versuche suchten eine falsche Richtung.** Zwei fanden
+  echte Fehler, und keiner änderte das Symptom — *das* war die
+  Information. Ein Fix, der nichts am Symptom ändert, sagt, wo die
+  Ursache **nicht** liegt.
+- **`bProbeCameraNudge=true` stand in jeder gelesenen Log-Zeile**, direkt
+  neben `bAimSpringEnabled=true`. Es wurde viermal nach `[spring]`
+  gegriffen und nie die Zeile gelesen, die sagt, was sonst noch läuft.
+  Nur dort zu messen, wo man den Fehler schon vermutet, ist kein Messen.
+- **Die Textur des Symptoms war der Schlüssel:** ein gleichmäßiger
+  Wechsel ist eine Schwingung, ein ungleichmäßiges Stottern ist
+  Körnigkeit. Zwei disjunkte Ursachen — danach zu fragen kostet einen
+  Satz und hätte drei Runden gespart.
+- Entschieden hat es die Spur der Feder selbst auf `iLogLevel=3`:
+  `err 4.5` und im nächsten 17-ms-Tick `err 7.5`, während die Feder auf
+  ein Viertel des Fehlers begrenzt ist und in die Gegenrichtung zog. Ein
+  solcher Sprung kann nur von außen kommen.
+
+### Zwei zurückgezogene Behauptungen
+
+Damit die Commit-Historie, die hier das Warum trägt, nichts Falsches
+konserviert:
+
+- Die **Verstärkungsgrenze** (`408bd27`, Schritt ≤ ¼ des Fehlers) wurde
+  aus einem Symptom hergeleitet, das eine andere Ursache hatte. Das
+  Argument über Regelkreis und Verzögerung stimmt für sich und sie kostet
+  nichts, also bleibt sie — **bewiesen ist sie nicht.**
+- Die Kette „Zielpunkt auf den Füßen → Geschosse in den Möbeln → keine
+  Treffer" (`589e022`) ist **zurückgezogen**. Alexander hatte einen
+  unverwundbaren NPC anvisiert, was „nichts passiert" vollständig
+  erklärt. Der Füße-Fehler war real und der Fix bleibt — die Leine wird
+  zur Markierung gezeichnet, also muss der Zug dorthin — aber die
+  Ursachenkette war geraten.
