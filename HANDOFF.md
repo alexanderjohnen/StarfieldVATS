@@ -630,10 +630,10 @@ Neu geordnet 2026-09-06. Die Punkte 2 und 3 der vorigen Fassung
 (Aufräumen, Diagnose-Schalter) sind **erledigt** — siehe „Stand
 2026-09-06" unten.
 
-1. **Die Grobstufe — Kamera-Magnet.** Neu auf Platz 1, und das ist keine
-   Verdrängung der Sichtlinie, sondern ein anderes Problem: die
-   Sichtlinie entscheidet, *welches* Ziel gewählt werden darf, der
-   Magnet, *wie* getroffen wird. Der Fund dahinter steht in
+1. **Die Grobstufe — eine FEDER, kein Magnet.** Neu auf Platz 1, und das
+   ist keine Verdrängung der Sichtlinie, sondern ein anderes Problem: die
+   Sichtlinie entscheidet, *welches* Ziel gewählt werden darf, die Feder,
+   *wie* getroffen wird. Der Fund dahinter steht in
    `docs/FINDINGS.md`: FO76 und VATS76 arbeiten zweistufig — grob über
    die Kamera, fein über gelenkte Geschosse — und **uns fehlt die
    Grobstufe vollständig.** Daher muss unsere Umlenkung beliebige Winkel
@@ -641,13 +641,36 @@ Neu geordnet 2026-09-06. Die Punkte 2 und 3 der vorigen Fassung
 
    Machbarkeit ist **gemessen, nicht vermutet**: 0,0806 Grad je
    Mauseinheit, deterministisch über 159 Messwerte (`CameraNudgeProbe`,
-   `bProbeCameraNudge`). Auslegung nach Alexanders Entwurf: Widerstand,
-   der zum Ziel hin stark ist und mit dem Winkel nachlässt, und beim
-   eindeutigen Wegdrehen **endet der Lock**, statt dass die Wand härter
-   wird — dieselbe Form wie beim ADS, wo Nachgeben besser war als
-   Dagegenhalten. Zwei Dinge sind Pflicht: Fokusprüfung vor jedem
-   `SendInput` (sonst zuckt der echte Desktop-Cursor, passiert), und der
-   Umrechnungsfaktor gehört in die INI, nicht in den Code.
+   `bProbeCameraNudge`).
+
+   **Die Form, und sie ist ausdrücklich Alexanders — nicht das
+   Gegenteil:** Der Widerstand **wächst mit dem Winkel**. Je weiter du
+   vom Ziel wegdrehst, desto mehr zieht es zurück. Er wird aber nie
+   unendlich, und an dem Punkt, wo du eindeutig wegdrehst, **endet der
+   Lock**, statt dass die Wand härter wird. Eine Feder mit Ausgang, kein
+   Käfig.
+
+   Claude hatte zuerst das Umgekehrte vorgeschlagen — stark am Ziel, mit
+   dem Winkel nachlassend, also klassische Konsolen-Zielhilfe — und
+   Alexander hat es zurückgewiesen: eine Toleranzzone, deren einzige
+   Folge „dann hilft es eben nicht" ist, ist eine **Regel**, die der
+   Spieler lernen muss. Ein Widerstand ist eine **Empfindung**, die keine
+   Erklärung braucht. Genau das soll die Feder liefern, und deshalb muss
+   sie beim Wegdrehen zunehmen, nicht verschwinden. **Nicht wieder
+   umdrehen.**
+
+   Das Ende-statt-Wand ist dieselbe Form wie beim ADS, wo Nachgeben
+   besser war als Dagegenhalten: signalisiert der Spieler eindeutig etwas
+   anderes, gib nach. Es macht den Rückwärtsschuss nebenbei unmöglich,
+   ohne dass es je eine unsichtbare Regel dafür braucht.
+
+   Offen und erst nach dem Bauen entscheidbar: ab welchem Winkel
+   losgelassen wird, und ob ein kurzer Blick zur Seite eine Schonfrist
+   braucht, damit der Modus nicht bei jedem Zucken abbricht.
+
+   Zwei Dinge sind Pflicht: Fokusprüfung vor jedem `SendInput` (sonst
+   zuckt der echte Desktop-Cursor, passiert), und der Umrechnungsfaktor
+   gehört in die INI, nicht in den Code.
 2. **Sichtlinienprüfung** (Tiefenpuffer, eigener Abschnitt oben). Der
    Punkt, der als einziger mehrere Dinge gleichzeitig freischaltet: den
    automatischen Zielwechsel, den freien Tipp-Druck im Kampf-Lock, und
