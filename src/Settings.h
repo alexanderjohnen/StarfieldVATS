@@ -422,6 +422,12 @@ namespace VATS
 		// and any renderer bug would read as flat. See D3DHook.cpp.
 		bool skipEmptyFrames{ true };
 
+		// TEMPORARY probe (2026-09-06), off by default. Measures how far one
+		// unit of synthetic mouse movement actually turns the view, which the
+		// removed camera-steering AimAssist never derived and only fudged.
+		// See CameraNudgeProbe.h. Delete with the probe.
+		bool probeCameraNudge{ false };
+
 		// How long the VATS key must be held before it means cancel rather
 		// than act, in milliseconds. Long enough that a normal tap can never
 		// be mistaken for one, short enough not to feel like a wait.

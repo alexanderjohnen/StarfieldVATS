@@ -1,5 +1,6 @@
 #include "AdsBlocker.h"
 #include "AimAssist.h"
+#include "CameraNudgeProbe.h"
 #include "BackKeyInterceptor.h"
 #include "EngineInputLayer.h"
 #include "HotkeyWatcher.h"
@@ -30,6 +31,7 @@ namespace
 			// AimAssist/BackKeyInterceptor already use safely.
 			VATS::AdsBlocker::Start();
 			VATS::EngineInputLayer::Init();
+			VATS::CameraNudgeProbe::Start();
 			// A hit-confirmation listener lived here until 2026-08-28. It
 			// crashed on every launch and was never made to work: the REL::IDs
 			// it needs are declared in the CommonLibSF headers but not mapped
